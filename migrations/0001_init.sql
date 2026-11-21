@@ -1,8 +1,8 @@
 -- Meterly core schema (spec §5). PostgreSQL 15+.
+-- Applied by cmd/migrate inside a transaction: no BEGIN/COMMIT here.
 -- Money is BIGINT minor units (kobo). Timestamps are TIMESTAMPTZ (UTC).
 -- Meter numbers and tokens are stored encrypted; lookups use keyed HMACs.
 
-BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- gen_random_uuid()
 
@@ -472,5 +472,3 @@ CREATE TABLE outbox_events (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX outbox_unpublished_idx ON outbox_events (created_at) WHERE published_at IS NULL;
-
-COMMIT;

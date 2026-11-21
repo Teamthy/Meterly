@@ -1,0 +1,30 @@
+# Decisions
+
+Defaults chosen where the spec left room, or where a decision depends on a commercial or legal call. Each one can be revisited; most are configuration.
+
+## Persistence (M1)
+
+- **pgx v5, hand-written SQL; no sqlc yet.** The repositories are small and the SQL is easier to review inline. Adopt sqlc if the query count grows.
+- **Unit of work = `store.InTx`.** Each state transition commits together with its history rows, ledger posting and outbox events. Provider calls never run inside a DB transaction. Rows being changed are locked with `SELECT … FOR UPDATE`; `Save` also checks a `version` column, so an unlocked writer can't overwrite newer state.
+- **Claims are explicit.** Only the worker whose commit moved a step to `PENDING` (vend, remote send, refund) or re-claimed it (reconcile re-send) may call the provider. A worker that lost the race sees `PENDING` too, but must not call. Running the suite on PostgreSQL found a bug here: inferring the claim from the resulting state let 10 concurrent webhooks call the vend provider 10 times (the provider deduplicated them).
+- **Migration runner is our own** (`internal/platform/migrate`, about 150 lines) rather than golang-migrate or goose. It embeds the SQL, runs each file in its own transaction with its `schema_migrations` row, takes an advisory lock, and refuses to run if an applied file's checksum has changed. That is all we need, with no extra dependency.
+- **`0001_init.sql` was edited once**, before it had been applied anywhere: its `BEGIN`/`COMMIT` were removed, because the runner provides the transaction and an inner `COMMIT` would have ended it early. From now on applied migrations are immutable; the runner enforces this.
+- **Meter capabilities are stored as a JSONB snapshot on `meters`.** The per-provider `meter_capabilities` table stays reserved until more than one vending or AMI provider can serve the same meter.
+- **One payment, vend, delivery and refund record per transaction** (unique indexes in `0002`). Multiple payment attempts per transaction would need a new design and migration.
+- **Users are created on first sight** from the identity-provider subject (`users.external_id`), so foreign keys hold from day one. M4 replaces dev auth with OIDC; the mapping stays the same.
+- **Provider and DisCo reference rows are upserted outside the caller's transaction** and cached, so a rollback can't leave a cached ID pointing at nothing.
+
+## Resume and reconciliation (M2)
+
+| Setting | Default | Why |
+|---|---|---|
+| `PAYMENT_EXPIRY` | 2h | An unpaid checkout older than this is marked FAILED, but only when the provider says it is unpaid. If money arrives later, the transaction goes to MANUAL_REVIEW, never silently dropped. |
+| `RESUME_STALE_AFTER` | 2m | The worker only touches transactions idle this long. Must exceed `PROVIDER_TIMEOUT` (enforced), so it never races an in-flight request. |
+| `RESUME_BASE_BACKOFF` / `RESUME_MAX_BACKOFF` | 30s / 30m | Exponential backoff per transaction. |
+| `RESUME_MAX_ATTEMPTS` | 12 | Checks without progress before escalating to MANUAL_REVIEW (about 2.5 hours at the defaults). Unpaid transactions don't escalate; `PAYMENT_EXPIRY` bounds them. |
+| `RESUME_LEASE` | 2m | A claimed transaction is hidden from other workers for this long. |
+
+- **MANUAL_REVIEW is a `review_reason` on the transaction**, not another payment state. Setting it stops all automation. Current reasons: payment amount mismatch, payment arriving after expiry, the HES losing an accepted command, and reconciliation exhausted. M4 adds the operator API to resolve them.
+- **The HES losing a credit command it had accepted goes to review, not a re-send.** Re-sending could double-credit if the original is still queued at the HES.
+- **`cmd/worker` refuses to run with mock providers.** Mocks keep their state in the process that called them, so a separate worker would see none of the API's simulated payments. In dev, the worker runs inside `cmd/api` (`RUN_WORKER=true`, the default). `cmd/worker` becomes usable once real adapters exist (M3).
+- **Outbox delivery is at-least-once.** Events are marked published in the same transaction that claimed them, after the sink accepts them. The sink currently logs metadata only; M5 notification consumers replace it and must dedupe on the event ID.

@@ -7,21 +7,30 @@ This maps the *Electricity Technology Platform: Product Requirements, Architectu
 | Spec area | Status |
 |---|---|
 | §9.1 Three independent state dimensions | `internal/transactions`: validated transitions; overall status is derived |
-| §9.3 Timeout ⇒ UNKNOWN, reconcile and never blindly resend | `orchestrator.Reconcile`; tested for vending and remote credit |
+| §9.3 Timeout ⇒ UNKNOWN, reconcile and never blindly resend | `orchestrator.Resume`; tested for vending and remote credit, on memory and PostgreSQL |
 | §9.4 Idempotency | `internal/idempotency` and the `Idempotency-Key` header on transaction create |
 | §9.5 Double-entry ledger | `internal/ledger`; Postgres triggers enforce balance and append-only |
-| §9.6 Transactional outbox | `internal/events` (in-memory; must share the DB transaction in Postgres) |
+| §9.6 Transactional outbox | `internal/outbox`: written in the same DB transaction as the state change; published at least once |
 | §8 Provider adapter contracts | `internal/providers`: payment, vending and remote credit kept separate |
 | FR-002/003 Meter registration and capability discovery | `internal/meters`: supported / authorised / reachable / confirmed |
 | FR-004/005/006 Purchase, buy for someone else, beneficiaries | API: `/v1/beneficiaries`, `is_gift` on transactions |
 | FR-009/010 Remote delivery with token fallback | Remote path plus operator `FallbackToToken` |
 | FR-013 Refunds (definitive vend failure only) | Automatic refund with ledger postings |
-| §5 Schema | `migrations/0001_init.sql` (verified on PostgreSQL 16) |
+| §5 Schema | `migrations/0001_init.sql`, `0002_persistence.sql`; used by `store/pgstore` |
 | §13.2 Critical test scenarios | `internal/orchestrator/orchestrator_test.go` |
+
+## Done: M1 persistence, M2 processes and recovery
+
+- PostgreSQL store (pgx v5) behind `store.Store`, with an `InTx` unit of work: state, history, ledger and outbox commit together. Row locks plus version checks. Worker claims use `SKIP LOCKED`.
+- Atomic idempotent creation: the key reservation, the quote consumption, the transaction and the completion commit as one.
+- Migration runner plus `cmd/migrate`; `0002_persistence.sql`; `docker-compose.yml`.
+- `cmd/api` / `cmd/worker` split; validated config; outbox publisher.
+- `Resume`: crash recovery from any committed state. A payment sweeper covers missed webhooks, with expiry and late-payment review. Exponential backoff, and escalation to MANUAL_REVIEW.
+- The whole scenario suite runs against memory **and** PostgreSQL. Fault-injection tests prove crash safety. An HTTP end-to-end test checks the logs for leaked secrets.
 
 ## Next engineering steps
 
-1. **PostgreSQL repositories** (pgx + sqlc) for meters, transactions, ledger, idempotency and outbox. State change, history row, ledger posting and outbox row must be written in **one DB transaction**.
+1. ~~PostgreSQL repositories~~ (M1 done).
 2. **Real payment adapter** (Paystack or Flutterwave): HMAC webhook verification, server-side verify, refunds.
 3. **First real vending adapter**, through an aggregator API or a DisCo's third-party vending interface.
 4. **OIDC authentication** to replace `DevAuth`, and an admin role for operator actions (currently `/v1/dev/*`).

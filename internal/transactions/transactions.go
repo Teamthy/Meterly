@@ -1,14 +1,12 @@
 // Package transactions models an electricity purchase with three
 // independent state dimensions — payment, vending and delivery — whose
 // transitions are validated (spec §9.1). The overall status is derived,
-// never stored independently.
+// never stored independently. Persistence lives in internal/store.
 package transactions
 
 import (
 	"errors"
 	"fmt"
-	"sort"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,7 +75,11 @@ var deliveryTransitions = map[DeliveryState][]DeliveryState{
 	DelFailed:     {DelPending}, // operator-approved fallback to token only
 }
 
-var ErrInvalidTransition = errors.New("transactions: invalid state transition")
+var (
+	ErrInvalidTransition = errors.New("transactions: invalid state transition")
+	ErrNotFound          = errors.New("transactions: not found")
+	ErrConflict          = errors.New("transactions: concurrent update")
+)
 
 func allowed[S comparable](table map[S][]S, from, to S) bool {
 	for _, s := range table[from] {
@@ -111,24 +113,52 @@ type Transaction struct {
 	Delivery       DeliveryState  `json:"delivery_status"`
 	DeliveryMethod DeliveryMethod `json:"delivery_method"`
 
-	PaymentProviderRef  string `json:"-"`
-	CheckoutURL         string `json:"checkout_url,omitempty"`
-	VendProviderRef     string `json:"-"`
-	DeliveryProviderRef string `json:"-"`
-	TokenCiphertext     []byte `json:"-"`
-	TokenKeyVersion     string `json:"-"`
-	UnitsKWh            string `json:"units_kwh,omitempty"`
-	FailureCode         string `json:"failure_code,omitempty"`
-	RefundProviderRef   string `json:"-"`
+	PaymentProviderName  string `json:"-"`
+	PaymentProviderRef   string `json:"-"`
+	CheckoutURL          string `json:"checkout_url,omitempty"`
+	VendProviderName     string `json:"-"`
+	VendProviderRef      string `json:"-"`
+	DeliveryProviderName string `json:"-"`
+	DeliveryProviderRef  string `json:"-"`
+	TokenCiphertext      []byte `json:"-"`
+	TokenKeyVersion      string `json:"-"`
+	UnitsKWh             string `json:"units_kwh,omitempty"`
+	FailureCode          string `json:"failure_code,omitempty"`
+	RefundReason         string `json:"-"`
+	RefundProviderRef    string `json:"-"`
 
-	History   []Event   `json:"history"`
-	Version   int       `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// ReviewReason, when set, puts the transaction in MANUAL_REVIEW and stops
+	// all automated processing until an operator resolves it.
+	ReviewReason string `json:"review_reason,omitempty"`
+	// Scheduling for the resume/reconciliation worker.
+	CheckAttempts int       `json:"-"`
+	NextCheckAt   time.Time `json:"-"`
+
+	History []Event `json:"history"`
+	// PersistedEvents counts History entries already stored; repositories
+	// append only History[PersistedEvents:].
+	PersistedEvents int       `json:"-"`
+	Version         int       `json:"-"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// New returns a transaction in its initial state.
+func New(customerID string, q *Quote, isGift bool, recipient string, now time.Time) *Transaction {
+	return &Transaction{
+		ID: uuid.New(), CustomerID: customerID, MeterID: q.MeterID, QuoteID: q.ID,
+		IsGift: isGift, RecipientName: recipient,
+		Amount: q.Amount, Fee: q.Fee, Total: q.Total,
+		Payment: PayCreated, Vending: VendNotStarted, Delivery: DelNotStarted, DeliveryMethod: q.DeliveryMethod,
+		NextCheckAt: now, CreatedAt: now, UpdatedAt: now,
+	}
 }
 
 // Status derives the overall status from the three dimensions.
 func (t *Transaction) Status() Overall {
+	if t.ReviewReason != "" {
+		return OverallManualReview
+	}
 	switch t.Payment {
 	case PayCreated, PayPending:
 		return OverallPaymentPending
@@ -158,7 +188,22 @@ func (t *Transaction) Status() Overall {
 	return OverallDeliveryPending
 }
 
-func (t *Transaction) record(dim, from, to, note string, now time.Time) {
+// Settled reports whether automation has nothing left to do: the
+// transaction finished, failed before money moved, was refunded, or awaits
+// an operator.
+func (t *Transaction) Settled() bool {
+	if t.ReviewReason != "" {
+		return true
+	}
+	switch t.Payment {
+	case PayFailed, PayRefunded:
+		return true
+	}
+	return t.Delivery == DelConfirmed || t.Delivery == DelFailed
+}
+
+func (t *Transaction) record(dim, from, to, note string) {
+	now := time.Now().UTC()
 	t.History = append(t.History, Event{At: now, Dimension: dim, From: from, To: to, Note: note})
 	t.UpdatedAt = now
 }
@@ -167,7 +212,7 @@ func (t *Transaction) SetPayment(to PaymentState, note string) error {
 	if !allowed(paymentTransitions, t.Payment, to) {
 		return fmt.Errorf("%w: payment %s -> %s", ErrInvalidTransition, t.Payment, to)
 	}
-	t.record("payment", string(t.Payment), string(to), note, time.Now().UTC())
+	t.record("payment", string(t.Payment), string(to), note)
 	t.Payment = to
 	return nil
 }
@@ -179,7 +224,7 @@ func (t *Transaction) SetVending(to VendingState, note string) error {
 	if to == VendPending && t.Payment != PayConfirmed {
 		return fmt.Errorf("%w: cannot vend before payment is confirmed", ErrInvalidTransition)
 	}
-	t.record("vending", string(t.Vending), string(to), note, time.Now().UTC())
+	t.record("vending", string(t.Vending), string(to), note)
 	t.Vending = to
 	return nil
 }
@@ -191,108 +236,31 @@ func (t *Transaction) SetDelivery(to DeliveryState, note string) error {
 	if to == DelPending && t.Vending != VendConfirmed {
 		return fmt.Errorf("%w: cannot deliver before vending is confirmed", ErrInvalidTransition)
 	}
-	t.record("delivery", string(t.Delivery), string(to), note, time.Now().UTC())
+	t.record("delivery", string(t.Delivery), string(to), note)
 	t.Delivery = to
 	return nil
 }
 
-var (
-	ErrNotFound = errors.New("transactions: not found")
-	ErrConflict = errors.New("transactions: concurrent update")
-)
-
-// Store is an in-memory repository with optimistic concurrency. The
-// PostgreSQL implementation must use `WHERE version = $n` updates.
-type Store struct {
-	mu    sync.Mutex
-	byID  map[uuid.UUID]*Transaction
-	byPay map[string]uuid.UUID
+// FlagForReview moves the transaction to MANUAL_REVIEW. Idempotent.
+func (t *Transaction) FlagForReview(reason string) {
+	if t.ReviewReason != "" {
+		return
+	}
+	t.ReviewReason = reason
+	t.record("review", "", "MANUAL_REVIEW", reason)
 }
 
-func NewStore() *Store {
-	return &Store{byID: map[uuid.UUID]*Transaction{}, byPay: map[string]uuid.UUID{}}
-}
-
-func clone(t *Transaction) *Transaction {
-	c := *t
-	c.History = append([]Event(nil), t.History...)
-	c.TokenCiphertext = append([]byte(nil), t.TokenCiphertext...)
-	return &c
-}
-
-func (s *Store) Create(t *Transaction) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now().UTC()
-	t.CreatedAt, t.UpdatedAt, t.Version = now, now, 1
-	s.byID[t.ID] = clone(t)
-}
-
-func (s *Store) Get(id uuid.UUID) (*Transaction, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, ok := s.byID[id]
-	if !ok {
-		return nil, ErrNotFound
-	}
-	return clone(t), nil
-}
-
-func (s *Store) ByPaymentRef(ref string) (*Transaction, error) {
-	s.mu.Lock()
-	id, ok := s.byPay[ref]
-	s.mu.Unlock()
-	if !ok {
-		return nil, ErrNotFound
-	}
-	return s.Get(id)
-}
-
-// Update applies fn to a copy and saves it only if nobody else saved first.
-func (s *Store) Update(id uuid.UUID, fn func(*Transaction) error) (*Transaction, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cur, ok := s.byID[id]
-	if !ok {
-		return nil, ErrNotFound
-	}
-	next := clone(cur)
-	if err := fn(next); err != nil {
-		return nil, err
-	}
-	if next.Version != cur.Version {
-		return nil, ErrConflict
-	}
-	next.Version++
-	s.byID[id] = next
-	if next.PaymentProviderRef != "" {
-		s.byPay[next.PaymentProviderRef] = id
-	}
-	return clone(next), nil
-}
-
-func (s *Store) ListForCustomer(customerID string) []*Transaction {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []*Transaction
-	for _, t := range s.byID {
-		if t.CustomerID == customerID {
-			out = append(out, clone(t))
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	return out
-}
-
-// NeedsReconciliation returns transactions in an ambiguous state.
-func (s *Store) NeedsReconciliation() []uuid.UUID {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []uuid.UUID
-	for id, t := range s.byID {
-		if t.Vending == VendUnknown || t.Delivery == DelUnknown || t.Delivery == DelAccepted {
-			out = append(out, id)
-		}
-	}
-	return out
+// Quote is a priced, time-limited, single-use offer for one meter.
+type Quote struct {
+	ID              uuid.UUID        `json:"quote_id"`
+	CustomerID      string           `json:"-"`
+	MeterID         uuid.UUID        `json:"meter_id"`
+	Amount          money.Amount     `json:"amount"`
+	Fee             money.Amount     `json:"fee"`
+	Total           money.Amount     `json:"total"`
+	DeliveryMethod  DeliveryMethod   `json:"delivery_method"`
+	DeliveryOptions []DeliveryMethod `json:"delivery_options"`
+	ExpiresAt       time.Time        `json:"expires_at"`
+	Used            bool             `json:"-"`
+	CreatedAt       time.Time        `json:"-"`
 }
