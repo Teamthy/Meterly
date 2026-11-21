@@ -4,7 +4,7 @@ Electricity, recharged from anywhere. Meterly lets people in Nigeria buy electri
 
 This repository holds the backend platform: a Go modular monolith built around a transaction engine that tracks **payment, vending and delivery as three separate, auditable steps**.
 
-> **Status:** persistence (PostgreSQL) and crash-safe background processing are done. Providers are still **mocks**, and auth is a dev stub. Production also needs real provider adapters, OIDC, and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+> **Status:** persistence (PostgreSQL) and crash-safe background processing are done. Providers are still **mocks**, and auth is a dev stub. Production also needs real provider adapters, OIDC, and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md). **Current state, next steps and session context: [`docs/HANDOFF.md`](docs/HANDOFF.md).**
 
 ## Quick start
 
