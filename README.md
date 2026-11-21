@@ -37,7 +37,9 @@ go test -race ./...
 | `cmd/api` | HTTP API. Refuses to start while migrations are pending. With `RUN_WORKER=true` (default in dev) it also runs the background loops. |
 | `cmd/worker` | Resume/reconciliation sweep and outbox publisher. Safe to run as several replicas. It refuses to run with mock providers, so until real adapters land the worker runs inside `cmd/api`. |
 
-Configuration is read from the environment and validated at startup (`internal/platform/config`). Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
+Configuration is read from the environment and validated at startup (`internal/platform/config`).
+
+**Payments:** `PAYMENT_PROVIDER=mock` (default) or `paystack`. For Paystack, set `PAYSTACK_SECRET_KEY` (only `sk_test_…` is accepted outside production), optionally `PAYSTACK_CALLBACK_URL`, and point Paystack's webhook at `POST /v1/payments/webhooks/paystack`. Vending and remote credit are still mocks. Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
 
 Run a full purchase in dev (the bearer token is the user ID in dev mode):
 
@@ -52,9 +54,9 @@ curl -s -X POST $B/v1/meters -H "$AUTH" \
 curl -s -X POST $B/v1/electricity/quotes -H "$AUTH" \
   -d '{"meter_id":"<meter_id>","amount_minor":500000,"currency":"NGN","delivery_preference":"AUTO"}'
 
-# 3. Create the transaction (idempotent)
+# 3. Create the transaction (idempotent; email is required)
 curl -s -X POST $B/v1/electricity/transactions -H "$AUTH" \
-  -H 'Idempotency-Key: 0123456789abcdef' -d '{"quote_id":"<quote_id>"}'
+  -H 'Idempotency-Key: 0123456789abcdef' -d '{"quote_id":"<quote_id>","email":"you@example.com"}'
 
 # 4. Simulate checkout + signed webhook (ref = last part of checkout_url)
 curl -s -X POST $B/v1/dev/payments/<ref>/complete -d '{}'

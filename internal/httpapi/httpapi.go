@@ -275,6 +275,11 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "quote_id is required")
 		return
 	}
+	if !validEmail(req.Email) {
+		// Payment providers need it for the receipt; ask before creating anything.
+		writeErr(w, 400, "INVALID_REQUEST", "a valid email is required")
+		return
+	}
 	t, _, err := s.O.CreateTransaction(r.Context(), orchestrator.CreateRequest{
 		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName,
 		IdempotencyKey: key, RequestHash: idempotency.HashRequest(body),
@@ -393,19 +398,17 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "unreadable body")
 		return
 	}
-	headers := map[string]string{}
-	for k := range r.Header {
-		headers[k] = r.Header.Get(k)
-	}
-	if err := s.Payments.VerifyWebhook(headers, body); err != nil {
+	evt, err := s.Payments.ParseWebhook(r.Header, body)
+	if errors.Is(err, providers.ErrBadSignature) {
 		writeErr(w, 401, "UNAUTHENTICATED", "invalid webhook signature")
 		return
 	}
-	var evt struct {
-		Reference string `json:"reference"`
+	if err != nil {
+		writeErr(w, 400, "INVALID_REQUEST", "malformed webhook")
+		return
 	}
-	if json.Unmarshal(body, &evt) != nil || evt.Reference == "" {
-		writeErr(w, 400, "INVALID_REQUEST", "reference missing")
+	if !evt.Relevant {
+		writeJSON(w, 200, map[string]string{"status": "ignored"})
 		return
 	}
 	// Acknowledge regardless of the downstream outcome; verification and
@@ -482,6 +485,14 @@ func (s *Server) devFallback(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- helpers ----------------------------------------------------------------------
+
+func validEmail(e string) bool {
+	if len(e) < 3 || len(e) > 254 || strings.ContainsAny(e, " \t\r\n") {
+		return false
+	}
+	at := strings.LastIndex(e, "@")
+	return at > 0 && at < len(e)-1 && strings.Contains(e[at+1:], ".")
+}
 
 func decode(r *http.Request, v any) bool {
 	dec := json.NewDecoder(r.Body)

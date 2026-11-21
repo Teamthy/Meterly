@@ -58,3 +58,22 @@ func TestMemoryStoreNeedsInProcessWorker(t *testing.T) {
 		t.Fatalf("%v %+v", err, c)
 	}
 }
+
+func TestPaystackKeyMustMatchMode(t *testing.T) {
+	base := map[string]string{"MODE": "dev", "PAYMENT_PROVIDER": "paystack"}
+	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), "sk_test_") {
+		t.Fatalf("missing key: %v", err)
+	}
+	base["PAYSTACK_SECRET_KEY"] = "sk_live_abc"
+	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), "sk_test_") {
+		t.Fatalf("live key in dev must be rejected: %v", err)
+	}
+	base["PAYSTACK_SECRET_KEY"] = "sk_test_abc"
+	if c, err := Load(env(base)); err != nil || c.PaymentProvider != "paystack" {
+		t.Fatalf("%v", err)
+	}
+	prod := map[string]string{"MODE": "production", "PAYMENT_PROVIDER": "paystack", "PAYSTACK_SECRET_KEY": "sk_test_abc", "PROVIDER_ENVIRONMENT": "PRODUCTION"}
+	if _, err := Load(env(prod)); err == nil || !strings.Contains(err.Error(), "sk_live_") {
+		t.Fatalf("test key in production must be rejected: %v", err)
+	}
+}

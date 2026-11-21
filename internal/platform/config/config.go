@@ -34,8 +34,12 @@ type Config struct {
 	MeterHMACKey []byte
 	KeyVersion   string
 
-	PaymentProvider     string // mock
-	VendingProvider     string // mock
+	PaymentProvider string // mock | paystack
+	VendingProvider string // mock
+
+	PaystackSecretKey   string
+	PaystackBaseURL     string
+	PaystackCallbackURL string
 	RemoteProvider      string // mock | none
 	ProviderEnvironment string // SANDBOX | PRODUCTION
 
@@ -107,6 +111,9 @@ func Load(getenv func(string) string) (Config, error) {
 		VendingProvider:     get("VENDING_PROVIDER", "mock"),
 		RemoteProvider:      get("REMOTE_PROVIDER", "mock"),
 		ProviderEnvironment: get("PROVIDER_ENVIRONMENT", "SANDBOX"),
+		PaystackSecretKey:   getenv("PAYSTACK_SECRET_KEY"),
+		PaystackBaseURL:     get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
+		PaystackCallbackURL: getenv("PAYSTACK_CALLBACK_URL"),
 		ResumeInterval:      dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:      dur("OUTBOX_INTERVAL", 2*time.Second),
 		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
@@ -142,10 +149,28 @@ func Load(getenv func(string) string) (Config, error) {
 	if o.ResumeStaleAfter <= o.ProviderTimeout {
 		errs = append(errs, errors.New("RESUME_STALE_AFTER must exceed PROVIDER_TIMEOUT, or the worker could race an in-flight call"))
 	}
-	for k, v := range map[string]string{"PAYMENT_PROVIDER": c.PaymentProvider, "VENDING_PROVIDER": c.VendingProvider} {
-		if v != "mock" {
-			errs = append(errs, fmt.Errorf("%s: unsupported value %q (available: mock)", k, v))
+	switch c.PaymentProvider {
+	case "mock":
+	case "paystack":
+		// Live keys only with live mode, so a sandbox can never move real money.
+		wantPrefix, env := "sk_test_", "SANDBOX"
+		if c.Mode == Production {
+			wantPrefix, env = "sk_live_", "PRODUCTION"
 		}
+		if !strings.HasPrefix(c.PaystackSecretKey, wantPrefix) {
+			errs = append(errs, fmt.Errorf("PAYSTACK_SECRET_KEY: must be set and start with %s in MODE=%s", wantPrefix, c.Mode))
+		}
+		if c.ProviderEnvironment != env {
+			errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT must be %s for MODE=%s with Paystack", env, c.Mode))
+		}
+		if !strings.HasPrefix(c.PaystackBaseURL, "https://") && c.Mode != Dev {
+			errs = append(errs, errors.New("PAYSTACK_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("PAYMENT_PROVIDER: unsupported value %q (available: mock, paystack)", c.PaymentProvider))
+	}
+	if c.VendingProvider != "mock" {
+		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock)", c.VendingProvider))
 	}
 	if c.RemoteProvider != "mock" && c.RemoteProvider != "none" {
 		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none)", c.RemoteProvider))

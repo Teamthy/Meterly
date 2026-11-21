@@ -31,7 +31,7 @@ This maps the *Electricity Technology Platform: Product Requirements, Architectu
 ## Next engineering steps
 
 1. ~~PostgreSQL repositories~~ (M1 done).
-2. **Real payment adapter** (Paystack or Flutterwave): HMAC webhook verification, server-side verify, refunds.
+2. ~~Real payment adapter~~ (M3 done: Paystack with HMAC webhooks, server-side verify, idempotent refunds; tested against a stateful fake, **not yet against the live Paystack sandbox**).
 3. **First real vending adapter**, through an aggregator API or a DisCo's third-party vending interface.
 4. **OIDC authentication** to replace `DevAuth`, and an admin role for operator actions (currently `/v1/dev/*`).
 5. **Notifications** (SMS/WhatsApp/email) consuming outbox events: token delivery to gift recipients.

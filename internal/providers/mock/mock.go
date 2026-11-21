@@ -14,8 +14,10 @@ package mock
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -95,13 +97,19 @@ func (p *Payments) RefundPayment(_ context.Context, req providers.RefundRequest)
 	return "rf_" + req.Reference, nil
 }
 
-// VerifyWebhook accepts a fixed dev signature. Real adapters must verify
-// the provider's HMAC signature over the raw body.
-func (p *Payments) VerifyWebhook(h map[string]string, _ []byte) error {
-	if h["X-Mock-Signature"] != "dev-signature" {
-		return fmt.Errorf("mockpay: bad signature")
+// ParseWebhook accepts a fixed dev signature and a {"reference": "..."}
+// body. Real adapters verify the provider's HMAC over the raw body.
+func (p *Payments) ParseWebhook(h http.Header, body []byte) (providers.WebhookEvent, error) {
+	if h.Get("X-Mock-Signature") != "dev-signature" {
+		return providers.WebhookEvent{}, providers.ErrBadSignature
 	}
-	return nil
+	var evt struct {
+		Reference string `json:"reference"`
+	}
+	if err := json.Unmarshal(body, &evt); err != nil || evt.Reference == "" {
+		return providers.WebhookEvent{}, fmt.Errorf("mockpay: reference missing")
+	}
+	return providers.WebhookEvent{Type: "payment", Reference: evt.Reference, Relevant: true}, nil
 }
 
 // ---- Vending ---------------------------------------------------------------

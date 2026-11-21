@@ -18,6 +18,7 @@ import (
 	"github.com/teamthy/meterly/internal/platform/migrate"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
+	"github.com/teamthy/meterly/internal/providers/paystack"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
@@ -79,9 +80,18 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, erro
 		}
 	}
 
-	// Only mocks exist so far; config validation rejects anything else.
-	a.mockPay = mock.NewPayments()
-	a.payments = a.mockPay
+	switch cfg.PaymentProvider {
+	case "paystack":
+		ps, err := paystack.New(paystack.Config{SecretKey: cfg.PaystackSecretKey, BaseURL: cfg.PaystackBaseURL, CallbackURL: cfg.PaystackCallbackURL})
+		if err != nil {
+			return nil, err
+		}
+		a.payments = ps
+	default:
+		a.mockPay = mock.NewPayments()
+		a.payments = a.mockPay
+	}
+	// Vending and AMI adapters are still mocks (config rejects anything else).
 	vend := mock.NewVending()
 	var remote providers.RemoteCreditProvider
 	if cfg.RemoteProvider == "mock" {

@@ -6,6 +6,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/teamthy/meterly/internal/money"
@@ -62,9 +63,24 @@ type PaymentProvider interface {
 	// VerifyPayment is the server-side source of truth. Webhook bodies are
 	// only a hint to call this.
 	VerifyPayment(ctx context.Context, providerRef string) (PaymentVerification, error)
+	// RefundPayment must be idempotent per RefundRequest.Reference: a retry
+	// after a lost response returns the existing refund, never a second one.
 	RefundPayment(ctx context.Context, req RefundRequest) (string, error)
-	VerifyWebhook(headers map[string]string, body []byte) error
+	// ParseWebhook authenticates a webhook (ErrBadSignature if it fails) and
+	// extracts the payment reference. The body is only a hint: callers must
+	// still VerifyPayment before acting.
+	ParseWebhook(h http.Header, body []byte) (WebhookEvent, error)
 }
+
+// WebhookEvent is the provider-neutral part of a payment webhook.
+type WebhookEvent struct {
+	Type      string
+	Reference string // payment reference; empty when Relevant is false
+	Relevant  bool   // false for event types we acknowledge but ignore
+}
+
+// ErrBadSignature means a webhook failed authentication.
+var ErrBadSignature = errors.New("provider: webhook signature invalid")
 
 // ---- Vending ---------------------------------------------------------------
 

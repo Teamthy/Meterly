@@ -28,3 +28,14 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **The HES losing a credit command it had accepted goes to review, not a re-send.** Re-sending could double-credit if the original is still queued at the HES.
 - **`cmd/worker` refuses to run with mock providers.** Mocks keep their state in the process that called them, so a separate worker would see none of the API's simulated payments. In dev, the worker runs inside `cmd/api` (`RUN_WORKER=true`, the default). `cmd/worker` becomes usable once real adapters exist (M3).
 - **Outbox delivery is at-least-once.** Events are marked published in the same transaction that claimed them, after the sink accepts them. The sink currently logs metadata only; M5 notification consumers replace it and must dedupe on the event ID.
+
+## Paystack (M3)
+
+- **A new Paystack reference for each initialisation attempt** (`<transaction id>.<random>`). Paystack rejects a reused reference, and a retry after a crash or lost response can't recover the first attempt's checkout URL. Only the attempt we commit is ever shown to the customer, so an orphaned attempt has no link anyone can pay. We verify by the committed reference.
+- **Refunds are made idempotent on our side.** Paystack has no idempotency key for refunds, so the adapter lists existing refunds on the transaction first and returns a live one instead of creating another. Only the worker that claimed `REFUND_PENDING` calls it, and the worker only retries stale transactions.
+- **`REFUNDED` means Paystack accepted the refund** (its status `pending`/`processing`), not that the money has landed. Tracking final settlement through `refund.processed` webhooks belongs with the reconciliation reports.
+- **Status mapping is conservative.** Only `success` counts as paid; `failed` and `reversed` count as failed; everything else (`abandoned`, `ongoing`, `processing`, `queued`, unknown values) counts as pending, which `PAYMENT_EXPIRY` bounds.
+- **Error classes:** network errors, timeouts, 5xx and unparseable 2xx bodies are *ambiguous* (the operation may have happened). 4xx and `status:false` are definitive.
+- **Webhooks:** HMAC-SHA512 over the raw body, compared in constant time. Only `charge.success` triggers processing; other events are acknowledged and ignored. The body is never trusted: we always call verify. Paystack's IP allowlist is not enforced in the app; it belongs at the edge (WAF or load balancer).
+- **Key safety:** config only accepts `sk_test_` keys outside `MODE=production` and `sk_live_` keys in production, and `PROVIDER_ENVIRONMENT` must match.
+- **Email is required to create a transaction.** Paystack needs it, and checking it in the API before anything is created avoids leaving a half-created transaction the client can't retry with the same Idempotency-Key.

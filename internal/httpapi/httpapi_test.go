@@ -100,7 +100,10 @@ func endToEnd(t *testing.T, st store.Store) {
 		t.Fatalf("quote %d %v", code, q)
 	}
 	idem := map[string]string{"Idempotency-Key": "e2e-0123456789abcdef"}
-	body := map[string]any{"quote_id": q["quote_id"]}
+	if code, _ := c.do("POST", "/v1/electricity/transactions", "ada", map[string]any{"quote_id": q["quote_id"]}, map[string]string{"Idempotency-Key": "no-email-0123456789"}); code != 400 {
+		t.Fatalf("missing email must be rejected before anything is created: %d", code)
+	}
+	body := map[string]any{"quote_id": q["quote_id"], "email": "ada@example.com"}
 	code, txn := c.do("POST", "/v1/electricity/transactions", "ada", body, idem)
 	if code != 202 || txn["status"] != "PAYMENT_PENDING" {
 		t.Fatalf("create %d %v", code, txn)
@@ -109,7 +112,7 @@ func endToEnd(t *testing.T, st store.Store) {
 	if code, again := c.do("POST", "/v1/electricity/transactions", "ada", body, idem); code != 202 || again["transaction_id"] != id {
 		t.Fatalf("replay %d %v", code, again)
 	}
-	if code, _ := c.do("POST", "/v1/electricity/transactions", "ada", map[string]any{"quote_id": q["quote_id"], "is_gift": true}, idem); code != 409 {
+	if code, _ := c.do("POST", "/v1/electricity/transactions", "ada", map[string]any{"quote_id": q["quote_id"], "email": "ada@example.com", "is_gift": true}, idem); code != 409 {
 		t.Fatalf("idempotency conflict: %d", code)
 	}
 
