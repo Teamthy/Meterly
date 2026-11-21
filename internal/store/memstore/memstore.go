@@ -1,0 +1,514 @@
+// Package memstore is an in-memory store.Store for unit tests and local
+// development. InTx is serialisable (one global lock) and rolls back every
+// write on error via an undo log, matching PostgreSQL semantics closely
+// enough for the orchestrator's guarantees to be tested against it.
+package memstore
+
+import (
+	"context"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/events"
+	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/ledger"
+	"github.com/teamthy/meterly/internal/meters"
+	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/store"
+	tx "github.com/teamthy/meterly/internal/transactions"
+)
+
+type Store struct {
+	mu sync.Mutex
+
+	users       map[string]string
+	meters      map[uuid.UUID]*meters.Meter
+	meterByHash map[string]uuid.UUID
+	grants      []*meters.Grant
+	quotes      map[uuid.UUID]*tx.Quote
+	txns        map[uuid.UUID]*tx.Transaction
+	txnByPayRef map[string]uuid.UUID
+	ledger      []ledger.Transaction
+	ledgerByRef map[string]int
+	outbox      []*events.Event
+	idem        map[string]*idempotency.Record
+}
+
+func New() *Store {
+	return &Store{
+		users: map[string]string{}, meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
+		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
+		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{},
+	}
+}
+
+func (s *Store) Close() {}
+
+func (s *Store) InTx(_ context.Context, fn func(store.Repos) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := &repos{s: s, inTx: true}
+	if err := fn(r); err != nil {
+		for i := len(r.undo) - 1; i >= 0; i-- {
+			r.undo[i]()
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) Repos() store.Repos { return &repos{s: s} }
+
+type repos struct {
+	s    *Store
+	inTx bool
+	undo []func()
+}
+
+func (r *repos) lock() func() {
+	if r.inTx {
+		return func() {}
+	}
+	r.s.mu.Lock()
+	return r.s.mu.Unlock
+}
+
+func (r *repos) onUndo(f func()) {
+	if r.inTx {
+		r.undo = append(r.undo, f)
+	}
+}
+
+func (r *repos) Users() store.UserRepo               { return r }
+func (r *repos) Meters() store.MeterRepo             { return meterRepo{r} }
+func (r *repos) Quotes() store.QuoteRepo             { return quoteRepo{r} }
+func (r *repos) Transactions() store.TransactionRepo { return txnRepo{r} }
+func (r *repos) Ledger() store.LedgerRepo            { return ledgerRepo{r} }
+func (r *repos) Outbox() store.OutboxRepo            { return outboxRepo{r} }
+func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
+
+// ---- users -------------------------------------------------------------------
+
+func (r *repos) EnsureByExternalID(_ context.Context, ext string) (string, error) {
+	defer r.lock()()
+	if id, ok := r.s.users[ext]; ok {
+		return id, nil
+	}
+	id := uuid.NewString()
+	r.s.users[ext] = id
+	r.onUndo(func() { delete(r.s.users, ext) })
+	return id, nil
+}
+
+// ---- meters -------------------------------------------------------------------
+
+type meterRepo struct{ *repos }
+
+func cloneMeter(m *meters.Meter) *meters.Meter {
+	c := *m
+	c.NumberEncrypted = append([]byte(nil), m.NumberEncrypted...)
+	return &c
+}
+
+func (r meterRepo) Get(_ context.Context, id uuid.UUID) (*meters.Meter, error) {
+	defer r.lock()()
+	m, ok := r.s.meters[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cloneMeter(m), nil
+}
+
+func (r meterRepo) GetByHash(_ context.Context, hash string) (*meters.Meter, error) {
+	defer r.lock()()
+	id, ok := r.s.meterByHash[hash]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cloneMeter(r.s.meters[id]), nil
+}
+
+func (r meterRepo) Insert(_ context.Context, m *meters.Meter) error {
+	defer r.lock()()
+	if _, ok := r.s.meterByHash[m.NumberHash]; ok {
+		return store.ErrDuplicate
+	}
+	r.s.meters[m.ID] = cloneMeter(m)
+	r.s.meterByHash[m.NumberHash] = m.ID
+	r.onUndo(func() { delete(r.s.meters, m.ID); delete(r.s.meterByHash, m.NumberHash) })
+	return nil
+}
+
+func (r meterRepo) Update(_ context.Context, m *meters.Meter) error {
+	defer r.lock()()
+	prev, ok := r.s.meters[m.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	r.s.meters[m.ID] = cloneMeter(m)
+	r.onUndo(func() { r.s.meters[m.ID] = prev })
+	return nil
+}
+
+func (r meterRepo) activeGrant(meterID uuid.UUID, userID string) *meters.Grant {
+	for _, g := range r.s.grants {
+		if g.MeterID == meterID && g.UserID == userID && g.RevokedAt == nil {
+			return g
+		}
+	}
+	return nil
+}
+
+func (r meterRepo) UpsertGrant(_ context.Context, g meters.Grant) error {
+	defer r.lock()()
+	if cur := r.activeGrant(g.MeterID, g.UserID); cur != nil {
+		prev := *cur
+		if g.Permission.Allows(cur.Permission) {
+			cur.Permission = g.Permission
+		}
+		if g.Label != "" {
+			cur.Label = g.Label
+		}
+		r.onUndo(func() { *cur = prev })
+		return nil
+	}
+	ng := g
+	ng.RevokedAt = nil
+	r.s.grants = append(r.s.grants, &ng)
+	n := len(r.s.grants)
+	r.onUndo(func() { r.s.grants = r.s.grants[:n-1] })
+	return nil
+}
+
+func (r meterRepo) ActiveGrant(_ context.Context, meterID uuid.UUID, userID string) (*meters.Grant, error) {
+	defer r.lock()()
+	if g := r.activeGrant(meterID, userID); g != nil {
+		c := *g
+		return &c, nil
+	}
+	return nil, store.ErrNotFound
+}
+
+func (r meterRepo) ListForUser(_ context.Context, userID string) ([]meters.Listed, error) {
+	defer r.lock()()
+	var out []meters.Listed
+	for _, g := range r.s.grants {
+		if g.UserID == userID && g.RevokedAt == nil {
+			out = append(out, meters.Listed{Meter: *cloneMeter(r.s.meters[g.MeterID]), Label: g.Label, Permission: g.Permission})
+		}
+	}
+	return out, nil
+}
+
+func (r meterRepo) Revoke(_ context.Context, meterID uuid.UUID, userID string, at time.Time) error {
+	defer r.lock()()
+	if g := r.activeGrant(meterID, userID); g != nil {
+		g.RevokedAt = &at
+		r.onUndo(func() { g.RevokedAt = nil })
+	}
+	return nil
+}
+
+// ---- quotes -------------------------------------------------------------------
+
+type quoteRepo struct{ *repos }
+
+func cloneQuote(q *tx.Quote) *tx.Quote {
+	c := *q
+	c.DeliveryOptions = append([]tx.DeliveryMethod(nil), q.DeliveryOptions...)
+	return &c
+}
+
+func (r quoteRepo) Create(_ context.Context, q *tx.Quote) error {
+	defer r.lock()()
+	r.s.quotes[q.ID] = cloneQuote(q)
+	r.onUndo(func() { delete(r.s.quotes, q.ID) })
+	return nil
+}
+
+func (r quoteRepo) Get(_ context.Context, id uuid.UUID) (*tx.Quote, error) {
+	defer r.lock()()
+	q, ok := r.s.quotes[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cloneQuote(q), nil
+}
+
+func (r quoteRepo) GetForUpdate(ctx context.Context, id uuid.UUID) (*tx.Quote, error) {
+	return r.Get(ctx, id)
+}
+
+func (r quoteRepo) MarkUsed(_ context.Context, id uuid.UUID) error {
+	defer r.lock()()
+	q, ok := r.s.quotes[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if q.Used {
+		return store.ErrConflict
+	}
+	q.Used = true
+	r.onUndo(func() { q.Used = false })
+	return nil
+}
+
+// ---- transactions ---------------------------------------------------------------
+
+type txnRepo struct{ *repos }
+
+func cloneTxn(t *tx.Transaction) *tx.Transaction {
+	c := *t
+	c.History = append([]tx.Event(nil), t.History...)
+	c.TokenCiphertext = append([]byte(nil), t.TokenCiphertext...)
+	return &c
+}
+
+func (r txnRepo) Create(_ context.Context, t *tx.Transaction) error {
+	defer r.lock()()
+	if _, ok := r.s.txns[t.ID]; ok {
+		return store.ErrDuplicate
+	}
+	t.Version = 1
+	t.PersistedEvents = len(t.History)
+	r.s.txns[t.ID] = cloneTxn(t)
+	r.onUndo(func() { delete(r.s.txns, t.ID) })
+	if t.PaymentProviderRef != "" {
+		r.s.txnByPayRef[t.PaymentProviderRef] = t.ID
+	}
+	return nil
+}
+
+func (r txnRepo) Get(_ context.Context, id uuid.UUID) (*tx.Transaction, error) {
+	defer r.lock()()
+	t, ok := r.s.txns[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cloneTxn(t), nil
+}
+
+func (r txnRepo) GetForUpdate(ctx context.Context, id uuid.UUID) (*tx.Transaction, error) {
+	return r.Get(ctx, id)
+}
+
+func (r txnRepo) ByPaymentRef(ctx context.Context, ref string) (*tx.Transaction, error) {
+	unlock := r.lock()
+	id, ok := r.s.txnByPayRef[ref]
+	unlock()
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return r.Get(ctx, id)
+}
+
+func (r txnRepo) Save(_ context.Context, t *tx.Transaction) error {
+	defer r.lock()()
+	cur, ok := r.s.txns[t.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if cur.Version != t.Version {
+		return store.ErrConflict
+	}
+	t.Version++
+	t.PersistedEvents = len(t.History)
+	r.s.txns[t.ID] = cloneTxn(t)
+	r.onUndo(func() { r.s.txns[t.ID] = cur })
+	if t.PaymentProviderRef != "" {
+		if _, had := r.s.txnByPayRef[t.PaymentProviderRef]; !had {
+			r.s.txnByPayRef[t.PaymentProviderRef] = t.ID
+			ref := t.PaymentProviderRef
+			r.onUndo(func() { delete(r.s.txnByPayRef, ref) })
+		}
+	}
+	return nil
+}
+
+func (r txnRepo) ListForCustomer(_ context.Context, customerID string) ([]*tx.Transaction, error) {
+	defer r.lock()()
+	var out []*tx.Transaction
+	for _, t := range r.s.txns {
+		if t.CustomerID == customerID {
+			out = append(out, cloneTxn(t))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r txnRepo) ClaimDue(_ context.Context, now, staleBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error) {
+	defer r.lock()()
+	var due []*tx.Transaction
+	for _, t := range r.s.txns {
+		if !t.Settled() && !t.NextCheckAt.After(now) && !t.UpdatedAt.After(staleBefore) {
+			due = append(due, t)
+		}
+	}
+	sort.Slice(due, func(i, j int) bool { return due[i].NextCheckAt.Before(due[j].NextCheckAt) })
+	var out []uuid.UUID
+	for i, t := range due {
+		if i == limit {
+			break
+		}
+		prev := t.NextCheckAt
+		t.NextCheckAt = now.Add(lease) // lease; does not bump Version
+		r.onUndo(func() { t.NextCheckAt = prev })
+		out = append(out, t.ID)
+	}
+	return out, nil
+}
+
+// ---- ledger --------------------------------------------------------------------
+
+type ledgerRepo struct{ *repos }
+
+func (r ledgerRepo) Post(_ context.Context, t ledger.Transaction) (ledger.Transaction, error) {
+	if err := ledger.Validate(t.Entries); err != nil {
+		return ledger.Transaction{}, err
+	}
+	defer r.lock()()
+	if i, ok := r.s.ledgerByRef[t.Reference]; ok {
+		return r.s.ledger[i], nil
+	}
+	if t.ID == uuid.Nil {
+		t.ID = uuid.New()
+	}
+	if t.PostedAt.IsZero() {
+		t.PostedAt = time.Now().UTC()
+	}
+	t.Entries = append([]ledger.Entry(nil), t.Entries...)
+	r.s.ledgerByRef[t.Reference] = len(r.s.ledger)
+	r.s.ledger = append(r.s.ledger, t)
+	n := len(r.s.ledger)
+	r.onUndo(func() { r.s.ledger = r.s.ledger[:n-1]; delete(r.s.ledgerByRef, t.Reference) })
+	return t, nil
+}
+
+func (r ledgerRepo) BySource(_ context.Context, id uuid.UUID) ([]ledger.Transaction, error) {
+	defer r.lock()()
+	var out []ledger.Transaction
+	for _, t := range r.s.ledger {
+		if t.SourceID == id {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (r ledgerRepo) sum(match func(ledger.Entry) bool) int64 {
+	var v int64
+	for _, t := range r.s.ledger {
+		for _, e := range t.Entries {
+			if !match(e) {
+				continue
+			}
+			if e.Direction == ledger.Debit {
+				v += e.Amount.Minor
+			} else {
+				v -= e.Amount.Minor
+			}
+		}
+	}
+	return v
+}
+
+func (r ledgerRepo) Balance(_ context.Context, acct ledger.AccountCode, c money.Currency) (int64, error) {
+	defer r.lock()()
+	return r.sum(func(e ledger.Entry) bool { return e.Account == acct && e.Amount.Currency == c }), nil
+}
+
+func (r ledgerRepo) TrialBalance(context.Context) (int64, error) {
+	defer r.lock()()
+	return r.sum(func(ledger.Entry) bool { return true }), nil
+}
+
+// ---- outbox --------------------------------------------------------------------
+
+type outboxRepo struct{ *repos }
+
+func (r outboxRepo) Add(_ context.Context, e events.Event) error {
+	defer r.lock()()
+	c := e
+	r.s.outbox = append(r.s.outbox, &c)
+	n := len(r.s.outbox)
+	r.onUndo(func() { r.s.outbox = r.s.outbox[:n-1] })
+	return nil
+}
+
+func (r outboxRepo) ClaimUnpublished(_ context.Context, limit int) ([]events.Event, error) {
+	defer r.lock()()
+	var out []events.Event
+	for _, e := range r.s.outbox {
+		if e.PublishedAt == nil {
+			out = append(out, *e)
+			if len(out) == limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (r outboxRepo) MarkPublished(_ context.Context, id uuid.UUID, at time.Time) error {
+	defer r.lock()()
+	for _, e := range r.s.outbox {
+		if e.ID == id && e.PublishedAt == nil {
+			e.PublishedAt = &at
+			ev := e
+			r.onUndo(func() { ev.PublishedAt = nil })
+		}
+	}
+	return nil
+}
+
+func (r outboxRepo) ForAggregate(_ context.Context, id uuid.UUID) ([]events.Event, error) {
+	defer r.lock()()
+	var out []events.Event
+	for _, e := range r.s.outbox {
+		if e.AggregateID == id {
+			out = append(out, *e)
+		}
+	}
+	return out, nil
+}
+
+// ---- idempotency ---------------------------------------------------------------
+
+type idemRepo struct{ *repos }
+
+func idemKey(scope, op, key string) string { return scope + "\x00" + op + "\x00" + key }
+
+func (r idemRepo) Reserve(_ context.Context, rec idempotency.Record) (*idempotency.Record, error) {
+	defer r.lock()()
+	k := idemKey(rec.Scope, rec.Operation, rec.Key)
+	prev, had := r.s.idem[k]
+	if had && time.Now().Before(prev.ExpiresAt) {
+		c := *prev
+		return &c, nil
+	}
+	c := rec
+	r.s.idem[k] = &c
+	r.onUndo(func() {
+		if had {
+			r.s.idem[k] = prev
+		} else {
+			delete(r.s.idem, k)
+		}
+	})
+	return nil, nil
+}
+
+func (r idemRepo) Complete(_ context.Context, scope, op, key, resultRef string) error {
+	defer r.lock()()
+	rec, ok := r.s.idem[idemKey(scope, op, key)]
+	if !ok {
+		return store.ErrNotFound
+	}
+	prev := rec.ResultRef
+	rec.ResultRef = resultRef
+	r.onUndo(func() { rec.ResultRef = prev })
+	return nil
+}

@@ -4,14 +4,40 @@ Electricity, recharged from anywhere. Meterly lets people in Nigeria buy electri
 
 This repository holds the backend platform: a Go modular monolith built around a transaction engine that tracks **payment, vending and delivery as three separate, auditable steps**.
 
-> **Status: foundation / Phase 1–3 scaffold.** Everything runs against **mock providers and in-memory storage**. Production needs real provider adapters, PostgreSQL repositories, OIDC auth and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status:** persistence (PostgreSQL) and crash-safe background processing are done. Providers are still **mocks**, and auth is a dev stub. Production also needs real provider adapters, OIDC, and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Quick start
 
+In-memory, no database:
+
+```bash
+MODE=dev go run ./cmd/api        # listens on :8080, worker runs in-process
+```
+
+With PostgreSQL:
+
+```bash
+docker compose up -d
+export DATABASE_URL='postgres://meterly:meterly@localhost:5432/meterly?sslmode=disable'
+go run ./cmd/migrate
+MODE=dev go run ./cmd/api
+```
+
+Tests (the PostgreSQL integration tests run only when `DATABASE_URL` is set; each test gets its own database cloned from a migrated template):
+
 ```bash
 go test -race ./...
-MODE=dev go run ./cmd/api        # listens on :8080
 ```
+
+### Processes
+
+| Command | Role |
+|---|---|
+| `cmd/migrate` | Applies embedded migrations (transactional, checksummed, advisory-locked). |
+| `cmd/api` | HTTP API. Refuses to start while migrations are pending. With `RUN_WORKER=true` (default in dev) it also runs the background loops. |
+| `cmd/worker` | Resume/reconciliation sweep and outbox publisher. Safe to run as several replicas. It refuses to run with mock providers, so until real adapters land the worker runs inside `cmd/api`. |
+
+Configuration is read from the environment and validated at startup (`internal/platform/config`). Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
 
 Run a full purchase in dev (the bearer token is the user ID in dev mode):
 
@@ -34,11 +60,13 @@ curl -s -X POST $B/v1/electricity/transactions -H "$AUTH" \
 curl -s -X POST $B/v1/dev/payments/<ref>/complete -d '{}'
 curl -s -X POST $B/v1/payments/webhooks/mockpay -H 'X-Mock-Signature: dev-signature' -d '{"reference":"<ref>"}'
 
-# 5. Simulate the meter acknowledging, then reconcile
+# 5. Simulate the meter acknowledging; the worker picks it up (or force it)
 curl -s -X POST $B/v1/dev/remote/settle
-curl -s -X POST $B/v1/dev/reconcile
+curl -s -X POST $B/v1/dev/transactions/<transaction_id>/resume
 curl -s $B/v1/electricity/transactions/<transaction_id> -H "$AUTH"
 ```
+
+If you skip the webhook in step 4, the worker still finds the payment by asking the provider once the transaction has been idle for `RESUME_STALE_AFTER`.
 
 ### Mock meter behaviour
 
@@ -56,20 +84,24 @@ curl -s $B/v1/electricity/transactions/<transaction_id> -H "$AUTH"
 ## Layout
 
 ```
-cmd/api/                  HTTP server + reconciliation worker
+cmd/api, cmd/worker, cmd/migrate
 internal/
-  orchestrator/           purchase workflow: quote → pay → vend → deliver → reconcile/refund
-  transactions/           3-dimension state machine (payment / vending / delivery) + store
-  ledger/                 double-entry ledger (balanced, idempotent, append-only)
-  meters/                 meter registry, capability engine, per-user access grants
-  providers/              internal contracts for payment, vending, remote-credit providers
+  app/                    wiring shared by the binaries; worker loops
+  orchestrator/           purchase workflow: quote → pay → vend → deliver → refund; Resume (recovery)
+  registry/               meter registry service: validation, capabilities, access grants
+  store/                  persistence contracts; InTx unit of work
+  store/memstore/         in-memory store (tests, dev) with rollback
+  store/pgstore/          PostgreSQL store (pgx v5); pgtest = per-test databases
+  transactions/ meters/ ledger/ events/ idempotency/   domain types and rules
+  outbox/                 at-least-once outbox publisher
+  providers/              contracts for payment, vending, remote-credit providers
   providers/mock/         deterministic mocks for every success and failure path
-  idempotency/            Idempotency-Key handling
   secure/                 AES-GCM token encryption, HMAC meter lookup, masking
-  events/                 transactional outbox
   httpapi/                /v1 REST API (spec §7)
-migrations/0001_init.sql  PostgreSQL schema, ledger balance + immutability triggers
-docs/                     architecture notes and roadmap
+  platform/config/        environment configuration, validated at startup
+  platform/migrate/       migration runner
+migrations/               SQL migrations (embedded into the binaries)
+docs/                     roadmap and decisions
 ```
 
 ## Rules the code enforces
@@ -78,6 +110,9 @@ docs/                     architecture notes and roadmap
 - **A timeout is `UNKNOWN`, never `FAILED`.** Unknown operations are settled by querying the provider. They are only re-sent after the provider confirms it has no record of them.
 - **Remote `ACCEPTED` is not delivery.** A transaction completes only when the meter confirms it.
 - **Refunds happen only when vending has definitely failed.** Once electricity has been vended, it is never refunded automatically.
-- **Every money movement is a balanced ledger posting**, made at most once per event.
+- **Every money movement is a balanced ledger posting**, made at most once per event. PostgreSQL also rejects unbalanced postings and any edit to a posted entry.
+- **Each state change commits atomically** with its history, ledger posting and outbox events. Provider calls happen outside database transactions, and only the worker that claimed a step calls the provider for it.
+- **Crash-safe:** if the process dies between any provider call and the next commit, `Resume` continues without double-charging, double-vending or double-crediting. Fault-injection tests cover this.
+- **Stuck transactions escalate** to `MANUAL_REVIEW` after a bounded number of checks with backoff. Payment amount mismatches and late payments go to review too.
 - **Tokens are encrypted at rest**, never logged, and only the purchaser can read them. Meter numbers are encrypted, looked up by HMAC and shown masked.
 - **Access is granted per meter.** Validating a meter number grants no access. Revoking access blocks purchases even with a quote already issued.

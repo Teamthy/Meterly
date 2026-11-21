@@ -58,3 +58,13 @@ func TestConfirmedIsTerminalForDelivery(t *testing.T) {
 		t.Fatalf("history %d", len(x.History))
 	}
 }
+
+func TestReviewOverridesStatusAndSettles(t *testing.T) {
+	x := fresh()
+	_ = x.SetPayment(PayPending, "")
+	x.FlagForReview("amount mismatch")
+	x.FlagForReview("second reason ignored")
+	if x.Status() != OverallManualReview || !x.Settled() || x.ReviewReason != "amount mismatch" {
+		t.Fatalf("got %s settled=%v reason=%q", x.Status(), x.Settled(), x.ReviewReason)
+	}
+}
