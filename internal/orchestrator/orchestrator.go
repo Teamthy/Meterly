@@ -82,6 +82,9 @@ var (
 	ErrPaymentMismatch   = errors.New("verified payment does not match the transaction")
 	ErrTokenUnavailable  = errors.New("token not available for this transaction")
 	ErrInvalidPreference = errors.New("unknown delivery preference")
+	// ErrProviderDisabled: an operator switched the provider off. The step
+	// is paused, not failed; Resume retries once it is re-enabled.
+	ErrProviderDisabled = errors.New("provider disabled by an operator")
 )
 
 // errSkip aborts a mutate without writing: the transaction is already past
@@ -313,6 +316,9 @@ func (o *Orchestrator) EnsurePaymentInitialised(ctx context.Context, id uuid.UUI
 	if err != nil || t.Payment != tx.PayCreated {
 		return t, err
 	}
+	if err := o.requireEnabled(ctx, o.payments.Name()); err != nil {
+		return t, err
+	}
 	pctx, cancel := o.pctx(ctx)
 	res, err := o.payments.InitializePayment(pctx, providers.PaymentInit{Reference: t.ID.String(), Amount: t.Total, Email: email})
 	cancel()
@@ -447,6 +453,10 @@ func creditKey(id uuid.UUID) string { return "credit:" + id.String() }
 
 // vend claims the vending step (NOT_STARTED -> PENDING) and calls the provider.
 func (o *Orchestrator) vend(ctx context.Context, id uuid.UUID) (*tx.Transaction, error) {
+	if err := o.requireEnabled(ctx, o.vending.Name()); err != nil {
+		t, _ := o.Get(ctx, id)
+		return t, err
+	}
 	claimed := false
 	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
 		if t.Vending != tx.VendNotStarted || t.Payment != tx.PayConfirmed || t.ReviewReason != "" {
@@ -558,6 +568,15 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 // ---- Delivery -------------------------------------------------------------------
 
 func (o *Orchestrator) deliver(ctx context.Context, id uuid.UUID) (*tx.Transaction, error) {
+	cur, err := o.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.DeliveryMethod == tx.MethodRemote && cur.Delivery == tx.DelNotStarted {
+		if err := o.requireEnabled(ctx, o.remote.Name()); err != nil {
+			return cur, err
+		}
+	}
 	claimed := false
 	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
 		if t.Delivery != tx.DelNotStarted || t.Vending != tx.VendConfirmed {
@@ -662,23 +681,17 @@ func (o *Orchestrator) applyCreditResult(ctx context.Context, id uuid.UUID, res 
 	})
 }
 
-// FallbackToToken is an operator action after a confirmed remote-delivery
-// failure: the already-vended token is released to the customer. STS tokens
-// are single-use per meter, so releasing it cannot double-credit.
-func (o *Orchestrator) FallbackToToken(ctx context.Context, id uuid.UUID, operator string) (*tx.Transaction, error) {
-	return o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
-		if t.Delivery != tx.DelFailed {
-			return fmt.Errorf("%w: fallback only allowed after confirmed delivery failure", tx.ErrInvalidTransition)
-		}
-		if err := t.SetDelivery(tx.DelPending, "fallback to token by "+operator); err != nil {
-			return err
-		}
-		t.DeliveryMethod = tx.MethodToken
-		if err := t.SetDelivery(tx.DelConfirmed, "token released"); err != nil {
-			return err
-		}
-		return emit(ctx, r, "token.available", t.ID, map[string]any{"fallback": true})
-	})
+// requireEnabled returns ErrProviderDisabled if an operator switched the
+// provider off. Only new outbound work is gated; status queries are not.
+func (o *Orchestrator) requireEnabled(ctx context.Context, name string) error {
+	ok, err := o.st.Repos().Providers().Enabled(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrProviderDisabled, name)
+	}
+	return nil
 }
 
 // ---- Refunds -----------------------------------------------------------------------
@@ -691,7 +704,7 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 		if t.Payment != tx.PayConfirmed || t.Vending != tx.VendFailed || t.ReviewReason != "" {
 			return errSkip
 		}
-		t.RefundReason = reason
+		t.RefundReason, t.RefundAmount = reason, t.Total
 		if err := t.SetPayment(tx.PayRefundPending, reason); err != nil {
 			return err
 		}
@@ -714,7 +727,7 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 // records completion. On failure it stays REFUND_PENDING for Resume.
 func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*tx.Transaction, error) {
 	pctx, cancel := o.pctx(ctx)
-	ref, err := o.payments.RefundPayment(pctx, providers.RefundRequest{ProviderRef: t.PaymentProviderRef, Amount: t.Total, Reference: "refund:" + t.ID.String()})
+	ref, err := o.payments.RefundPayment(pctx, providers.RefundRequest{ProviderRef: t.PaymentProviderRef, Amount: t.RefundAmount, Reference: "refund:" + t.ID.String()})
 	cancel()
 	if err != nil {
 		o.log.Warn("refund call failed; stays REFUND_PENDING", "txn", t.ID, "err", err)
@@ -729,30 +742,11 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 			return err
 		}
 		if err := post(ctx, r, "refund-paid:"+t.ID.String(), t.ID, "Refund paid",
-			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Debit, Amount: t.Total},
-			ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Credit, Amount: t.Total},
+			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Debit, Amount: t.RefundAmount},
+			ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Credit, Amount: t.RefundAmount},
 		); err != nil {
 			return err
 		}
 		return emit(ctx, r, "electricity.refund.completed", t.ID, nil)
 	})
-}
-
-// ---- Token access ----------------------------------------------------------------
-
-// Token returns the decrypted token for the purchaser. It is available on
-// the token path, or after a remote-delivery failure was resolved to token.
-func (o *Orchestrator) Token(ctx context.Context, customerID string, id uuid.UUID) (string, *tx.Transaction, error) {
-	t, err := o.Get(ctx, id)
-	if err != nil {
-		return "", nil, err
-	}
-	if t.CustomerID != customerID {
-		return "", nil, tx.ErrNotFound // do not reveal existence
-	}
-	if t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 || t.DeliveryMethod != tx.MethodToken {
-		return "", t, ErrTokenUnavailable
-	}
-	tok, err := o.box.Decrypt(t.TokenCiphertext)
-	return tok, t, err
 }

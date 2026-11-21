@@ -25,7 +25,7 @@ SELECT t.id, t.customer_id::text, t.meter_id, t.quote_id, t.is_gift, coalesce(g.
        coalesce(vp.name, ''), coalesce(v.provider_reference, ''), v.token_ciphertext,
        coalesce(v.token_key_version, ''), coalesce(v.units_kwh::text, ''),
        coalesce(dp.name, ''), coalesce(d.provider_reference, ''),
-       coalesce(t.failure_code, ''), coalesce(rf.reason, ''), coalesce(rf.provider_reference, ''),
+       coalesce(t.failure_code, ''), coalesce(rf.reason, ''), coalesce(rf.provider_reference, ''), coalesce(rf.amount_minor, 0),
        t.review_reason, t.check_attempts, t.next_check_at, t.version, t.created_at, t.updated_at
 FROM electricity_transactions t
 LEFT JOIN gift_transactions g ON g.transaction_id = t.id
@@ -49,13 +49,13 @@ func (r txnRepo) load(ctx context.Context, where string, arg any) (*tx.Transacti
 		&t.VendProviderName, &t.VendProviderRef, &t.TokenCiphertext,
 		&t.TokenKeyVersion, &t.UnitsKWh,
 		&t.DeliveryProviderName, &t.DeliveryProviderRef,
-		&t.FailureCode, &t.RefundReason, &t.RefundProviderRef,
+		&t.FailureCode, &t.RefundReason, &t.RefundProviderRef, &t.RefundAmount.Minor,
 		&t.ReviewReason, &t.CheckAttempts, &t.NextCheckAt, &t.Version, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	c := money.Currency(cur)
-	t.Amount.Currency, t.Fee.Currency, t.Total.Currency = c, c, c
+	t.Amount.Currency, t.Fee.Currency, t.Total.Currency, t.RefundAmount.Currency = c, c, c, c
 	t.NextCheckAt, t.CreatedAt, t.UpdatedAt = t.NextCheckAt.UTC(), t.CreatedAt.UTC(), t.UpdatedAt.UTC()
 
 	rows, err := r.db.Query(ctx, `SELECT dimension, from_state, to_state, coalesce(note, ''), created_at
@@ -213,7 +213,7 @@ func (r txnRepo) saveChildren(ctx context.Context, db DB, t *tx.Transaction) err
 			SELECT $1, p.id, $2, $3, $4, NULLIF($5, '') FROM payments p WHERE p.transaction_id = $1
 			ON CONFLICT (transaction_id) DO UPDATE SET
 			    status = EXCLUDED.status, provider_reference = EXCLUDED.provider_reference`,
-			t.ID, t.Total.Minor, t.RefundReason, t.Payment, t.RefundProviderRef); err != nil {
+			t.ID, t.RefundAmount.Minor, t.RefundReason, t.Payment, t.RefundProviderRef); err != nil {
 			return mapErr(err)
 		}
 	}

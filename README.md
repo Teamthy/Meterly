@@ -4,7 +4,7 @@ Electricity, recharged from anywhere. Meterly lets people in Nigeria buy electri
 
 This repository holds the backend platform: a Go modular monolith built around a transaction engine that tracks **payment, vending and delivery as three separate, auditable steps**.
 
-> **Status:** persistence (PostgreSQL) and crash-safe background processing are done. Providers are still **mocks**, and auth is a dev stub. Production also needs real provider adapters, OIDC, and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+> **Status:** persistence (PostgreSQL) and crash-safe background processing are done. Providers are still **mocks**, and auth is a dev stub. Production also needs real provider adapters, OIDC, and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md). **Current state, next steps and session context: [`docs/HANDOFF.md`](docs/HANDOFF.md).**
 
 ## Quick start
 
@@ -37,7 +37,13 @@ go test -race ./...
 | `cmd/api` | HTTP API. Refuses to start while migrations are pending. With `RUN_WORKER=true` (default in dev) it also runs the background loops. |
 | `cmd/worker` | Resume/reconciliation sweep and outbox publisher. Safe to run as several replicas. It refuses to run with mock providers, so until real adapters land the worker runs inside `cmd/api`. |
 
-Configuration is read from the environment and validated at startup (`internal/platform/config`). Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
+Configuration is read from the environment and validated at startup (`internal/platform/config`).
+
+**Auth:** `AUTH_MODE=dev` (dev only: the bearer token is the user; prefix it with `operator:` or `admin:` for staff roles) or `oidc` (required outside dev) with `OIDC_ISSUER`, `OIDC_AUDIENCE`, and optionally `OIDC_JWKS_URL`, `OIDC_ROLES_CLAIM` (default `roles`) and `OIDC_MFA_AMR`. Staff roles need MFA.
+
+**Admin API** (`/v1/admin/*`, operator or admin role): search and investigate transactions, reconcile, release a token after a remote-delivery failure, reveal a token (audited), requeue or refund from manual review (admin), and switch providers on or off (admin). Every action needs a `reason` and is written to the audit log.
+
+**Payments:** `PAYMENT_PROVIDER=mock` (default) or `paystack`. For Paystack, set `PAYSTACK_SECRET_KEY` (only `sk_test_…` is accepted outside production), optionally `PAYSTACK_CALLBACK_URL`, and point Paystack's webhook at `POST /v1/payments/webhooks/paystack`. Vending and remote credit are still mocks. Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
 
 Run a full purchase in dev (the bearer token is the user ID in dev mode):
 
@@ -52,15 +58,16 @@ curl -s -X POST $B/v1/meters -H "$AUTH" \
 curl -s -X POST $B/v1/electricity/quotes -H "$AUTH" \
   -d '{"meter_id":"<meter_id>","amount_minor":500000,"currency":"NGN","delivery_preference":"AUTO"}'
 
-# 3. Create the transaction (idempotent)
+# 3. Create the transaction (idempotent; email is required)
 curl -s -X POST $B/v1/electricity/transactions -H "$AUTH" \
-  -H 'Idempotency-Key: 0123456789abcdef' -d '{"quote_id":"<quote_id>"}'
+  -H 'Idempotency-Key: 0123456789abcdef' -d '{"quote_id":"<quote_id>","email":"you@example.com"}'
 
 # 4. Simulate checkout + signed webhook (ref = last part of checkout_url)
 curl -s -X POST $B/v1/dev/payments/<ref>/complete -d '{}'
 curl -s -X POST $B/v1/payments/webhooks/mockpay -H 'X-Mock-Signature: dev-signature' -d '{"reference":"<ref>"}'
 
 # 5. Simulate the meter acknowledging; the worker picks it up (or force it)
+#    (operators: curl -H 'Authorization: Bearer operator:you' $B/v1/admin/transactions?review=true)
 curl -s -X POST $B/v1/dev/remote/settle
 curl -s -X POST $B/v1/dev/transactions/<transaction_id>/resume
 curl -s $B/v1/electricity/transactions/<transaction_id> -H "$AUTH"

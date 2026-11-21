@@ -34,10 +34,28 @@ type Config struct {
 	MeterHMACKey []byte
 	KeyVersion   string
 
-	PaymentProvider     string // mock
-	VendingProvider     string // mock
+	PaymentProvider string // mock | paystack
+	VendingProvider string // mock
+
+	PaystackSecretKey   string
+	PaystackBaseURL     string
+	PaystackCallbackURL string
 	RemoteProvider      string // mock | none
 	ProviderEnvironment string // SANDBOX | PRODUCTION
+
+	// Authentication: "dev" (bearer token = subject) or "oidc".
+	AuthMode       string
+	OIDCIssuer     string
+	OIDCAudience   string
+	OIDCJWKSURL    string
+	OIDCRolesClaim string
+	OIDCMFAValues  []string // staff roles require one of these in "amr"
+
+	// Rate limits (per minute) and client IP source.
+	RateWritesPerMin       int
+	RateAuthFailuresPerMin int
+	RateWebhooksPerMin     int
+	ClientIPHeader         string
 
 	Orchestrator    orchestrator.Config
 	ResumeInterval  time.Duration
@@ -107,10 +125,30 @@ func Load(getenv func(string) string) (Config, error) {
 		VendingProvider:     get("VENDING_PROVIDER", "mock"),
 		RemoteProvider:      get("REMOTE_PROVIDER", "mock"),
 		ProviderEnvironment: get("PROVIDER_ENVIRONMENT", "SANDBOX"),
+		PaystackSecretKey:   getenv("PAYSTACK_SECRET_KEY"),
+		PaystackBaseURL:     get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
+		PaystackCallbackURL: getenv("PAYSTACK_CALLBACK_URL"),
 		ResumeInterval:      dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:      dur("OUTBOX_INTERVAL", 2*time.Second),
 		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
+
+	c.AuthMode = get("AUTH_MODE", map[bool]string{true: "dev", false: "oidc"}[c.Mode == Dev])
+	c.OIDCIssuer = getenv("OIDC_ISSUER")
+	c.OIDCAudience = getenv("OIDC_AUDIENCE")
+	c.OIDCJWKSURL = getenv("OIDC_JWKS_URL")
+	c.OIDCRolesClaim = get("OIDC_ROLES_CLAIM", "roles")
+	if v := get("OIDC_MFA_AMR", "mfa,otp,hwk,swk"); v != "none" {
+		for _, x := range strings.Split(v, ",") {
+			if x = strings.TrimSpace(x); x != "" {
+				c.OIDCMFAValues = append(c.OIDCMFAValues, x)
+			}
+		}
+	}
+	c.RateWritesPerMin = int(integer("RATE_LIMIT_WRITES_PER_MIN", 30))
+	c.RateAuthFailuresPerMin = int(integer("RATE_LIMIT_AUTH_FAILURES_PER_MIN", 20))
+	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
+	c.ClientIPHeader = getenv("CLIENT_IP_HEADER")
 
 	o := orchestrator.DefaultConfig()
 	o.FeeMinor = integer("FEE_MINOR", o.FeeMinor)
@@ -142,16 +180,50 @@ func Load(getenv func(string) string) (Config, error) {
 	if o.ResumeStaleAfter <= o.ProviderTimeout {
 		errs = append(errs, errors.New("RESUME_STALE_AFTER must exceed PROVIDER_TIMEOUT, or the worker could race an in-flight call"))
 	}
-	for k, v := range map[string]string{"PAYMENT_PROVIDER": c.PaymentProvider, "VENDING_PROVIDER": c.VendingProvider} {
-		if v != "mock" {
-			errs = append(errs, fmt.Errorf("%s: unsupported value %q (available: mock)", k, v))
+	switch c.PaymentProvider {
+	case "mock":
+	case "paystack":
+		// Live keys only with live mode, so a sandbox can never move real money.
+		wantPrefix, env := "sk_test_", "SANDBOX"
+		if c.Mode == Production {
+			wantPrefix, env = "sk_live_", "PRODUCTION"
 		}
+		if !strings.HasPrefix(c.PaystackSecretKey, wantPrefix) {
+			errs = append(errs, fmt.Errorf("PAYSTACK_SECRET_KEY: must be set and start with %s in MODE=%s", wantPrefix, c.Mode))
+		}
+		if c.ProviderEnvironment != env {
+			errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT must be %s for MODE=%s with Paystack", env, c.Mode))
+		}
+		if !strings.HasPrefix(c.PaystackBaseURL, "https://") && c.Mode != Dev {
+			errs = append(errs, errors.New("PAYSTACK_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("PAYMENT_PROVIDER: unsupported value %q (available: mock, paystack)", c.PaymentProvider))
+	}
+	if c.VendingProvider != "mock" {
+		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock)", c.VendingProvider))
 	}
 	if c.RemoteProvider != "mock" && c.RemoteProvider != "none" {
 		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none)", c.RemoteProvider))
 	}
 	if c.ProviderEnvironment != "SANDBOX" && c.ProviderEnvironment != "PRODUCTION" {
 		errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT: must be SANDBOX or PRODUCTION"))
+	}
+
+	switch c.AuthMode {
+	case "dev":
+		if c.Mode != Dev {
+			errs = append(errs, errors.New("AUTH_MODE=dev is only allowed in MODE=dev"))
+		}
+	case "oidc":
+		if c.OIDCIssuer == "" || c.OIDCAudience == "" {
+			errs = append(errs, errors.New("OIDC_ISSUER and OIDC_AUDIENCE are required with AUTH_MODE=oidc"))
+		}
+		if c.Mode != Dev && len(c.OIDCMFAValues) == 0 {
+			errs = append(errs, errors.New("OIDC_MFA_AMR cannot be disabled outside dev: staff roles must require MFA"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("AUTH_MODE: must be dev or oidc"))
 	}
 
 	runWorker := strings.ToLower(get("RUN_WORKER", ""))
