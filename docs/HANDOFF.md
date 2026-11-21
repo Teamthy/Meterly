@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-21, after M3 (Paystack adapter).
+> **Last updated:** 2026-11-21, after M4 (auth, admin API, audit, rate limits).
 
 ## 1. What Meterly is
 
@@ -14,12 +14,12 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | Foundation: transaction engine, mocks, API | ✅ merged | [PR #1](https://github.com/Teamthy/Meterly/pull/1) |
 | M1: PostgreSQL persistence, atomic units of work | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
 | M2: api/worker split, Resume/reconciliation, config | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
-| M3: Paystack payment adapter | ✅ done, **pushed but not in any PR** | branch `claude/loving-wozniak-yr6igw` (commit `2419928`, plus a merge of `main`) |
-| M4: OIDC auth, admin API, audit, rate limits | ⏳ next | — |
-| M5: notifications, gifting delivery, token sharing, receipts | ⏳ | — |
+| M3: Paystack payment adapter | ✅ done, in open PR | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
+| M4: OIDC auth, admin API, audit, rate limits | ✅ done, in open PR | [PR #3](https://github.com/Teamthy/Meterly/pull/3) (same branch) |
+| M5: notifications, gifting delivery, token sharing, receipts | ⏳ next | — |
 | M6: OpenAPI, metrics/tracing, Dockerfile | ⏳ | — |
 
-**Open action for the founder:** open a PR for M3 (the branch is `main` + M3 and was green when last run).
+**Open action for the founder:** review and merge [PR #3](https://github.com/Teamthy/Meterly/pull/3) (M3 + M4 + handoff). After it merges, the next session must `git merge origin/main` into the branch before new work (force-pushes are blocked).
 
 CI (`.github/workflows/ci.yml`) runs gofmt, vet, `go test -race` against a PostgreSQL 16 service, and fails if the PostgreSQL subtests were skipped. It passed on GitHub for PR #2.
 
@@ -39,7 +39,11 @@ internal/providers      Payment / Vending / RemoteCredit contracts
   mock                  deterministic mocks (behaviour keyed by meter number; see README)
   paystack (+paystacktest fake)
 internal/transactions meters ledger events idempotency money secure   domain
-internal/httpapi        /v1 REST; internal/app wiring; internal/outbox publisher
+internal/httpapi        /v1 REST + /v1/admin (admin.go); internal/app wiring; internal/outbox publisher
+internal/auth           DevAuth + OIDC (stdlib JWT/JWKS), roles, MFA gate
+internal/audit          audit events + actor; correlation ID in context
+internal/ratelimit      in-memory token buckets
+internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
 migrations/0001_init.sql, 0002_persistence.sql
 ```
@@ -92,21 +96,16 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - **Migrations are immutable once applied**; the runner checks checksums. `0001` was edited once, before it was ever applied (its BEGIN/COMMIT were removed). Add new files only.
 - **Git:** force-pushes are blocked by the session's permission classifier. When a PR has merged and the branch needs `main`, use `git merge origin/main`, not a rebase. Develop on the branch named in the session's system instructions.
 - **Orchestrator time** is `o.Now` (injectable); tests use it to make transactions "stale" for `ResumeDue`. Transaction timestamps themselves use wall time.
-- **Dev auth:** the bearer token *is* the user's external ID; users are created on first sight (`users.external_id`). M4 replaces this with OIDC.
-- Operator actions (resume, fallback-to-token) live under `/v1/dev/*` until M4.
+- **Auth:** `AUTH_MODE=dev` (dev only): the bearer token *is* the subject, and the `operator:`/`admin:` prefixes grant staff roles. `AUTH_MODE=oidc` is required outside dev, and staff roles need MFA (`amr`). Users are created on first sight from `sub`.
+- **Operator actions** live under `/v1/admin/*`. Each needs a `reason` and writes an audit row in the same tx. `/v1/dev/*` now only has simulation helpers (complete payment, settle meter, resume).
+- **Operator refunds** only from MANUAL_REVIEW, only if vending is NOT_STARTED/FAILED, and for the amount the PSP says was paid. The new payment transitions PENDING/FAILED→REFUND_PENDING are for that path only; automation never takes them.
+- **Provider disable** pauses new outbound work without failing or escalating anything (`ErrProviderDisabled`; `schedule(..., paused)`).
+- **Rate limits are per process** (in-memory). The dev-auth "admin:" prefix must never be reachable in prod; config refuses `AUTH_MODE=dev` outside `MODE=dev`.
+- **Tests with a frozen clock** (`e.later`) give identical `CreatedAt`s; advance the clock between creations if order matters.
 
 ## 7. What's next
 
-**M4 (next session):** OIDC JWT verification (JWKS cache, RS256/ES256, ≤60s skew) replacing `DevAuth` outside dev. Customer and operator/admin roles. `/v1/admin/*`:
-- transaction search and detail with history
-- reconcile one transaction
-- fallback-to-token with a reason
-- resolve MANUAL_REVIEW (approve or reject a refund, re-queue)
-- provider enable/disable
-
-Also: `audit_events` written in the same tx as each admin action and each token read; an audited, masked-by-default admin token reveal; and per-user/IP rate limits.
-
-**M5:** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` with hashed destinations. Receipts.
+**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` with hashed destinations. Receipts.
 
 **M6:** `api/openapi.yaml` plus a route-coverage test, OpenTelemetry, Prometheus `/metrics`, distroless Dockerfiles.
 
@@ -114,9 +113,19 @@ Also: `audit_events` written in the same tx as each admin action and each token 
 - a real **vending** partner/aggregator and its API docs (needed before any non-dev deployment)
 - an **AMI/HES remote-credit** partner and an authorised test on a real meter
 - a Paystack sandbox key plus webhook configuration for a live sandbox test
+- choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with a roles claim and MFA for staff, so OIDC can be tested end to end
 - legal review: NERC and state regulators, the CBN-licensed payment money flow, NDPA 2023
 
 ## 8. Session log (newest first)
+
+- **2026-11-21 (later): M4.** Opened PR #3 (M3 + handoff). Built:
+  - `internal/auth`: OIDC verifier using only the stdlib (RS256/ES256, iss/aud/exp/nbf/iat, ≤60s skew, cached JWKS with rate-limited refresh on rotation, discovery), roles claim, MFA gate for staff.
+  - `/v1/admin/*`: search with keyset paging, detail (ledger, events, audit), reconcile, fallback-to-token, audited token reveal, requeue, operator refund of the amount actually paid, provider enable/disable.
+  - Audit log in the same tx as each action. Customer token reads audited.
+  - Rate limits: per-user writes, per-IP auth failures and webhooks.
+  - Migration `0003_operations.sql`.
+  - Found and fixed a JWKS bug: the rate limit blocked a legitimate key rotation within 30s of startup.
+  - Verified: full suite with the race detector on memory and PostgreSQL (green, repeated 3× for the concurrent suites). OIDC tested against an in-process JWKS only, **not a real identity provider**.
 
 - **2026-11-21: M1, M2, M3.**
   - M1/M2 (PR #2, merged, CI green on GitHub): PostgreSQL store with `InTx`; orchestrator rewrite with atomic transitions and explicit claims; atomic idempotent create; migration runner; Resume worker with payment sweeper, expiry, late-payment and mismatch review, backoff and escalation; api/worker split; validated config; outbox publisher.

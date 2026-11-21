@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
@@ -34,13 +35,15 @@ type Store struct {
 	ledgerByRef map[string]int
 	outbox      []*events.Event
 	idem        map[string]*idempotency.Record
+	audit       []audit.Event
+	providerOff map[string]bool
 }
 
 func New() *Store {
 	return &Store{
 		users: map[string]string{}, meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
-		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{},
+		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
 	}
 }
 
@@ -88,6 +91,8 @@ func (r *repos) Transactions() store.TransactionRepo { return txnRepo{r} }
 func (r *repos) Ledger() store.LedgerRepo            { return ledgerRepo{r} }
 func (r *repos) Outbox() store.OutboxRepo            { return outboxRepo{r} }
 func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
+func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
+func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -339,6 +344,29 @@ func (r txnRepo) ListForCustomer(_ context.Context, customerID string) ([]*tx.Tr
 	return out, nil
 }
 
+func (r txnRepo) Search(_ context.Context, f store.TxnFilter) ([]*tx.Transaction, error) {
+	defer r.lock()()
+	var out []*tx.Transaction
+	for _, t := range r.s.txns {
+		switch {
+		case f.ReviewOnly && t.ReviewReason == "",
+			f.Payment != "" && t.Payment != f.Payment,
+			f.Vending != "" && t.Vending != f.Vending,
+			f.Delivery != "" && t.Delivery != f.Delivery,
+			f.CustomerID != "" && t.CustomerID != f.CustomerID,
+			f.MeterID != uuid.Nil && t.MeterID != f.MeterID,
+			!f.Before.IsZero() && !t.CreatedAt.Before(f.Before):
+			continue
+		}
+		out = append(out, cloneTxn(t))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if f.Limit > 0 && len(out) > f.Limit {
+		out = out[:f.Limit]
+	}
+	return out, nil
+}
+
 func (r txnRepo) ClaimDue(_ context.Context, now, staleBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error) {
 	defer r.lock()()
 	var due []*tx.Transaction
@@ -510,5 +538,46 @@ func (r idemRepo) Complete(_ context.Context, scope, op, key, resultRef string) 
 	prev := rec.ResultRef
 	rec.ResultRef = resultRef
 	r.onUndo(func() { rec.ResultRef = prev })
+	return nil
+}
+
+// ---- audit ---------------------------------------------------------------------
+
+type auditRepo struct{ *repos }
+
+func (r auditRepo) Add(_ context.Context, e audit.Event) error {
+	defer r.lock()()
+	e.ID = int64(len(r.s.audit) + 1)
+	r.s.audit = append(r.s.audit, e)
+	n := len(r.s.audit)
+	r.onUndo(func() { r.s.audit = r.s.audit[:n-1] })
+	return nil
+}
+
+func (r auditRepo) ForResource(_ context.Context, typ string, id uuid.UUID) ([]audit.Event, error) {
+	defer r.lock()()
+	var out []audit.Event
+	for _, e := range r.s.audit {
+		if e.ResourceType == typ && e.ResourceID != nil && *e.ResourceID == id {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// ---- providers -----------------------------------------------------------------
+
+type providerRepo struct{ *repos }
+
+func (r providerRepo) Enabled(_ context.Context, name string) (bool, error) {
+	defer r.lock()()
+	return !r.s.providerOff[name], nil
+}
+
+func (r providerRepo) SetEnabled(_ context.Context, name, _ string, enabled bool) error {
+	defer r.lock()()
+	prev := r.s.providerOff[name]
+	r.s.providerOff[name] = !enabled
+	r.onUndo(func() { r.s.providerOff[name] = prev })
 	return nil
 }

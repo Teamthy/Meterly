@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers/mock"
@@ -47,7 +48,7 @@ func newPaystackEnv(t *testing.T, st store.Store) *psEnv {
 	vend, remote := mock.NewVending(), mock.NewRemoteCredit()
 	e.o = orchestrator.New(orchestrator.DefaultConfig(), st, registry.New(st, box, vend, remote), box, ps, vend, remote, log)
 	e.o.Now = func() time.Time { return e.clock }
-	s := &httpapi.Server{O: e.o, Auth: httpapi.DevAuth{}, Payments: ps, Log: log, Dev: true}
+	s := &httpapi.Server{O: e.o, Auth: auth.DevAuth{}, Payments: ps, Log: log, Dev: true}
 	srv := httptest.NewServer(s.Routes())
 	t.Cleanup(srv.Close)
 	e.c = client{t, srv}

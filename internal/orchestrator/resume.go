@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,6 +84,9 @@ func (o *Orchestrator) reconcileVend(ctx context.Context, t *tx.Transaction) (*t
 	}
 	// The provider confirms it never received the request, so sending it
 	// (again) cannot double-vend.
+	if err := o.requireEnabled(ctx, o.vending.Name()); err != nil {
+		return t, err
+	}
 	// Re-claim (UNKNOWN -> PENDING, or touch a stale PENDING) so that only
 	// one worker re-sends.
 	claimed := false
@@ -123,6 +127,9 @@ func (o *Orchestrator) reconcileCredit(ctx context.Context, t *tx.Transaction) (
 			t.FlagForReview("HES lost record of an accepted credit command")
 			return emit(ctx, r, "electricity.transaction.escalated", t.ID, map[string]any{"reason": "credit record lost"})
 		})
+	}
+	if err := o.requireEnabled(ctx, o.remote.Name()); err != nil {
+		return t, err
 	}
 	// UNKNOWN or stale PENDING and the HES has no record: re-claim so only
 	// one worker re-sends.
@@ -174,7 +181,8 @@ func (o *Orchestrator) ResumeDue(ctx context.Context) (processed, progressed int
 			continue
 		}
 		after, rerr := o.Resume(ctx, id)
-		if rerr != nil {
+		paused := errors.Is(rerr, ErrProviderDisabled)
+		if rerr != nil && !paused {
 			o.log.Warn("resume failed", "txn", id, "err", rerr)
 		}
 		moved := after != nil && snapshot(after) != snapshot(before)
@@ -182,7 +190,7 @@ func (o *Orchestrator) ResumeDue(ctx context.Context) (processed, progressed int
 			progressed++
 		}
 		processed++
-		if err := o.schedule(ctx, id, moved); err != nil {
+		if err := o.schedule(ctx, id, moved, paused); err != nil {
 			o.log.Warn("schedule failed", "txn", id, "err", err)
 		}
 	}
@@ -200,7 +208,10 @@ func (o *Orchestrator) backoff(attempts int) time.Duration {
 	return d
 }
 
-func (o *Orchestrator) schedule(ctx context.Context, id uuid.UUID, moved bool) error {
+// schedule sets the next check. A paused step (provider switched off by an
+// operator) is retried at the base interval without counting as a failed
+// attempt, so an outage the operator is managing never escalates.
+func (o *Orchestrator) schedule(ctx context.Context, id uuid.UUID, moved, paused bool) error {
 	now := o.Now()
 	var escalated bool
 	_, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
@@ -210,6 +221,10 @@ func (o *Orchestrator) schedule(ctx context.Context, id uuid.UUID, moved bool) e
 		if moved {
 			t.CheckAttempts = 0
 			t.NextCheckAt = now
+			return nil
+		}
+		if paused {
+			t.NextCheckAt = now.Add(o.cfg.ResumeBaseBackoff)
 			return nil
 		}
 		t.CheckAttempts++

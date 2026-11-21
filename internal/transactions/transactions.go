@@ -55,8 +55,12 @@ const (
 )
 
 var paymentTransitions = map[PaymentState][]PaymentState{
-	PayCreated:       {PayPending, PayFailed},
-	PayPending:       {PayConfirmed, PayFailed},
+	PayCreated: {PayPending, PayFailed},
+	// PENDING/FAILED -> REFUND_PENDING exist only for operator-approved
+	// refunds of money that arrived but was never accepted (amount
+	// mismatch, payment after expiry). Automation never takes them.
+	PayPending:       {PayConfirmed, PayFailed, PayRefundPending},
+	PayFailed:        {PayRefundPending},
 	PayConfirmed:     {PayRefundPending},
 	PayRefundPending: {PayRefunded},
 }
@@ -113,19 +117,20 @@ type Transaction struct {
 	Delivery       DeliveryState  `json:"delivery_status"`
 	DeliveryMethod DeliveryMethod `json:"delivery_method"`
 
-	PaymentProviderName  string `json:"-"`
-	PaymentProviderRef   string `json:"-"`
-	CheckoutURL          string `json:"checkout_url,omitempty"`
-	VendProviderName     string `json:"-"`
-	VendProviderRef      string `json:"-"`
-	DeliveryProviderName string `json:"-"`
-	DeliveryProviderRef  string `json:"-"`
-	TokenCiphertext      []byte `json:"-"`
-	TokenKeyVersion      string `json:"-"`
-	UnitsKWh             string `json:"units_kwh,omitempty"`
-	FailureCode          string `json:"failure_code,omitempty"`
-	RefundReason         string `json:"-"`
-	RefundProviderRef    string `json:"-"`
+	PaymentProviderName  string       `json:"-"`
+	PaymentProviderRef   string       `json:"-"`
+	CheckoutURL          string       `json:"checkout_url,omitempty"`
+	VendProviderName     string       `json:"-"`
+	VendProviderRef      string       `json:"-"`
+	DeliveryProviderName string       `json:"-"`
+	DeliveryProviderRef  string       `json:"-"`
+	TokenCiphertext      []byte       `json:"-"`
+	TokenKeyVersion      string       `json:"-"`
+	UnitsKWh             string       `json:"units_kwh,omitempty"`
+	FailureCode          string       `json:"failure_code,omitempty"`
+	RefundReason         string       `json:"-"`
+	RefundAmount         money.Amount `json:"-"` // what is being refunded; may differ from Total
+	RefundProviderRef    string       `json:"-"`
 
 	// ReviewReason, when set, puts the transaction in MANUAL_REVIEW and stops
 	// all automated processing until an operator resolves it.

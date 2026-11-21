@@ -68,6 +68,8 @@ func (r *repos) Transactions() store.TransactionRepo { return txnRepo{r} }
 func (r *repos) Ledger() store.LedgerRepo            { return ledgerRepo{r} }
 func (r *repos) Outbox() store.OutboxRepo            { return outboxRepo{r} }
 func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
+func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
+func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

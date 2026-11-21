@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers/mock"
@@ -85,7 +86,7 @@ func endToEnd(t *testing.T, st store.Store) {
 	box, _ := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "t1")
 	pay, vend, remote := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit()
 	o := orchestrator.New(orchestrator.DefaultConfig(), st, registry.New(st, box, vend, remote), box, pay, vend, remote, log)
-	s := &httpapi.Server{O: o, Auth: httpapi.DevAuth{}, Payments: pay, Log: log, Dev: true, DevPay: pay, DevRemote: remote}
+	s := &httpapi.Server{O: o, Auth: auth.DevAuth{}, Payments: pay, Log: log, Dev: true, DevPay: pay, DevRemote: remote}
 	srv := httptest.NewServer(s.Routes())
 	defer srv.Close()
 	c := client{t, srv}

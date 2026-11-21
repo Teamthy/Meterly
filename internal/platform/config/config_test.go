@@ -77,3 +77,22 @@ func TestPaystackKeyMustMatchMode(t *testing.T) {
 		t.Fatalf("test key in production must be rejected: %v", err)
 	}
 }
+
+func TestAuthConfig(t *testing.T) {
+	c, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil || c.AuthMode != "dev" || len(c.OIDCMFAValues) == 0 {
+		t.Fatalf("%v %+v", err, c)
+	}
+	_, err = Load(env(map[string]string{"MODE": "staging", "AUTH_MODE": "dev"}))
+	if err == nil || !strings.Contains(err.Error(), "AUTH_MODE=dev is only allowed") {
+		t.Fatalf("dev auth outside dev: %v", err)
+	}
+	_, err = Load(env(map[string]string{"MODE": "staging"}))
+	if err == nil || !strings.Contains(err.Error(), "OIDC_ISSUER") {
+		t.Fatalf("oidc is the default outside dev and needs config: %v", err)
+	}
+	_, err = Load(env(map[string]string{"MODE": "staging", "OIDC_ISSUER": "https://i", "OIDC_AUDIENCE": "a", "OIDC_MFA_AMR": "none"}))
+	if err == nil || !strings.Contains(err.Error(), "MFA") {
+		t.Fatalf("MFA must stay on outside dev: %v", err)
+	}
+}

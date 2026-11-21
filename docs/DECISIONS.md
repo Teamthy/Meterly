@@ -39,3 +39,37 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Webhooks:** HMAC-SHA512 over the raw body, compared in constant time. Only `charge.success` triggers processing; other events are acknowledged and ignored. The body is never trusted: we always call verify. Paystack's IP allowlist is not enforced in the app; it belongs at the edge (WAF or load balancer).
 - **Key safety:** config only accepts `sk_test_` keys outside `MODE=production` and `sk_live_` keys in production, and `PROVIDER_ENVIRONMENT` must match.
 - **Email is required to create a transaction.** Paystack needs it, and checking it in the API before anything is created avoids leaving a half-created transaction the client can't retry with the same Idempotency-Key.
+
+## Auth, admin and audit (M4)
+
+- **OIDC verification uses only the Go standard library** (`internal/auth`), not a JWT library. The supported surface is deliberately small:
+  - RS256 (RSA ≥ 2048 bits) and ES256 only. `none` and HS* are rejected, which closes the alg-confusion attacks.
+  - `iss` must match exactly; `aud` must contain the configured audience.
+  - `exp` is required. `nbf` and `iat` are checked. Clock skew is at most 60s.
+  - The JWKS is cached for 10 minutes. An unknown `kid` triggers a refresh for key rotation, but at most once per 30s so junk tokens can't make us hammer the identity provider.
+  - If `OIDC_JWKS_URL` is empty, the JWKS URL is discovered from the issuer.
+- **Users are keyed by `sub`** (`users.external_id`). This assumes a single issuer; supporting several would need `iss`-qualified IDs.
+- **Roles:** `customer` (everyone), `operator`, `admin` (implies operator). They are read from `OIDC_ROLES_CLAIM` (default `roles`; dotted paths like `realm_access.roles` work), and unknown roles are ignored.
+- **Staff roles need MFA:** they count only if the token's `amr` contains one of `OIDC_MFA_AMR` (default `mfa,otp,hwk,swk`). Otherwise the caller is treated as a plain customer. This can't be disabled outside dev.
+- **Dev auth** is allowed only in `MODE=dev`. Subjects prefixed `operator:` or `admin:` get those roles, for local testing.
+- **Who can do what:**
+
+| Action | Role |
+|---|---|
+| Search, view detail (ledger, events, audit) | operator |
+| Reconcile one transaction, fallback to token, audited token reveal | operator |
+| Requeue from review, refund from review | admin |
+| Enable or disable a provider | admin |
+
+- **Every operator action needs a reason** (5–500 characters) and writes an `audit_events` row in the same DB transaction as the change. Customer token reads (`token.read`) and operator reveals (`token.reveal`) are audited before the token is returned: no audit row, no token. Audit metadata never holds tokens, meter numbers or contact details.
+- **Operator refunds** are allowed only from MANUAL_REVIEW, and only when vending is `NOT_STARTED` or `FAILED`, so electricity was provably not delivered. They refund **the amount the PSP reports as paid**, which covers underpayments and late payments, and record its receipt in the ledger first. New payment transitions `PENDING→REFUND_PENDING` and `FAILED→REFUND_PENDING` exist only for this path.
+- **Requeue** clears the review flag, resets the attempt budget and runs Resume. If the cause persists, automation flags the transaction again. There is no "close without action" yet; add one if operations need it.
+- **Provider switches** pause new outbound work: checkouts, vends, credit sends and their re-sends. Status queries still run. A paused step doesn't count as a failed attempt, so an outage the operator is managing never escalates.
+- **Rate limits** are in-memory token buckets, one set per API replica:
+  - writes (meter validation and registration, quotes, purchases, payment checks): per user, default 30/min with a burst of 10
+  - failed authentication: per client IP, default 20/min
+  - webhooks: per IP, default 600/min
+  - the response is 429 with `Retry-After`
+  - `CLIENT_IP_HEADER` takes the client IP from the right-most value of a header the trusted proxy appended
+  - move to a shared store (Redis) when one replica's view stops being enough
+- **Admin search pagination** is keyset on `created_at` (`before=` / `next_before`). Transactions created in the same microsecond across a page boundary could be skipped; add an ID tiebreaker if that ever matters.

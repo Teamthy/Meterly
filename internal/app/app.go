@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/outbox"
@@ -39,6 +40,7 @@ type App struct {
 	mockPay    *mock.Payments
 	mockRemote *mock.RemoteCredit
 	payments   providers.PaymentProvider
+	authn      auth.Authenticator
 }
 
 func Build(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
@@ -99,6 +101,20 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, erro
 		remote = a.mockRemote
 	}
 
+	if cfg.AuthMode == "oidc" {
+		o, err := auth.NewOIDC(auth.OIDCConfig{
+			Issuer: cfg.OIDCIssuer, Audience: cfg.OIDCAudience, JWKSURL: cfg.OIDCJWKSURL,
+			RolesClaim: cfg.OIDCRolesClaim, MFAValues: cfg.OIDCMFAValues, Log: log,
+		})
+		if err != nil {
+			return nil, err
+		}
+		a.authn = o
+	} else {
+		log.Warn("using dev authentication: the bearer token is the user; operator:/admin: prefixes grant staff roles")
+		a.authn = auth.DevAuth{}
+	}
+
 	reg := registry.New(a.Store, box, vend, remote)
 	a.Orch = orchestrator.New(cfg.Orchestrator, a.Store, reg, box, a.payments, vend, remote, log)
 	a.Publisher = outbox.NewPublisher(a.Store, outbox.LogSink(log), log)
@@ -126,7 +142,11 @@ func (a *App) Ready(ctx context.Context) error {
 
 func (a *App) Handler() http.Handler {
 	s := &httpapi.Server{
-		O: a.Orch, Auth: httpapi.DevAuth{}, Payments: a.payments, Log: a.Log, Ready: a.Ready,
+		O: a.Orch, Auth: a.authn, Payments: a.payments, Log: a.Log, Ready: a.Ready,
+		Limits: httpapi.Limits{
+			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,
+			WebhooksPerMinute: a.Cfg.RateWebhooksPerMin, ClientIPHeader: a.Cfg.ClientIPHeader,
+		},
 		Dev: a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
 	}
 	return s.Routes()

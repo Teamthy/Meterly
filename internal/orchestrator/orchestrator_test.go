@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
@@ -472,7 +473,7 @@ func TestRemoteFailureThenTokenFallback(t *testing.T) {
 		if len(e.pay.Refunds) != 0 {
 			t.Fatal("electricity was vended; must not auto-refund")
 		}
-		txn, err := e.o.FallbackToToken(e.ctx, txn.ID, "ops@test")
+		txn, err := e.o.FallbackToToken(e.ctx, txn.ID, audit.Actor{UserID: e.user(t, "ops"), Type: audit.ActorOperator, Reason: "remote delivery failed"})
 		if err != nil || txn.Status() != tx.OverallCompleted {
 			t.Fatalf("fallback: %v", err)
 		}

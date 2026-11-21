@@ -8,81 +8,105 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
+	"github.com/teamthy/meterly/internal/ratelimit"
+	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
-// Authenticator resolves a request to an identity-provider subject.
-// Production must use an OIDC-compatible implementation.
-type Authenticator interface {
-	Authenticate(r *http.Request) (subject string, err error)
-}
-
-// DevAuth treats the bearer token itself as the subject. Development only.
-type DevAuth struct{}
-
-func (DevAuth) Authenticate(r *http.Request) (string, error) {
-	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || tok == "" {
-		return "", errors.New("missing bearer token")
-	}
-	return tok, nil
+// Limits configures rate limiting. Zero values use the defaults.
+type Limits struct {
+	WritesPerMinute       int // per user: meter validation/registration, quotes, purchases
+	AuthFailuresPerMinute int // per client IP: failed authentications
+	WebhooksPerMinute     int // per client IP
+	// ClientIPHeader, when set (e.g. "X-Forwarded-For"), takes the client IP
+	// from the right-most value of that header, which the trusted proxy
+	// appended. Leave empty when not behind a proxy.
+	ClientIPHeader string
 }
 
 type Server struct {
 	O        *orchestrator.Orchestrator
-	Auth     Authenticator
+	Auth     auth.Authenticator
 	Payments providers.PaymentProvider
 	Log      *slog.Logger
 	Ready    func(context.Context) error
+	Limits   Limits
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev       bool
 	DevPay    *mock.Payments
 	DevRemote *mock.RemoteCredit
+
+	writes, authFails, hooks ratelimit.Limiter
+}
+
+type caller struct {
+	UserID    string // internal user UUID
+	Principal auth.Principal
 }
 
 type ctxKey struct{}
 
+func callerOf(r *http.Request) caller { return r.Context().Value(ctxKey{}).(caller) }
+
 // userID is the internal user ID (UUID) of the authenticated caller.
-func userID(r *http.Request) string { return r.Context().Value(ctxKey{}).(string) }
+func userID(r *http.Request) string { return callerOf(r).UserID }
+
+func orDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
+}
 
 func (s *Server) Routes() http.Handler {
+	s.writes = ratelimit.New(orDefault(s.Limits.WritesPerMinute, 30), 10)
+	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
+	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
 
-	mux.Handle("POST /v1/meters/validate", s.authed(s.validateMeter))
-	mux.Handle("POST /v1/meters", s.authed(s.registerMeter))
-	mux.Handle("GET /v1/meters", s.authed(s.listMeters))
-	mux.Handle("GET /v1/meters/{meter_id}", s.authed(s.getMeter))
-	mux.Handle("GET /v1/meters/{meter_id}/capabilities", s.authed(s.getCapabilities))
-	mux.Handle("POST /v1/beneficiaries", s.authed(s.addBeneficiary))
+	user, write := s.authed(auth.RoleCustomer, false), s.authed(auth.RoleCustomer, true)
+	mux.Handle("POST /v1/meters/validate", write(s.validateMeter))
+	mux.Handle("POST /v1/meters", write(s.registerMeter))
+	mux.Handle("GET /v1/meters", user(s.listMeters))
+	mux.Handle("GET /v1/meters/{meter_id}", user(s.getMeter))
+	mux.Handle("GET /v1/meters/{meter_id}/capabilities", user(s.getCapabilities))
+	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
 
-	mux.Handle("POST /v1/electricity/quotes", s.authed(s.createQuote))
-	mux.Handle("POST /v1/electricity/transactions", s.authed(s.createTransaction))
-	mux.Handle("GET /v1/electricity/transactions", s.authed(s.listTransactions))
-	mux.Handle("GET /v1/electricity/transactions/{transaction_id}", s.authed(s.getTransaction))
-	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/status", s.authed(s.getTransaction))
-	mux.Handle("POST /v1/electricity/transactions/{transaction_id}/payment-check", s.authed(s.paymentCheck))
-	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token", s.authed(s.getToken))
+	mux.Handle("POST /v1/electricity/quotes", write(s.createQuote))
+	mux.Handle("POST /v1/electricity/transactions", write(s.createTransaction))
+	mux.Handle("GET /v1/electricity/transactions", user(s.listTransactions))
+	mux.Handle("GET /v1/electricity/transactions/{transaction_id}", user(s.getTransaction))
+	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/status", user(s.getTransaction))
+	mux.Handle("POST /v1/electricity/transactions/{transaction_id}/payment-check", write(s.paymentCheck))
+	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token", user(s.getToken))
 
-	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.paymentWebhook)
+	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
+
+	s.adminRoutes(mux)
 
 	if s.Dev {
 		mux.HandleFunc("POST /v1/dev/payments/{ref}/complete", s.devCompletePayment)
 		mux.HandleFunc("POST /v1/dev/remote/settle", s.devSettle)
 		mux.HandleFunc("POST /v1/dev/reconcile", s.devReconcile)
 		mux.HandleFunc("POST /v1/dev/transactions/{transaction_id}/resume", s.devResume)
-		mux.HandleFunc("POST /v1/dev/transactions/{transaction_id}/fallback-to-token", s.devFallback)
 	}
 	return s.withCorrelation(mux)
 }
@@ -91,33 +115,83 @@ func (s *Server) Routes() http.Handler {
 
 func (s *Server) withCorrelation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cid := r.Header.Get("X-Correlation-ID")
-		if _, err := uuid.Parse(cid); err != nil {
-			cid = uuid.NewString()
+		cid, err := uuid.Parse(r.Header.Get("X-Correlation-ID"))
+		if err != nil {
+			cid = uuid.New()
 		}
-		w.Header().Set("X-Correlation-ID", cid)
+		w.Header().Set("X-Correlation-ID", cid.String())
 		start := time.Now()
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(audit.WithCorrelation(r.Context(), cid)))
 		// Never log bodies: they can contain meter numbers and tokens.
 		s.Log.Info("request", "method", r.Method, "path", r.Pattern, "cid", cid, "ms", time.Since(start).Milliseconds())
 	})
 }
 
-func (s *Server) authed(h http.HandlerFunc) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sub, err := s.Auth.Authenticate(r)
-		if err != nil {
-			writeErr(w, 401, "UNAUTHENTICATED", "authentication required")
+// clientIP is the caller's address, from the trusted proxy header if set.
+func (s *Server) clientIP(r *http.Request) string {
+	if h := s.Limits.ClientIPHeader; h != "" {
+		if v := r.Header.Values(h); len(v) > 0 {
+			parts := strings.Split(v[len(v)-1], ",")
+			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+				return ip
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func tooMany(w http.ResponseWriter, wait time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+	writeErr(w, 429, "RATE_LIMITED", "too many requests; retry later")
+}
+
+func (s *Server) limited(l ratelimit.Limiter, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ok, wait := l.Allow(s.clientIP(r)); !ok {
+			tooMany(w, wait)
 			return
 		}
-		uid, err := s.O.Store().Repos().Users().EnsureByExternalID(r.Context(), sub)
-		if err != nil {
-			s.mapErr(w, r, err)
-			return
-		}
-		h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, uid)))
-	})
+		h(w, r)
+	}
+}
+
+// authed authenticates the caller, maps them to an internal user, checks
+// the role, and (for writes) applies the per-user rate limit.
+func (s *Server) authed(role auth.Role, isWrite bool) func(http.HandlerFunc) http.Handler {
+	return func(h http.HandlerFunc) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, err := s.Auth.Authenticate(r)
+			if err != nil {
+				if ok, wait := s.authFails.Allow(s.clientIP(r)); !ok {
+					tooMany(w, wait)
+					return
+				}
+				writeErr(w, 401, "UNAUTHENTICATED", "authentication required")
+				return
+			}
+			if !p.Has(role) {
+				writeErr(w, 403, "FORBIDDEN", "insufficient role")
+				return
+			}
+			uid, err := s.O.Store().Repos().Users().EnsureByExternalID(r.Context(), p.Subject)
+			if err != nil {
+				s.mapErr(w, r, err)
+				return
+			}
+			if isWrite {
+				if ok, wait := s.writes.Allow(uid); !ok {
+					tooMany(w, wait)
+					return
+				}
+			}
+			h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, caller{UserID: uid, Principal: p})))
+		})
+	}
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
@@ -470,20 +544,6 @@ func (s *Server) devResume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, view(t))
 }
 
-func (s *Server) devFallback(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(r.PathValue("transaction_id"))
-	if err != nil {
-		writeErr(w, 404, "TRANSACTION_NOT_FOUND", "transaction not found")
-		return
-	}
-	t, err := s.O.FallbackToToken(r.Context(), id, "dev-operator")
-	if err != nil {
-		s.mapErr(w, r, err)
-		return
-	}
-	writeJSON(w, 200, view(t))
-}
-
 // ---- helpers ----------------------------------------------------------------------
 
 func validEmail(e string) bool {
@@ -534,6 +594,14 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "IDEMPOTENCY_CONFLICT", "Idempotency-Key was used with a different request")
 	case errors.Is(err, idempotency.ErrInProgress):
 		writeErr(w, 409, "IDEMPOTENCY_CONFLICT", "a request with this Idempotency-Key is in progress")
+	case errors.Is(err, orchestrator.ErrReasonRequired):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, orchestrator.ErrNotInReview), errors.Is(err, orchestrator.ErrRefundNotSafe), errors.Is(err, orchestrator.ErrNothingToRefund):
+		writeErr(w, 409, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, orchestrator.ErrProviderDisabled):
+		writeErr(w, 503, "PROVIDER_UNAVAILABLE", "provider temporarily disabled")
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, 404, "NOT_FOUND", "not found")
 	case errors.Is(err, tx.ErrNotFound):
 		writeErr(w, 404, "TRANSACTION_NOT_FOUND", "transaction not found")
 	case errors.Is(err, tx.ErrInvalidTransition), errors.Is(err, tx.ErrConflict):

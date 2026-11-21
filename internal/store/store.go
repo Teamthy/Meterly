@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
@@ -44,6 +45,32 @@ type Repos interface {
 	Ledger() LedgerRepo
 	Outbox() OutboxRepo
 	Idempotency() IdempotencyRepo
+	Audit() AuditRepo
+	Providers() ProviderRepo
+}
+
+type AuditRepo interface {
+	Add(ctx context.Context, e audit.Event) error
+	ForResource(ctx context.Context, resourceType string, id uuid.UUID) ([]audit.Event, error)
+}
+
+// ProviderRepo holds operator switches for integrations. A provider with
+// no record is enabled.
+type ProviderRepo interface {
+	Enabled(ctx context.Context, name string) (bool, error)
+	SetEnabled(ctx context.Context, name, providerType string, enabled bool) error
+}
+
+// TxnFilter selects transactions for operators. Zero values match all.
+type TxnFilter struct {
+	ReviewOnly bool
+	Payment    tx.PaymentState
+	Vending    tx.VendingState
+	Delivery   tx.DeliveryState
+	CustomerID string
+	MeterID    uuid.UUID
+	Before     time.Time // created strictly before (keyset pagination)
+	Limit      int
 }
 
 type UserRepo interface {
@@ -84,6 +111,8 @@ type TransactionRepo interface {
 	// concurrency), appends new history, and increments t.Version.
 	Save(ctx context.Context, t *tx.Transaction) error
 	ListForCustomer(ctx context.Context, customerID string) ([]*tx.Transaction, error)
+	// Search returns matches newest first.
+	Search(ctx context.Context, f TxnFilter) ([]*tx.Transaction, error)
 	// ClaimDue returns unsettled transactions whose NextCheckAt <= now and
 	// that have not changed since staleBefore, and pushes their NextCheckAt
 	// to now+lease so concurrent workers skip them.

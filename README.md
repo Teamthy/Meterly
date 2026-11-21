@@ -39,6 +39,10 @@ go test -race ./...
 
 Configuration is read from the environment and validated at startup (`internal/platform/config`).
 
+**Auth:** `AUTH_MODE=dev` (dev only: the bearer token is the user; prefix it with `operator:` or `admin:` for staff roles) or `oidc` (required outside dev) with `OIDC_ISSUER`, `OIDC_AUDIENCE`, and optionally `OIDC_JWKS_URL`, `OIDC_ROLES_CLAIM` (default `roles`) and `OIDC_MFA_AMR`. Staff roles need MFA.
+
+**Admin API** (`/v1/admin/*`, operator or admin role): search and investigate transactions, reconcile, release a token after a remote-delivery failure, reveal a token (audited), requeue or refund from manual review (admin), and switch providers on or off (admin). Every action needs a `reason` and is written to the audit log.
+
 **Payments:** `PAYMENT_PROVIDER=mock` (default) or `paystack`. For Paystack, set `PAYSTACK_SECRET_KEY` (only `sk_test_…` is accepted outside production), optionally `PAYSTACK_CALLBACK_URL`, and point Paystack's webhook at `POST /v1/payments/webhooks/paystack`. Vending and remote credit are still mocks. Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
 
 Run a full purchase in dev (the bearer token is the user ID in dev mode):
@@ -63,6 +67,7 @@ curl -s -X POST $B/v1/dev/payments/<ref>/complete -d '{}'
 curl -s -X POST $B/v1/payments/webhooks/mockpay -H 'X-Mock-Signature: dev-signature' -d '{"reference":"<ref>"}'
 
 # 5. Simulate the meter acknowledging; the worker picks it up (or force it)
+#    (operators: curl -H 'Authorization: Bearer operator:you' $B/v1/admin/transactions?review=true)
 curl -s -X POST $B/v1/dev/remote/settle
 curl -s -X POST $B/v1/dev/transactions/<transaction_id>/resume
 curl -s $B/v1/electricity/transactions/<transaction_id> -H "$AUTH"

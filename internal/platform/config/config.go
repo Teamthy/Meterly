@@ -43,6 +43,20 @@ type Config struct {
 	RemoteProvider      string // mock | none
 	ProviderEnvironment string // SANDBOX | PRODUCTION
 
+	// Authentication: "dev" (bearer token = subject) or "oidc".
+	AuthMode       string
+	OIDCIssuer     string
+	OIDCAudience   string
+	OIDCJWKSURL    string
+	OIDCRolesClaim string
+	OIDCMFAValues  []string // staff roles require one of these in "amr"
+
+	// Rate limits (per minute) and client IP source.
+	RateWritesPerMin       int
+	RateAuthFailuresPerMin int
+	RateWebhooksPerMin     int
+	ClientIPHeader         string
+
 	Orchestrator    orchestrator.Config
 	ResumeInterval  time.Duration
 	OutboxInterval  time.Duration
@@ -119,6 +133,23 @@ func Load(getenv func(string) string) (Config, error) {
 		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 
+	c.AuthMode = get("AUTH_MODE", map[bool]string{true: "dev", false: "oidc"}[c.Mode == Dev])
+	c.OIDCIssuer = getenv("OIDC_ISSUER")
+	c.OIDCAudience = getenv("OIDC_AUDIENCE")
+	c.OIDCJWKSURL = getenv("OIDC_JWKS_URL")
+	c.OIDCRolesClaim = get("OIDC_ROLES_CLAIM", "roles")
+	if v := get("OIDC_MFA_AMR", "mfa,otp,hwk,swk"); v != "none" {
+		for _, x := range strings.Split(v, ",") {
+			if x = strings.TrimSpace(x); x != "" {
+				c.OIDCMFAValues = append(c.OIDCMFAValues, x)
+			}
+		}
+	}
+	c.RateWritesPerMin = int(integer("RATE_LIMIT_WRITES_PER_MIN", 30))
+	c.RateAuthFailuresPerMin = int(integer("RATE_LIMIT_AUTH_FAILURES_PER_MIN", 20))
+	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
+	c.ClientIPHeader = getenv("CLIENT_IP_HEADER")
+
 	o := orchestrator.DefaultConfig()
 	o.FeeMinor = integer("FEE_MINOR", o.FeeMinor)
 	o.MinAmountMinor = integer("MIN_AMOUNT_MINOR", o.MinAmountMinor)
@@ -177,6 +208,22 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.ProviderEnvironment != "SANDBOX" && c.ProviderEnvironment != "PRODUCTION" {
 		errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT: must be SANDBOX or PRODUCTION"))
+	}
+
+	switch c.AuthMode {
+	case "dev":
+		if c.Mode != Dev {
+			errs = append(errs, errors.New("AUTH_MODE=dev is only allowed in MODE=dev"))
+		}
+	case "oidc":
+		if c.OIDCIssuer == "" || c.OIDCAudience == "" {
+			errs = append(errs, errors.New("OIDC_ISSUER and OIDC_AUDIENCE are required with AUTH_MODE=oidc"))
+		}
+		if c.Mode != Dev && len(c.OIDCMFAValues) == 0 {
+			errs = append(errs, errors.New("OIDC_MFA_AMR cannot be disabled outside dev: staff roles must require MFA"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("AUTH_MODE: must be dev or oidc"))
 	}
 
 	runWorker := strings.ToLower(get("RUN_WORKER", ""))
