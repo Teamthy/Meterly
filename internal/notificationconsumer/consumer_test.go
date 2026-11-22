@@ -33,6 +33,7 @@ func TestConsumer(t *testing.T) {
 }
 func exercise(t *testing.T, st store.Store) {
 	ctx := context.Background()
+	since := time.Now().UTC().Add(-time.Minute)
 	id := uuid.New()
 	e := events.New("token.available", id, map[string]any{"phone": "synthetic-sensitive-phone", "token": "synthetic-sensitive-token"})
 	other := events.New("something.else", id, nil)
@@ -49,7 +50,7 @@ func exercise(t *testing.T, st store.Store) {
 	// Simulate a failure after recording: the candidate must roll back.
 	injected := errors.New("injected failure")
 	err := st.InTx(ctx, func(r store.Repos) error {
-		items, err := r.NotificationCandidates().Claim(ctx, 10)
+		items, err := r.NotificationCandidates().Claim(ctx, since, 10)
 		if err != nil {
 			return err
 		}
@@ -75,7 +76,7 @@ func exercise(t *testing.T, st store.Store) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			n, err := notificationconsumer.ConsumeBatch(ctx, st, 10)
+			n, err := notificationconsumer.ConsumeBatch(ctx, st, since, 10)
 			if err != nil {
 				t.Error(err)
 				return
@@ -97,7 +98,7 @@ func exercise(t *testing.T, st store.Store) {
 	if strings.Contains(string(data), "synthetic-sensitive") {
 		t.Fatal("sensitive payload leaked")
 	}
-	if n, err := notificationconsumer.ConsumeBatch(ctx, st, 10); err != nil || n != 0 {
+	if n, err := notificationconsumer.ConsumeBatch(ctx, st, since, 10); err != nil || n != 0 {
 		t.Fatalf("replay: %d %v", n, err)
 	}
 	if _, err := st.Repos().NotificationCandidates().Get(ctx, other.ID); !errors.Is(err, store.ErrNotFound) {
@@ -126,18 +127,18 @@ func exercise(t *testing.T, st store.Store) {
 		}
 	}
 	for i := 0; i < 2; i++ {
-		n, err := notificationconsumer.ConsumeBatch(ctx, st, 1)
+		n, err := notificationconsumer.ConsumeBatch(ctx, st, since, 1)
 		if err != nil || n != 1 {
 			t.Fatalf("bounded batch: %d %v", n, err)
 		}
 	}
-	if n, err := notificationconsumer.ConsumeBatch(ctx, st, 1); err != nil || n != 0 {
+	if n, err := notificationconsumer.ConsumeBatch(ctx, st, since, 1); err != nil || n != 0 {
 		t.Fatalf("unexpected remainder: %d %v", n, err)
 	}
-	if _, err := st.Repos().NotificationCandidates().Claim(ctx, 10); err == nil {
+	if _, err := st.Repos().NotificationCandidates().Claim(ctx, since, 10); err == nil {
 		t.Fatal("unlocked claim allowed")
 	}
-	if _, err := notificationconsumer.ConsumeBatch(ctx, st, 0); !errors.Is(err, notificationconsumer.ErrInvalidLimit) {
+	if _, err := notificationconsumer.ConsumeBatch(ctx, st, since, 0); !errors.Is(err, notificationconsumer.ErrInvalidLimit) {
 		t.Fatal("invalid limit accepted")
 	}
 	evs, err := st.Repos().Outbox().ForAggregate(ctx, id)
@@ -148,5 +149,53 @@ func exercise(t *testing.T, st store.Store) {
 		if v.ID == other.ID && v.PublishedAt != nil {
 			t.Fatal("consumer modified publish status")
 		}
+	}
+}
+
+func TestCutoffInclusiveAndLateEvents(t *testing.T) {
+	for _, b := range []struct {
+		name string
+		open func(*testing.T) store.Store
+	}{
+		{"memory", func(*testing.T) store.Store { return memstore.New() }}, {"postgres", func(t *testing.T) store.Store { return pgstore.New(pgtest.NewPool(t), "SANDBOX") }},
+	} {
+		t.Run(b.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := b.open(t)
+			cutoff := time.Now().UTC().Truncate(time.Second)
+			id := uuid.New()
+			old := events.New("token.available", id, nil)
+			old.CreatedAt = cutoff.Add(-time.Microsecond)
+			equal := events.New("payment.confirmed", id, nil)
+			equal.CreatedAt = cutoff
+			for _, ev := range []events.Event{old, equal} {
+				if err := st.Repos().Outbox().Add(ctx, ev); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := notificationconsumer.ConsumeBatch(ctx, st, time.Time{}, 1); !errors.Is(err, notificationconsumer.ErrInvalidCutoff) {
+				t.Fatal("zero cutoff accepted")
+			}
+			n, err := notificationconsumer.ConsumeBatch(ctx, st, cutoff, 10)
+			if err != nil || n != 1 {
+				t.Fatalf("cutoff: %d %v", n, err)
+			}
+			if _, err := st.Repos().NotificationCandidates().Get(ctx, old.ID); !errors.Is(err, store.ErrNotFound) {
+				t.Fatal("historic event consumed")
+			}
+			if _, err := st.Repos().NotificationCandidates().Get(ctx, equal.ID); err != nil {
+				t.Fatal("inclusive boundary missed", err)
+			}
+			// No high-water cursor: an event appearing later with an eligible timestamp is still collected.
+			late := events.New("electricity.refund.completed", id, nil)
+			late.CreatedAt = cutoff
+			if err := st.Repos().Outbox().Add(ctx, late); err != nil {
+				t.Fatal(err)
+			}
+			n, err = notificationconsumer.ConsumeBatch(ctx, st, cutoff, 10)
+			if err != nil || n != 1 {
+				t.Fatalf("late event: %d %v", n, err)
+			}
+		})
 	}
 }

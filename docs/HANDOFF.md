@@ -118,13 +118,16 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 8. Session log (newest first)
 
+- **Opt-in held-candidate worker:** `NOTIFICATION_CANDIDATES_SINCE` (nonzero RFC3339 timestamp) enables bounded collection; absent means off. Inclusive event-created-at cutoff applies independently of published status; a late commit whose creation time predates the cutoff is excluded. No sends or recipient consent. Keep cutoff stable across replicas and define rollout/backfill/retention before production; database does not enforce consistency. Worker now waits for background loops during shutdown. Boundary, delayed arrival, opt-in/default, log privacy and worker tests pass on memory/PostgreSQL. Supabase remains untouched.
+
+
 - **Purchase/removal serialization:** transaction creation now locks the meter before reauthorizing the purchase grant, serializing with self-removal and registration. Deterministic gate tests force both lock orderings against memory/PostgreSQL: removal first rejects creation without consuming the quote; creation first leaves the committed purchase in flight. Future grant mutation paths must also take the meter lock. Race suite and vet pass with disposable local PostgreSQL.
 
 
 - **Meter access hardening:** registration now grants PURCHASE only, never MANAGE based on a meter number. `DELETE /v1/meters/{id}` removes caller's own access atomically with audit; row locking serializes registration/removal. Invalid permission comparisons fail closed. Concurrent removal and injected audit failure tested on memory/PostgreSQL; HTTP tests cover privacy, restored registration, quote reauthorization and isolation. Legacy MANAGE grants persist unverified; do not use them for household delegation. Existing in-flight purchases are not cancelled. Verified ownership and household delegation remain unimplemented.
 
 
-- **Held notification candidates:** migration 0005 and an unwired transactional consumer record metadata-only candidates for allowlisted events, independently of outbox publication. Unique event keys, row locks and rollback tests cover concurrent/replayed consumption on memory and PostgreSQL. No sender or consent/destination logic is wired; candidates must never be treated as delivery jobs. Define retention and a historical-event cutoff/backfill policy before enabling. Supabase was not migrated.
+- **Held notification candidates:** migration 0005 and the then-unwired transactional consumer record metadata-only candidates for allowlisted events, independently of outbox publication. Unique event keys, row locks and rollback tests cover concurrent/replayed consumption on memory and PostgreSQL. No sender or consent/destination logic is wired; candidates must never be treated as delivery jobs. Define retention and a historical-event cutoff/backfill policy before enabling. Supabase was not migrated.
 
 
 - **Encrypted gift-contact storage:** optional E.164 recipient phone and purchaser notification request are stored as AES-GCM ciphertext bound to the transaction, with a key version. New migration 0004 adds metadata; creation is atomic with the transaction and idempotency record. Contact-bearing request hashes use HMAC. This does not establish recipient consent, send messages, or implement key rotation and retention. HTTP tests cover encryption, associated data, idempotency and log/outbox/response redaction against both memory and PostgreSQL 16.16; race tests and vet use the temporary offline module overlay. Migration 0004 has not been applied to Supabase.

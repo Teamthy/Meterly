@@ -96,3 +96,19 @@ func TestAuthConfig(t *testing.T) {
 		t.Fatalf("MFA must stay on outside dev: %v", err)
 	}
 }
+
+func TestNotificationCandidateCutoff(t *testing.T) {
+	c, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil || !c.NotificationCandidatesSince.IsZero() {
+		t.Fatalf("must default off: %+v %v", c, err)
+	}
+	for _, bad := range []string{"tomorrow", "2025-01-01T00:00:00", "0001-01-01T00:00:00Z"} {
+		if _, err := Load(env(map[string]string{"MODE": "dev", "NOTIFICATION_CANDIDATES_SINCE": bad})); err == nil || !strings.Contains(err.Error(), "NOTIFICATION_CANDIDATES_SINCE") {
+			t.Fatalf("bad cutoff %q: %v", bad, err)
+		}
+	}
+	c, err = Load(env(map[string]string{"MODE": "dev", "NOTIFICATION_CANDIDATES_SINCE": "2025-03-01T03:30:00+01:00"}))
+	if err != nil || !c.NotificationCandidatesSince.Equal(time.Date(2025, 3, 1, 2, 30, 0, 0, time.UTC)) || c.NotificationCandidatesSince.Location() != time.UTC {
+		t.Fatalf("cutoff: %+v %v", c, err)
+	}
+}

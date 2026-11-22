@@ -9,19 +9,30 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/app"
+	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/platform/config"
 	"github.com/teamthy/meterly/internal/providers/paystack"
 	"github.com/teamthy/meterly/internal/providers/paystack/paystacktest"
+	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/store/pgstore/pgtest"
 )
+
+func TestMain(m *testing.M) { code := m.Run(); pgtest.DropTemplate(); os.Exit(code) }
 
 func TestBuildWiresPaystack(t *testing.T) {
 	fake := paystacktest.New("sk_test_wiring")
@@ -121,5 +132,79 @@ func TestBuildWiresOIDC(t *testing.T) {
 	}
 	if c := get(sign(base(map[string]any{"roles": []string{"operator"}, "amr": []string{"pwd", "mfa"}}))); c != 200 {
 		t.Fatalf("staff with MFA: %d", c)
+	}
+}
+
+func TestWorkerCandidateCollectionOptIn(t *testing.T) {
+	for _, backend := range []string{"memory", "postgres"} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%v", backend, enabled), func(t *testing.T) {
+				env := map[string]string{"MODE": "dev"}
+				if backend == "postgres" {
+					pool := pgtest.NewPool(t)
+					dburl, err := url.Parse(os.Getenv("DATABASE_URL"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					dburl.Path = "/" + pool.Config().ConnConfig.Database
+					env["DATABASE_URL"] = dburl.String()
+					env["TOKEN_ENC_KEY"] = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+					env["METER_HMAC_KEY"] = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+				}
+				cfg, err := config.Load(func(k string) string { return env[k] })
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.OutboxInterval = 10 * time.Millisecond
+				cfg.ResumeInterval = time.Hour
+				if enabled {
+					cfg.NotificationCandidatesSince = time.Now().UTC().Add(-time.Minute)
+				}
+				var logs bytes.Buffer
+				a, err := app.Build(context.Background(), cfg, slog.New(slog.NewTextHandler(&logs, nil)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer a.Close()
+				event := events.New("token.available", uuid.New(), map[string]any{"token": "synthetic-private-token"})
+				if err := a.Store.Repos().Outbox().Add(context.Background(), event); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				done := make(chan struct{})
+				go func() { defer close(done); a.RunWorker(ctx) }()
+				if enabled {
+					deadline := time.After(2 * time.Second)
+					tick := time.NewTicker(10 * time.Millisecond)
+					defer tick.Stop()
+					found := false
+					for !found {
+						select {
+						case <-tick.C:
+							_, err := a.Store.Repos().NotificationCandidates().Get(context.Background(), event.ID)
+							if err == nil {
+								found = true
+							} else if !errors.Is(err, store.ErrNotFound) {
+								t.Error(err)
+								found = true
+							}
+						case <-deadline:
+							t.Error("worker did not collect candidate")
+							found = true
+						}
+					}
+				} else {
+					time.Sleep(120 * time.Millisecond)
+					if _, err := a.Store.Repos().NotificationCandidates().Get(context.Background(), event.ID); !errors.Is(err, store.ErrNotFound) {
+						t.Errorf("default worker collected candidate: %v", err)
+					}
+				}
+				cancel()
+				<-done
+				if strings.Contains(logs.String(), "synthetic-private-token") {
+					t.Error("worker leaked event payload")
+				}
+			})
+		}
 	}
 }

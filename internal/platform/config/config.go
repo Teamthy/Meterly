@@ -57,10 +57,12 @@ type Config struct {
 	RateWebhooksPerMin     int
 	ClientIPHeader         string
 
-	Orchestrator    orchestrator.Config
-	ResumeInterval  time.Duration
-	OutboxInterval  time.Duration
-	ShutdownTimeout time.Duration
+	Orchestrator   orchestrator.Config
+	ResumeInterval time.Duration
+	OutboxInterval time.Duration
+	// A nonzero cutoff opts in to held notification candidate collection.
+	NotificationCandidatesSince time.Time
+	ShutdownTimeout             time.Duration
 }
 
 // UsesMocks reports whether any provider is an in-process mock.
@@ -131,6 +133,16 @@ func Load(getenv func(string) string) (Config, error) {
 		ResumeInterval:      dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:      dur("OUTBOX_INTERVAL", 2*time.Second),
 		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
+	}
+
+	// No default: opting in requires an explicit fixed event-time boundary.
+	if v := strings.TrimSpace(getenv("NOTIFICATION_CANDIDATES_SINCE")); v != "" {
+		since, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil || since.IsZero() {
+			errs = append(errs, errors.New("NOTIFICATION_CANDIDATES_SINCE must be a nonzero RFC3339 timestamp with timezone"))
+		} else {
+			c.NotificationCandidatesSince = since.UTC()
+		}
 	}
 
 	c.AuthMode = get("AUTH_MODE", map[bool]string{true: "dev", false: "oidc"}[c.Mode == Dev])

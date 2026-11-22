@@ -106,8 +106,8 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 ## Held notification candidates (M5, partial)
 
 - The independent candidate consumer scans an explicit event-type allowlist irrespective of `published_at`, using locked, skip-locked rows and a unique outbox-event key. Candidate insertion commits in the same transaction as the claim; rollback or competing workers do not lose events or duplicate records. It never marks events published and does not interfere with the existing metadata logging publisher.
-- Candidates contain only event ID, aggregate ID, event type and creation time: no payload, contact, consent, channel, token or content. They are **held records**, not sendable delivery intents, and do not authorize delivery. The worker does not run this consumer by default (or at all yet).
-- Migration 0005 requires outbox retention while candidates reference events. A future rollout must define retention, index/volume operations, historical-event cutoff and backfill policy before enabling consumption. Historical candidates must not automatically send messages. Future delivery requires recipient consent, safe destination resolution, durable per-recipient intents, revocation checks and provider idempotency/ambiguous-send reconciliation. None is implemented here.
+- Candidates contain only event ID, aggregate ID, event type and creation time: no payload, contact, consent, channel, token or content. They are **held records**, not sendable delivery intents, and do not authorize delivery. The worker runs this consumer only when `NOTIFICATION_CANDIDATES_SINCE` is explicitly set.
+- Migration 0005 requires outbox retention while candidates reference events. A future rollout must define retention, index/volume operations and a backfill policy before enabling consumption. Historical candidates must not automatically send messages. Future delivery requires recipient consent, safe destination resolution, durable per-recipient intents, revocation checks and provider idempotency/ambiguous-send reconciliation. None is implemented here.
 
 
 ## Meter registration is not ownership (M5, partial)
@@ -121,3 +121,10 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 
 - Transaction creation locks the meter row in the same transaction before rechecking the purchase grant, and holds that lock until creation commits. Self-removal and registration take the same meter lock. Therefore removal that commits first blocks a new transaction from an unused quote; a transaction committed first remains in flight and is not cancelled by removal. Idempotent replays of already-created transactions remain available to their purchaser.
 - Any future grant mutation or delegated-access operation must acquire the meter lock before checking or modifying access, and must observe lock ordering. Repository methods alone do not enforce that higher-level contract. The quote itself can still be created concurrently with removal; transaction creation reauthorizes under the lock.
+
+
+## Opt-in held-candidate worker
+
+- Collection is off unless `NOTIFICATION_CANDIDATES_SINCE` is set to a nonzero RFC3339 timestamp with timezone; invalid values fail startup. Each worker records at most 100 candidates per outbox tick; no senders are invoked. Worker shutdown waits for all loops before the store is closed.
+- The cutoff is inclusive on outbox `created_at`, not commit time. Events created earlier but committed later are intentionally excluded; eligible late commits are eventually collected because there is no high-water cursor. Define a safe rollout window, clock discipline and backfill policy before using this in production.
+- All replicas must use the same stable cutoff. This is an operational requirement, not enforced in the database: moving it forward can skip uncollected events; moving it backward or running a replica with an older value can add historical candidates. Held records are not deliverable. Assess event volumes, query plans and retention before enabling; the outbox FK prevents deletion of referenced events.

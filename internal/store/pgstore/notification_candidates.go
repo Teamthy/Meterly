@@ -3,6 +3,8 @@ package pgstore
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/store"
@@ -10,17 +12,17 @@ import (
 
 type candidateRepo struct{ *repos }
 
-func (r candidateRepo) Claim(ctx context.Context, limit int) ([]notificationintents.Intent, error) {
+func (r candidateRepo) Claim(ctx context.Context, since time.Time, limit int) ([]notificationintents.Intent, error) {
 	if !r.inTx {
 		return nil, errors.New("candidate claim requires transaction")
 	}
-	if limit <= 0 {
-		return nil, errors.New("invalid candidate limit")
+	if limit <= 0 || since.IsZero() {
+		return nil, errors.New("invalid candidate cutoff or limit")
 	}
 	rows, err := r.db.Query(ctx, `SELECT e.id,e.aggregate_id,e.event_type FROM outbox_events e
- WHERE e.aggregate_type='electricity_transaction' AND e.event_type=ANY($1)
+ WHERE e.aggregate_type='electricity_transaction' AND e.event_type=ANY($1) AND e.created_at >= $3
  AND NOT EXISTS (SELECT 1 FROM notification_candidates c WHERE c.event_id=e.id)
- ORDER BY e.created_at,e.id LIMIT $2 FOR UPDATE OF e SKIP LOCKED`, notificationintents.EventTypes(), limit)
+ ORDER BY e.created_at,e.id LIMIT $2 FOR UPDATE OF e SKIP LOCKED`, notificationintents.EventTypes(), limit, since.UTC())
 	if err != nil {
 		return nil, err
 	}

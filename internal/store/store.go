@@ -172,7 +172,7 @@ type GiftRepo interface {
 // NotificationCandidateRepo is a held, non-deliverable record of relevant
 // outbox events. Claim and Record must run within the same Store.InTx.
 type NotificationCandidateRepo interface {
-	Claim(context.Context, int) ([]notificationintents.Intent, error)
+	Claim(context.Context, time.Time, int) ([]notificationintents.Intent, error)
 	Record(context.Context, notificationintents.Intent) error
 	Get(context.Context, uuid.UUID) (notificationintents.Intent, error)
 }

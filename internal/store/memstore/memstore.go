@@ -653,12 +653,12 @@ func (r giftRepo) Get(_ context.Context, id uuid.UUID) (gifts.Gift, error) {
 
 type candidateRepo struct{ *repos }
 
-func (r candidateRepo) Claim(_ context.Context, limit int) ([]notificationintents.Intent, error) {
+func (r candidateRepo) Claim(_ context.Context, since time.Time, limit int) ([]notificationintents.Intent, error) {
 	if !r.inTx {
 		return nil, errors.New("candidate claim requires transaction")
 	}
-	if limit <= 0 {
-		return nil, errors.New("invalid candidate limit")
+	if limit <= 0 || since.IsZero() {
+		return nil, errors.New("invalid candidate cutoff or limit")
 	}
 	allowed := map[string]bool{}
 	for _, typ := range notificationintents.EventTypes() {
@@ -666,7 +666,7 @@ func (r candidateRepo) Claim(_ context.Context, limit int) ([]notificationintent
 	}
 	var out []notificationintents.Intent
 	for _, e := range r.s.outbox {
-		if e.AggregateType != "electricity_transaction" || !allowed[e.Type] {
+		if e.CreatedAt.Before(since) || e.AggregateType != "electricity_transaction" || !allowed[e.Type] {
 			continue
 		}
 		if _, ok := r.s.candidates[e.ID]; ok {
