@@ -97,6 +97,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/status", user(s.getTransaction))
 	mux.Handle("POST /v1/electricity/transactions/{transaction_id}/payment-check", write(s.paymentCheck))
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token", user(s.getToken))
+	mux.Handle("POST /v1/electricity/transactions/{transaction_id}/token/shares", write(s.recordTokenCopy))
+	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token/shares", user(s.listTokenCopies))
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/receipt", user(s.receipt))
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))

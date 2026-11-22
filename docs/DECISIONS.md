@@ -86,3 +86,10 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - Templates use trusted event type and transaction delivery method, never arbitrary outbox payload values. Command acceptance does not produce a delivery confirmation message. Token-availability messages direct the purchaser to the authenticated app and explain meter binding; no raw token is inserted.
 - Sender interfaces and a concurrency-safe in-process mock are available, but **not wired to the outbox**. The mock keeps only keyed digests and loses dedupe state on restart. It is not suitable for real delivery.
 - Before enabling any sender, implement durable per-event/per-recipient/channel intent and outcome records, consent and encrypted contacts, secure authorised token access for gifting, and provider-specific idempotency or reconciliation for ambiguous sends. A database dedupe row alone cannot guarantee exactly-once external delivery after a timeout or crash. Never send within the outbox claim transaction.
+
+
+## Token copy metadata (M5, partial)
+
+- Only a purchaser may report a `COPY` action for a confirmed vend whose token has been released via the token path. Recording the action is not evidence that a clipboard operation or recipient delivery occurred. Unsupported channels are rejected; no SMS, email or WhatsApp is sent.
+- Each copy record contains only actor, vending record, channel and time. It is committed alongside a redacted audit event, an outbox metadata event and an idempotency reservation, with the transaction row locked. Retried requests return the original record within the configured idempotency window; requests with the same key for a different transaction conflict. No token or recipient destination is stored in this record or event. Token reads remain separately authorised and audited.
+- The history endpoint returns up to 200 most recent records. External notification and destination handling require separate consent, encrypted contact storage, and delivery reconciliation.

@@ -19,6 +19,7 @@ import (
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
@@ -47,6 +48,7 @@ type Repos interface {
 	Idempotency() IdempotencyRepo
 	Audit() AuditRepo
 	Providers() ProviderRepo
+	TokenShares() TokenShareRepo
 }
 
 type AuditRepo interface {
@@ -143,4 +145,11 @@ type IdempotencyRepo interface {
 	// nothing). Expired records are replaced.
 	Reserve(ctx context.Context, rec idempotency.Record) (existing *idempotency.Record, err error)
 	Complete(ctx context.Context, scope, op, key, resultRef string) error
+}
+
+// TokenShareRepo persists metadata only, never token values or destinations.
+type TokenShareRepo interface {
+	AddCopy(context.Context, tokenshares.Share) error
+	GetCopy(context.Context, uuid.UUID, uuid.UUID, string) (tokenshares.Share, error)
+	ListCopies(context.Context, uuid.UUID, string) ([]tokenshares.Share, error)
 }

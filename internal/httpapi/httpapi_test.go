@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/orchestrator"
@@ -117,6 +118,9 @@ func endToEnd(t *testing.T, st store.Store) {
 		t.Fatalf("idempotency conflict: %d", code)
 	}
 
+	if code, _ := c.do("POST", "/v1/electricity/transactions/"+id+"/token/shares", "ada", map[string]any{"channel": "COPY"}, map[string]string{"Idempotency-Key": "pending-copy-123456"}); code != 409 {
+		t.Fatalf("pending token copy accepted: %d", code)
+	}
 	// A pending record is not presented as successful.
 	if code, receipt := c.do("GET", "/v1/electricity/transactions/"+id+"/receipt", "ada", nil, nil); code != 200 || receipt["payment_status"] != "PENDING" || receipt["overall_status"] != "PAYMENT_PENDING" {
 		t.Fatalf("pending receipt %d %v", code, receipt)
@@ -161,6 +165,83 @@ func endToEnd(t *testing.T, st store.Store) {
 	}
 	if resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != "no-store" || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") || !strings.Contains(string(html), "CONFIRMED") || strings.Contains(string(html), meter) || strings.Contains(string(html), tok["token"].(string)) {
 		t.Fatalf("invalid or sensitive HTML receipt, status=%d", resp.StatusCode)
+	}
+	path := "/v1/electricity/transactions/" + id + "/token/shares"
+	key := map[string]string{"Idempotency-Key": "copy-action-123456789"}
+	if code, _ := c.do("POST", path, "eve", map[string]any{"channel": "COPY"}, key); code != 404 {
+		t.Fatalf("other user recorded copy: %d", code)
+	}
+	if code, _ := c.do("POST", path, "ada", map[string]any{"channel": "SMS"}, key); code != 400 {
+		t.Fatalf("unsupported send accepted: %d", code)
+	}
+	code, share := c.do("POST", path, "ada", map[string]any{"channel": "COPY"}, key)
+	if code != 201 {
+		t.Fatalf("copy record: %d %v", code, share)
+	}
+	code, replay := c.do("POST", path, "ada", map[string]any{"channel": "COPY"}, key)
+	if code != 201 || share["share"].(map[string]any)["share_id"] != replay["share"].(map[string]any)["share_id"] {
+		t.Fatalf("copy replay: %d %v", code, replay)
+	}
+	if code, list := c.do("GET", path, "ada", nil, nil); code != 200 || len(list["data"].([]any)) != 1 {
+		t.Fatalf("copy history: %d %v", code, list)
+	}
+	if code, _ := c.do("GET", path, "eve", nil, nil); code != 404 {
+		t.Fatalf("other user read copy history: %d", code)
+	}
+	transactionID := uuid.MustParse(id)
+	transaction, err := o.Get(context.Background(), transactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	ids := make(chan uuid.UUID, 12)
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v, e := o.RecordTokenCopy(context.Background(), transaction.CustomerID, transactionID, "parallel-copy-123456")
+			if e != nil {
+				errs <- e
+				return
+			}
+			ids <- v.ID
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(ids)
+	for e := range errs {
+		t.Errorf("concurrent copy: %v", e)
+	}
+	var first uuid.UUID
+	for got := range ids {
+		if first == uuid.Nil {
+			first = got
+		}
+		if got != first {
+			t.Fatal("duplicate copy records")
+		}
+	}
+	copies, err := o.ListTokenCopies(context.Background(), transaction.CustomerID, transactionID)
+	if err != nil || len(copies) != 2 {
+		t.Fatalf("copy count: %d %v", len(copies), err)
+	}
+	auditRows, err := st.Repos().Audit().ForResource(context.Background(), "electricity_transaction", transactionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, a := range auditRows {
+		if a.Action == "token.copy_recorded" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("copy audit count: %d", count)
+	}
+	if b, _ := json.Marshal(share); strings.Contains(string(b), tok["token"].(string)) || strings.Contains(string(b), meter) {
+		t.Fatal("copy metadata leaked sensitive data")
 	}
 	token := tok["token"].(string)
 	if code, _ := c.do("GET", "/v1/electricity/transactions/"+id+"/token", "eve", nil, nil); code != 404 {

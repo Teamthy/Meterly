@@ -45,6 +45,8 @@ Configuration is read from the environment and validated at startup (`internal/p
 
 **Notifications:** `internal/notifications` defines safe event templates and mock sender contracts for SMS, email and WhatsApp. They are not connected to the outbox or a provider and do not send messages. Durable recipient management, delivery tracking and idempotent external delivery remain outstanding.
 
+**Token copy history:** purchaser-only `POST /v1/electricity/transactions/{id}/token/shares` accepts `{"channel":"COPY"}` and requires an `Idempotency-Key` (16–128 characters); `GET` on the same path lists recorded copy actions. The entry is only a client-reported action—not proof of clipboard use, delivery or meter credit. No token or destination is stored in share metadata. SMS, email and WhatsApp sending are not implemented. Tokens work only on their own meter; sharing does not transfer credit.
+
 **Receipt:** The purchaser can request `GET /v1/electricity/transactions/{id}/receipt` as JSON, or append `?format=html` for a printable HTML transaction record. Responses are `no-store`, display separate payment, vending and delivery states, and never include the token or checkout details. Pending records are not presented as completed deliveries.
 
 **Payments:** `PAYMENT_PROVIDER=mock` (default) or `paystack`. For Paystack, set `PAYSTACK_SECRET_KEY` (only `sk_test_…` is accepted outside production), optionally `PAYSTACK_CALLBACK_URL`, and point Paystack's webhook at `POST /v1/payments/webhooks/paystack`. Vending and remote credit are still mocks. Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.

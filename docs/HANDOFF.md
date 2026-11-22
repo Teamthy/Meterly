@@ -105,7 +105,7 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` with hashed destinations. Purchaser-only JSON/HTML receipts are implemented; delivery and sharing remain.
+**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` destination handling. Purchaser-only JSON/HTML receipts and COPY metadata are implemented; external sending remains.
 
 **M6:** `api/openapi.yaml` plus a route-coverage test, OpenTelemetry, Prometheus `/metrics`, distroless Dockerfiles.
 
@@ -117,6 +117,9 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - legal review: NERC and state regulators, the CBN-licensed payment money flow, NDPA 2023
 
 ## 8. Session log (newest first)
+
+- **Copy metadata:** added purchaser-only, idempotent COPY record and history endpoints. Records, audit and outbox metadata commit atomically; no token is copied into the record, and the endpoint does not send messages or prove delivery. Concurrent duplicate requests and HTTP authorization tests pass on memory and PostgreSQL 16.16. The local PG server was downloaded temporarily from an npm-packaged distribution because Docker and system PostgreSQL were unavailable; it is not part of the repo. `go test -race -count=1` and `go vet` passed with the temporary offline Go module overlay. SMS/email/WhatsApp, encrypted gift contacts and durable notification delivery remain unimplemented.
+
 
 - **Notification foundation:** added privacy-preserving event templates and process-local mock SMS/email/WhatsApp sender contracts with concurrent dedup tests. They are not connected to the outbox or real providers; durable contact storage and ambiguous-send handling are still required. `go test -race` and `go vet` passed with the temporary offline module overlay; PostgreSQL tests remained skipped (no local PostgreSQL or Docker). M5 is not complete.
 

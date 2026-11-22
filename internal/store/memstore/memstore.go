@@ -18,6 +18,7 @@ import (
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
@@ -37,6 +38,7 @@ type Store struct {
 	idem        map[string]*idempotency.Record
 	audit       []audit.Event
 	providerOff map[string]bool
+	tokenShares []tokenshares.Share
 }
 
 func New() *Store {
@@ -93,6 +95,7 @@ func (r *repos) Outbox() store.OutboxRepo            { return outboxRepo{r} }
 func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
 func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
 func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
+func (r *repos) TokenShares() store.TokenShareRepo   { return shareRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -580,4 +583,34 @@ func (r providerRepo) SetEnabled(_ context.Context, name, _ string, enabled bool
 	r.s.providerOff[name] = !enabled
 	r.onUndo(func() { r.s.providerOff[name] = prev })
 	return nil
+}
+
+type shareRepo struct{ *repos }
+
+func (r shareRepo) AddCopy(_ context.Context, share tokenshares.Share) error {
+	defer r.lock()()
+	r.s.tokenShares = append(r.s.tokenShares, share)
+	r.onUndo(func() { r.s.tokenShares = r.s.tokenShares[:len(r.s.tokenShares)-1] })
+	return nil
+}
+func (r shareRepo) ListCopies(_ context.Context, id uuid.UUID, user string) ([]tokenshares.Share, error) {
+	defer r.lock()()
+	result := []tokenshares.Share{}
+	for i := len(r.s.tokenShares) - 1; i >= 0 && len(result) < 200; i-- {
+		s := r.s.tokenShares[i]
+		if s.TransactionID == id && s.UserID == user {
+			result = append(result, s)
+		}
+	}
+	return result, nil
+}
+
+func (r shareRepo) GetCopy(_ context.Context, shareID, txnID uuid.UUID, user string) (tokenshares.Share, error) {
+	defer r.lock()()
+	for _, s := range r.s.tokenShares {
+		if s.ID == shareID && s.TransactionID == txnID && s.UserID == user {
+			return s, nil
+		}
+	}
+	return tokenshares.Share{}, store.ErrNotFound
 }
