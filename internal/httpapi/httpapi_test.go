@@ -318,6 +318,65 @@ func endToEnd(t *testing.T, st store.Store) {
 	if code, _ := c.do("POST", "/v1/electricity/transactions", "ada", invalid, map[string]string{"Idempotency-Key": "gift-invalid-1234567"}); code != 400 {
 		t.Fatalf("unsolicited contact accepted: %d", code)
 	}
+	// Registration is not evidence of ownership and cannot create MANAGE.
+	accessSrv := httptest.NewServer(s.Routes())
+	defer accessSrv.Close()
+	access := client{t, accessSrv}
+	meterPath := "/v1/meters/" + m["meter_id"].(string)
+	if code, _ := access.do("DELETE", meterPath, "mallory", nil, nil); code != 404 {
+		t.Fatalf("unrelated user removed access: %d", code)
+	}
+	code, registered := access.do("POST", "/v1/meters", "eve", map[string]any{"meter_number": meter, "disco_code": "IKEDC", "label": "Shared"}, nil)
+	if code != 201 || registered["meter_id"] != m["meter_id"] {
+		t.Fatalf("registration: %d %v", code, registered)
+	}
+	code, eveList := access.do("GET", "/v1/meters", "eve", nil, nil)
+	if code != 200 {
+		t.Fatal("list failed")
+	}
+	entries := eveList["data"].([]any)
+	if len(entries) != 1 || entries[0].(map[string]any)["permission"] != "PURCHASE" {
+		t.Fatalf("registration created elevated access: %v", eveList)
+	}
+	if code, _ := access.do("GET", "/v1/electricity/transactions/"+id+"/token", "eve", nil, nil); code != 404 {
+		t.Fatalf("other purchaser's token exposed: %d", code)
+	}
+	code, preQuote := access.do("POST", "/v1/electricity/quotes", "eve", map[string]any{"meter_id": m["meter_id"], "amount_minor": 500000, "currency": "NGN"}, nil)
+	if code != 201 {
+		t.Fatalf("quote before removal %d", code)
+	}
+	if code, _ := access.do("DELETE", meterPath, "eve", nil, nil); code != 204 {
+		t.Fatalf("self removal failed: %d", code)
+	}
+	if code, _ := access.do("DELETE", meterPath, "eve", nil, nil); code != 404 {
+		t.Fatalf("removed user still has access: %d", code)
+	}
+	if code, _ := access.do("GET", meterPath, "ada", nil, nil); code != 200 {
+		t.Fatalf("another user's access affected: %d", code)
+	}
+	if code, _ := access.do("GET", meterPath, "eve", nil, nil); code != 403 {
+		t.Fatalf("removed access still usable: %d", code)
+	}
+	if code, _ := access.do("POST", "/v1/electricity/transactions", "eve", map[string]any{"quote_id": preQuote["quote_id"], "email": "eve@example.com"}, map[string]string{"Idempotency-Key": "removed-access-123456"}); code != 403 {
+		t.Fatalf("revoked quote used: %d", code)
+	}
+	meterID := uuid.MustParse(m["meter_id"].(string))
+	audits, err := st.Repos().Audit().ForResource(context.Background(), "meter", meterID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count = 0
+	for _, a := range audits {
+		if a.Action == "meter.self_access_removed" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("self removal audit count %d", count)
+	}
+	if code, _ := access.do("POST", "/v1/meters", "eve", map[string]any{"meter_number": meter, "disco_code": "IKEDC"}, nil); code != 201 {
+		t.Fatalf("self-registration after removal failed: %d", code)
+	}
 	// Sensitive values must never reach the logs.
 	out := logs.String()
 	digits := strings.ReplaceAll(token, "-", "")

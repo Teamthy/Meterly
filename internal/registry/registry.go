@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
@@ -112,8 +113,10 @@ func (g *Registry) Validate(ctx context.Context, number, disco string) (*meters.
 	return m, err
 }
 
-// Register validates the meter and grants the user perm on it, atomically.
-func (g *Registry) Register(ctx context.Context, userID, number, disco, label string, perm meters.Permission) (*meters.Meter, error) {
+// Register saves a validated meter for purchases. Provider validation proves
+// neither ownership nor authority to manage access, so self-service never
+// grants MANAGE or elevates an existing higher grant.
+func (g *Registry) Register(ctx context.Context, userID, number, disco, label string) (*meters.Meter, error) {
 	res, caps, err := g.probe(ctx, number, disco)
 	if err != nil {
 		return nil, err
@@ -124,7 +127,7 @@ func (g *Registry) Register(ctx context.Context, userID, number, disco, label st
 		if m, err = g.upsert(ctx, r, number, disco, res, caps); err != nil {
 			return err
 		}
-		return r.Meters().UpsertGrant(ctx, meters.Grant{MeterID: m.ID, UserID: userID, Permission: perm, Label: label, GrantedBy: userID})
+		return r.Meters().UpsertGrant(ctx, meters.Grant{MeterID: m.ID, UserID: userID, Permission: meters.PermPurchase, Label: label, GrantedBy: userID})
 	})
 	return m, err
 }
@@ -178,4 +181,25 @@ func MarkRemoteCreditConfirmedIn(ctx context.Context, r store.Repos, id uuid.UUI
 	}
 	m.Capabilities.RemoteCredit.Confirmed = true
 	return r.Meters().Update(ctx, m)
+}
+
+// RemoveSavedMeter revokes only the caller's own active access, not that of
+// household members. In-flight purchases are not cancelled. A later
+// self-service registration may restore purchase access.
+func (g *Registry) RemoveSavedMeter(ctx context.Context, userID string, id uuid.UUID) error {
+	return g.st.InTx(ctx, func(r store.Repos) error {
+		if _, err := r.Meters().GetForUpdate(ctx, id); err != nil {
+			return notFound(err)
+		}
+		if _, err := r.Meters().ActiveGrant(ctx, id, userID); errors.Is(err, store.ErrNotFound) {
+			return meters.ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if err := r.Meters().Revoke(ctx, id, userID, g.Now().UTC()); err != nil {
+			return err
+		}
+		actor := audit.Actor{UserID: userID, Type: audit.ActorUser, CorrelationID: audit.CorrelationFrom(ctx)}
+		return r.Audit().Add(ctx, actor.Event("meter.self_access_removed", "meter", id, nil))
+	})
 }

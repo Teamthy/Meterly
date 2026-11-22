@@ -136,6 +136,13 @@ func (r meterRepo) Get(_ context.Context, id uuid.UUID) (*meters.Meter, error) {
 	return cloneMeter(m), nil
 }
 
+func (r meterRepo) GetForUpdate(ctx context.Context, id uuid.UUID) (*meters.Meter, error) {
+	if !r.inTx {
+		return nil, errors.New("meter lock requires transaction")
+	}
+	return r.Get(ctx, id)
+}
+
 func (r meterRepo) GetByHash(_ context.Context, hash string) (*meters.Meter, error) {
 	defer r.lock()()
 	id, ok := r.s.meterByHash[hash]

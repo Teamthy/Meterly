@@ -21,7 +21,11 @@ const (
 var permRank = map[Permission]int{PermView: 1, PermPurchase: 2, PermManage: 3}
 
 // Allows reports whether holding p satisfies a requirement of want.
-func (p Permission) Allows(want Permission) bool { return permRank[p] >= permRank[want] }
+func (p Permission) Allows(want Permission) bool {
+	held, okHeld := permRank[p]
+	needed, okNeeded := permRank[want]
+	return okHeld && okNeeded && held >= needed
+}
 
 // Capability distinguishes the levels from spec FR-003. A model that
 // theoretically supports remote credit is not automatically reachable.

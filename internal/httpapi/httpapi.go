@@ -88,6 +88,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/meters", write(s.registerMeter))
 	mux.Handle("GET /v1/meters", user(s.listMeters))
 	mux.Handle("GET /v1/meters/{meter_id}", user(s.getMeter))
+	mux.Handle("DELETE /v1/meters/{meter_id}", write(s.removeSavedMeter))
 	mux.Handle("GET /v1/meters/{meter_id}/capabilities", user(s.getCapabilities))
 	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
 
@@ -248,7 +249,7 @@ func (s *Server) registerMeter(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "meter_number and disco_code are required")
 		return
 	}
-	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.Label, meters.PermManage)
+	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.Label)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
@@ -265,7 +266,7 @@ func (s *Server) addBeneficiary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "meter_number, disco_code and display_name are required")
 		return
 	}
-	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.DisplayName, meters.PermPurchase)
+	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.DisplayName)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
@@ -297,6 +298,20 @@ func (s *Server) meterFromPath(w http.ResponseWriter, r *http.Request) (*meters.
 		return nil, false
 	}
 	return m, true
+}
+
+// removeSavedMeter removes only the authenticated caller's saved access.
+func (s *Server) removeSavedMeter(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	if err := s.O.Meters.RemoveSavedMeter(r.Context(), userID(r), id); err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getMeter(w http.ResponseWriter, r *http.Request) {

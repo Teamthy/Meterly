@@ -166,7 +166,7 @@ func (e *env) user(t *testing.T, name string) string {
 
 func (e *env) register(t *testing.T, user, meter string) *meters.Meter {
 	t.Helper()
-	m, err := e.o.Meters.Register(e.ctx, e.user(t, user), meter, "IKEDC", "Home", meters.PermManage)
+	m, err := e.o.Meters.Register(e.ctx, e.user(t, user), meter, "IKEDC", "Home")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestAccessControl(t *testing.T) {
 			t.Fatalf("stranger quote: %v", err)
 		}
 		member := e.user(t, "member")
-		if _, err := e.o.Meters.Register(e.ctx, member, "45012345678", "IKEDC", "Mum", meters.PermPurchase); err != nil {
+		if _, err := e.o.Meters.Register(e.ctx, member, "45012345678", "IKEDC", "Mum"); err != nil {
 			t.Fatal(err)
 		}
 		q, err := e.o.CreateQuote(e.ctx, member, m.ID, 500000, orchestrator.PrefAuto)
@@ -707,7 +707,7 @@ func TestAccessControl(t *testing.T) {
 			t.Fatalf("got %d transactions", len(txns))
 		}
 		list, _ := e.o.Meters.ListForUser(e.ctx, e.user(t, "owner"))
-		if len(list) != 1 || list[0].Permission != meters.PermManage {
+		if len(list) != 1 || list[0].Permission != meters.PermPurchase {
 			t.Fatalf("owner list %+v", list)
 		}
 	})
@@ -740,8 +740,57 @@ func TestQuoteSingleUseAndLimits(t *testing.T) {
 
 func TestInvalidMeterRejected(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
-		if _, err := e.o.Meters.Register(e.ctx, e.user(t, "u1"), "01234567890", "IKEDC", "", meters.PermManage); !errors.Is(err, meters.ErrInvalidMeter) {
+		if _, err := e.o.Meters.Register(e.ctx, e.user(t, "u1"), "01234567890", "IKEDC", ""); !errors.Is(err, meters.ErrInvalidMeter) {
 			t.Fatalf("got %v", err)
+		}
+	})
+}
+
+// failAuditStore proves self-removal rolls back when its audit write fails.
+type failAuditStore struct{ store.Store }
+type failAuditRepos struct{ store.Repos }
+type failAuditRepo struct{ store.AuditRepo }
+
+func (s failAuditStore) InTx(ctx context.Context, fn func(store.Repos) error) error {
+	return s.Store.InTx(ctx, func(r store.Repos) error { return fn(failAuditRepos{r}) })
+}
+func (r failAuditRepos) Audit() store.AuditRepo                { return failAuditRepo{r.Repos.Audit()} }
+func (r failAuditRepo) Add(context.Context, audit.Event) error { return errCrash }
+
+func TestSelfMeterRemovalAtomicAndConcurrent(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		u := e.user(t, "self")
+		m := e.register(t, "self", "45012345678")
+		broken := registry.New(failAuditStore{e.st}, nil, nil, nil)
+		if err := broken.RemoveSavedMeter(e.ctx, u, m.ID); !errors.Is(err, errCrash) {
+			t.Fatalf("audit failure: %v", err)
+		}
+		if _, err := e.o.Meters.Authorize(e.ctx, u, m.ID, meters.PermPurchase); err != nil {
+			t.Fatalf("revocation did not roll back: %v", err)
+		}
+		var wg sync.WaitGroup
+		var removed, missing atomic.Int32
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := e.o.Meters.RemoveSavedMeter(e.ctx, u, m.ID)
+				if err == nil {
+					removed.Add(1)
+				} else if errors.Is(err, meters.ErrNotFound) {
+					missing.Add(1)
+				} else {
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		if removed.Load() != 1 || missing.Load() != 11 {
+			t.Fatalf("remove %d missing %d", removed.Load(), missing.Load())
+		}
+		events, err := e.st.Repos().Audit().ForResource(e.ctx, "meter", m.ID)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("audit events %d: %v", len(events), err)
 		}
 	})
 }

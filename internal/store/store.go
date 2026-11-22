@@ -87,6 +87,8 @@ type UserRepo interface {
 
 type MeterRepo interface {
 	Get(ctx context.Context, id uuid.UUID) (*meters.Meter, error)
+	// GetForUpdate serializes registration and self-removal for this meter.
+	GetForUpdate(ctx context.Context, id uuid.UUID) (*meters.Meter, error)
 	GetByHash(ctx context.Context, hash string) (*meters.Meter, error)
 	// Insert returns ErrDuplicate if a meter with the same hash exists.
 	Insert(ctx context.Context, m *meters.Meter) error
