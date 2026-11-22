@@ -142,9 +142,22 @@ func (g *Registry) Authorize(ctx context.Context, userID string, id uuid.UUID, w
 	return AuthorizeIn(ctx, g.st.Repos(), userID, id, want)
 }
 
-// AuthorizeIn is Authorize within an existing transaction.
+// AuthorizeIn checks a grant without locking. Do not use this for a write
+// that must serialize with access changes; use AuthorizeForUpdateIn instead.
 func AuthorizeIn(ctx context.Context, r store.Repos, userID string, id uuid.UUID, want meters.Permission) (*meters.Meter, error) {
 	m, err := r.Meters().Get(ctx, id)
+	return authorizeGrant(ctx, r, userID, id, want, m, err)
+}
+
+// AuthorizeForUpdateIn locks the meter before checking access and holds that
+// lock until the surrounding transaction commits. Access modifications must
+// take the same lock before changing grants.
+func AuthorizeForUpdateIn(ctx context.Context, r store.Repos, userID string, id uuid.UUID, want meters.Permission) (*meters.Meter, error) {
+	m, err := r.Meters().GetForUpdate(ctx, id)
+	return authorizeGrant(ctx, r, userID, id, want, m, err)
+}
+
+func authorizeGrant(ctx context.Context, r store.Repos, userID string, id uuid.UUID, want meters.Permission, m *meters.Meter, err error) (*meters.Meter, error) {
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -160,10 +173,6 @@ func AuthorizeIn(ctx context.Context, r store.Repos, userID string, id uuid.UUID
 
 func (g *Registry) ListForUser(ctx context.Context, userID string) ([]meters.Listed, error) {
 	return g.st.Repos().Meters().ListForUser(ctx, userID)
-}
-
-func (g *Registry) Revoke(ctx context.Context, meterID uuid.UUID, userID string) error {
-	return g.st.Repos().Meters().Revoke(ctx, meterID, userID, g.Now())
 }
 
 // Number decrypts the meter number for provider calls only.

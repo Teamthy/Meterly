@@ -95,9 +95,12 @@ type MeterRepo interface {
 	Update(ctx context.Context, m *meters.Meter) error
 	// UpsertGrant creates an active grant, or raises the permission and
 	// updates the label of an existing active grant. Never lowers it.
+	// Grant-changing workflows must hold the meter lock in the same InTx
+	// before calling this method, to serialize with purchase authorization.
 	UpsertGrant(ctx context.Context, g meters.Grant) error
 	ActiveGrant(ctx context.Context, meterID uuid.UUID, userID string) (*meters.Grant, error)
 	ListForUser(ctx context.Context, userID string) ([]meters.Listed, error)
+	// Revoke callers must hold the meter lock in the surrounding InTx.
 	Revoke(ctx context.Context, meterID uuid.UUID, userID string, at time.Time) error
 }
 

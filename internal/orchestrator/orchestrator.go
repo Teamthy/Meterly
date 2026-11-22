@@ -283,8 +283,8 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		if q.Used || now.After(q.ExpiresAt) {
 			return ErrQuoteExpired
 		}
-		// Re-check access: it may have been revoked since the quote.
-		if _, err := registry.AuthorizeIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {
+		// Serialize this authorization and creation with meter access changes.
+		if _, err := registry.AuthorizeForUpdateIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {
 			return err
 		}
 		if err := r.Quotes().MarkUsed(ctx, q.ID); err != nil {

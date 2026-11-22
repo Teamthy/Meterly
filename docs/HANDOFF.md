@@ -118,6 +118,9 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 8. Session log (newest first)
 
+- **Purchase/removal serialization:** transaction creation now locks the meter before reauthorizing the purchase grant, serializing with self-removal and registration. Deterministic gate tests force both lock orderings against memory/PostgreSQL: removal first rejects creation without consuming the quote; creation first leaves the committed purchase in flight. Future grant mutation paths must also take the meter lock. Race suite and vet pass with disposable local PostgreSQL.
+
+
 - **Meter access hardening:** registration now grants PURCHASE only, never MANAGE based on a meter number. `DELETE /v1/meters/{id}` removes caller's own access atomically with audit; row locking serializes registration/removal. Invalid permission comparisons fail closed. Concurrent removal and injected audit failure tested on memory/PostgreSQL; HTTP tests cover privacy, restored registration, quote reauthorization and isolation. Legacy MANAGE grants persist unverified; do not use them for household delegation. Existing in-flight purchases are not cancelled. Verified ownership and household delegation remain unimplemented.
 
 
