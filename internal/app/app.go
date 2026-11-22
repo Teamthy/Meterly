@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/httpapi"
+	"github.com/teamthy/meterly/internal/notificationconsumer"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/platform/config"
@@ -154,7 +156,13 @@ func (a *App) Handler() http.Handler {
 
 // RunWorker runs the resume and outbox loops until ctx is cancelled.
 func (a *App) RunWorker(ctx context.Context) {
-	go a.loop(ctx, "outbox", a.Cfg.OutboxInterval, func(ctx context.Context) {
+	var wg sync.WaitGroup
+	start := func(name string, interval time.Duration, fn func(context.Context)) {
+		wg.Add(1)
+		go func() { defer wg.Done(); a.loop(ctx, name, interval, fn) }()
+	}
+	defer wg.Wait()
+	start("outbox", a.Cfg.OutboxInterval, func(ctx context.Context) {
 		for {
 			n, err := a.Publisher.PublishBatch(ctx)
 			if err != nil {
@@ -166,6 +174,19 @@ func (a *App) RunWorker(ctx context.Context) {
 			}
 		}
 	})
+	if !a.Cfg.NotificationCandidatesSince.IsZero() {
+		start("notification-candidates", a.Cfg.OutboxInterval, func(ctx context.Context) {
+			// One bounded batch per tick; no sender or destination is involved.
+			n, err := notificationconsumer.ConsumeBatch(ctx, a.Store, a.Cfg.NotificationCandidatesSince, 100)
+			if err != nil {
+				a.Log.Warn("notification candidate collection failed", "err", err)
+				return
+			}
+			if n > 0 {
+				a.Log.Info("notification candidates held", "count", n)
+			}
+		})
+	}
 	a.loop(ctx, "resume", a.Cfg.ResumeInterval, func(ctx context.Context) {
 		processed, progressed, err := a.Orch.ResumeDue(ctx)
 		if err != nil {

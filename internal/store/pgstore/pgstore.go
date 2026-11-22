@@ -61,15 +61,18 @@ func (r *repos) atomic(ctx context.Context, fn func(db DB) error) error {
 	return pgx.BeginFunc(ctx, r.s.pool, func(t pgx.Tx) error { return fn(t) })
 }
 
-func (r *repos) Users() store.UserRepo               { return userRepo{r} }
-func (r *repos) Meters() store.MeterRepo             { return meterRepo{r} }
-func (r *repos) Quotes() store.QuoteRepo             { return quoteRepo{r} }
-func (r *repos) Transactions() store.TransactionRepo { return txnRepo{r} }
-func (r *repos) Ledger() store.LedgerRepo            { return ledgerRepo{r} }
-func (r *repos) Outbox() store.OutboxRepo            { return outboxRepo{r} }
-func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
-func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
-func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
+func (r *repos) Users() store.UserRepo                                   { return userRepo{r} }
+func (r *repos) Meters() store.MeterRepo                                 { return meterRepo{r} }
+func (r *repos) Quotes() store.QuoteRepo                                 { return quoteRepo{r} }
+func (r *repos) Transactions() store.TransactionRepo                     { return txnRepo{r} }
+func (r *repos) Ledger() store.LedgerRepo                                { return ledgerRepo{r} }
+func (r *repos) Outbox() store.OutboxRepo                                { return outboxRepo{r} }
+func (r *repos) Idempotency() store.IdempotencyRepo                      { return idemRepo{r} }
+func (r *repos) Audit() store.AuditRepo                                  { return auditRepo{r} }
+func (r *repos) Providers() store.ProviderRepo                           { return providerRepo{r} }
+func (r *repos) TokenShares() store.TokenShareRepo                       { return shareRepo{r} }
+func (r *repos) Gifts() store.GiftRepo                                   { return giftRepo{r} }
+func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

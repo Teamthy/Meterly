@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/orchestrator"
@@ -87,6 +88,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/meters", write(s.registerMeter))
 	mux.Handle("GET /v1/meters", user(s.listMeters))
 	mux.Handle("GET /v1/meters/{meter_id}", user(s.getMeter))
+	mux.Handle("DELETE /v1/meters/{meter_id}", write(s.removeSavedMeter))
 	mux.Handle("GET /v1/meters/{meter_id}/capabilities", user(s.getCapabilities))
 	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
 
@@ -97,6 +99,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/status", user(s.getTransaction))
 	mux.Handle("POST /v1/electricity/transactions/{transaction_id}/payment-check", write(s.paymentCheck))
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token", user(s.getToken))
+	mux.Handle("POST /v1/electricity/transactions/{transaction_id}/token/shares", write(s.recordTokenCopy))
+	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token/shares", user(s.listTokenCopies))
+	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/receipt", user(s.receipt))
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 
@@ -244,7 +249,7 @@ func (s *Server) registerMeter(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "meter_number and disco_code are required")
 		return
 	}
-	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.Label, meters.PermManage)
+	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.Label)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
@@ -261,7 +266,7 @@ func (s *Server) addBeneficiary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "meter_number, disco_code and display_name are required")
 		return
 	}
-	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.DisplayName, meters.PermPurchase)
+	m, err := s.O.Meters.Register(r.Context(), userID(r), req.MeterNumber, req.DiscoCode, req.DisplayName)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
@@ -293,6 +298,20 @@ func (s *Server) meterFromPath(w http.ResponseWriter, r *http.Request) (*meters.
 		return nil, false
 	}
 	return m, true
+}
+
+// removeSavedMeter removes only the authenticated caller's saved access.
+func (s *Server) removeSavedMeter(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	if err := s.O.Meters.RemoveSavedMeter(r.Context(), userID(r), id); err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) getMeter(w http.ResponseWriter, r *http.Request) {
@@ -340,10 +359,12 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		QuoteID       uuid.UUID `json:"quote_id"`
-		Email         string    `json:"email"`
-		IsGift        bool      `json:"is_gift"`
-		RecipientName string    `json:"recipient_name"`
+		QuoteID         uuid.UUID `json:"quote_id"`
+		Email           string    `json:"email"`
+		IsGift          bool      `json:"is_gift"`
+		RecipientName   string    `json:"recipient_name"`
+		RecipientPhone  string    `json:"recipient_phone"`
+		NotifyRecipient bool      `json:"notify_recipient"`
 	}
 	if json.Unmarshal(body, &req) != nil || req.QuoteID == uuid.Nil {
 		writeErr(w, 400, "INVALID_REQUEST", "quote_id is required")
@@ -354,9 +375,13 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "a valid email is required")
 		return
 	}
+	requestHash := idempotency.HashRequest(body)
+	if req.RecipientPhone != "" {
+		requestHash = s.O.HashGiftRequest(body)
+	}
 	t, _, err := s.O.CreateTransaction(r.Context(), orchestrator.CreateRequest{
-		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName,
-		IdempotencyKey: key, RequestHash: idempotency.HashRequest(body),
+		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName, RecipientPhone: req.RecipientPhone, NotifyRecipient: req.NotifyRecipient,
+		IdempotencyKey: key, RequestHash: requestHash,
 	})
 	if err != nil && t == nil {
 		s.mapErr(w, r, err)
@@ -582,6 +607,8 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 403, "FORBIDDEN", "you do not have access to this meter")
 	case errors.Is(err, orchestrator.ErrNotEligible):
 		writeErr(w, 422, "METER_NOT_ELIGIBLE", err.Error())
+	case errors.Is(err, gifts.ErrInvalidContact):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference):
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrQuoteExpired), errors.Is(err, orchestrator.ErrQuoteNotFound):

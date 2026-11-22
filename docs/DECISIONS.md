@@ -73,3 +73,58 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
   - `CLIENT_IP_HEADER` takes the client IP from the right-most value of a header the trusted proxy appended
   - move to a shared store (Redis) when one replica's view stops being enough
 - **Admin search pagination** is keyset on `created_at` (`before=` / `next_before`). Transactions created in the same microsecond across a page boundary could be skipped; add an ID tiebreaker if that ever matters.
+
+
+## Receipts (M5, initial slice)
+
+- A receipt is a purchaser-only transaction record, available while pending as well as after completion. It reports payment, vending, delivery and overall states independently, and does not claim meter delivery from provider acceptance. It is not a tax invoice or settlement statement.
+- JSON is the default; `?format=html` provides a printable, escaped HTML rendering. Both use `Cache-Control: no-store` and omit tokens, checkout details, recipient contact and provider references. Sharing and notification delivery are not yet implemented.
+
+
+## Notification foundations (M5, partial)
+
+- Templates use trusted event type and transaction delivery method, never arbitrary outbox payload values. Command acceptance does not produce a delivery confirmation message. Token-availability messages direct the purchaser to the authenticated app and explain meter binding; no raw token is inserted.
+- Sender interfaces and a concurrency-safe in-process mock are available, but **not wired to the outbox**. The mock keeps only keyed digests and loses dedupe state on restart. It is not suitable for real delivery.
+- Before enabling any sender, implement durable per-event/per-recipient/channel intent and outcome records, consent and encrypted contacts, secure authorised token access for gifting, and provider-specific idempotency or reconciliation for ambiguous sends. A database dedupe row alone cannot guarantee exactly-once external delivery after a timeout or crash. Never send within the outbox claim transaction.
+
+
+## Token copy metadata (M5, partial)
+
+- Only a purchaser may report a `COPY` action for a confirmed vend whose token has been released via the token path. Recording the action is not evidence that a clipboard operation or recipient delivery occurred. Unsupported channels are rejected; no SMS, email or WhatsApp is sent.
+- Each copy record contains only actor, vending record, channel and time. It is committed alongside a redacted audit event, an outbox metadata event and an idempotency reservation, with the transaction row locked. Retried requests return the original record within the configured idempotency window; requests with the same key for a different transaction conflict. No token or recipient destination is stored in this record or event. Token reads remain separately authorised and audited.
+- The history endpoint returns up to 200 most recent records. External notification and destination handling require separate consent, encrypted contact storage, and delivery reconciliation.
+
+
+## Gift contact storage (M5, partial)
+
+- Gift purchases may include a phone in E.164 format with an explicit `notify_recipient` request. This records only the purchaser's request, **not** the recipient's consent; no message is sent and contact is not returned from APIs or placed in outbox payloads.
+- Contact encryption uses AES-GCM with transaction-specific associated data (`gift-contact:<transaction UUID>`) and stores the existing encryption key version. Contact-bearing idempotency request hashes use a domain-separated HMAC rather than a plain hash. Keep the HMAC key stable through the idempotency retention window; a future keyring is needed for rotation and old-key decryptions.
+- Creation of gift contact, transaction, idempotency and outbox event is atomic. Migration 0004 adds key-version and request fields; its constraint is `NOT VALID` to avoid failing on unknown legacy data while still enforcing new writes. Audit and validate legacy rows before running `VALIDATE CONSTRAINT` in a later migration.
+- Recipient opt-in/consent, retention/deletion controls, delivery intents, destination routing and provider-specific ambiguous-send reconciliation are still required before any notification can use the contact. Do not interpret purchaser request as permission to send.
+
+
+## Held notification candidates (M5, partial)
+
+- The independent candidate consumer scans an explicit event-type allowlist irrespective of `published_at`, using locked, skip-locked rows and a unique outbox-event key. Candidate insertion commits in the same transaction as the claim; rollback or competing workers do not lose events or duplicate records. It never marks events published and does not interfere with the existing metadata logging publisher.
+- Candidates contain only event ID, aggregate ID, event type and creation time: no payload, contact, consent, channel, token or content. They are **held records**, not sendable delivery intents, and do not authorize delivery. The worker runs this consumer only when `NOTIFICATION_CANDIDATES_SINCE` is explicitly set.
+- Migration 0005 requires outbox retention while candidates reference events. A future rollout must define retention, index/volume operations and a backfill policy before enabling consumption. Historical candidates must not automatically send messages. Future delivery requires recipient consent, safe destination resolution, durable per-recipient intents, revocation checks and provider idempotency/ambiguous-send reconciliation. None is implemented here.
+
+
+## Meter registration is not ownership (M5, partial)
+
+- Provider validation and knowledge of a meter number do not prove ownership or authority to manage a household. Self-service meter registration and beneficiary saving now grant at most `PURCHASE`; they cannot mint `MANAGE`. Existing higher grants are deliberately not silently downgraded. Older versions created `MANAGE` via self-registration, so **legacy MANAGE grants are unverified**: audit/remediate them before any future delegation feature relies on them. There is no household-management endpoint in this slice.
+- `DELETE /v1/meters/{id}` revokes only the authenticated caller's own active grant, recording a redacted audit event atomically. Meter-row locks serialize removal with self-registration. Removed users may register the meter again for purchases; this is a saved-list action, not a household ban or permanent revocation. Purchases already in flight are not cancelled. An unused quote is reauthorized at transaction creation and fails while the grant is absent.
+- Permission comparisons fail closed for unrecognized held or required permission values. Verified ownership, household membership/acceptance, delegation scope, revocation semantics and race-safe authorization for delegated actions need separate design and tests before enabling household permissions.
+
+
+## Purchase authorization and self-removal ordering
+
+- Transaction creation locks the meter row in the same transaction before rechecking the purchase grant, and holds that lock until creation commits. Self-removal and registration take the same meter lock. Therefore removal that commits first blocks a new transaction from an unused quote; a transaction committed first remains in flight and is not cancelled by removal. Idempotent replays of already-created transactions remain available to their purchaser.
+- Any future grant mutation or delegated-access operation must acquire the meter lock before checking or modifying access, and must observe lock ordering. Repository methods alone do not enforce that higher-level contract. The quote itself can still be created concurrently with removal; transaction creation reauthorizes under the lock.
+
+
+## Opt-in held-candidate worker
+
+- Collection is off unless `NOTIFICATION_CANDIDATES_SINCE` is set to a nonzero RFC3339 timestamp with timezone; invalid values fail startup. Each worker records at most 100 candidates per outbox tick; no senders are invoked. Worker shutdown waits for all loops before the store is closed.
+- The cutoff is inclusive on outbox `created_at`, not commit time. Events created earlier but committed later are intentionally excluded; eligible late commits are eventually collected because there is no high-water cursor. Define a safe rollout window, clock discipline and backfill policy before using this in production.
+- All replicas must use the same stable cutoff. This is an operational requirement, not enforced in the database: moving it forward can skip uncollected events; moving it backward or running a replica with an older value can add historical candidates. Held records are not deliverable. Assess event volumes, query plans and retention before enabling; the outbox FK prevents deletion of referenced events.

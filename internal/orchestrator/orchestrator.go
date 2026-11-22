@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/events"
+	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
@@ -224,11 +225,13 @@ func (o *Orchestrator) GetQuote(ctx context.Context, customerID string, id uuid.
 // ---- Transaction creation --------------------------------------------------
 
 type CreateRequest struct {
-	CustomerID    string
-	QuoteID       uuid.UUID
-	Email         string
-	IsGift        bool
-	RecipientName string
+	CustomerID      string
+	QuoteID         uuid.UUID
+	Email           string
+	IsGift          bool
+	RecipientName   string
+	RecipientPhone  string // sensitive; do not log
+	NotifyRecipient bool   // purchaser request, not proof of recipient consent
 	// IdempotencyKey and RequestHash, when set, make creation idempotent:
 	// the reservation, the transaction and the completion commit together.
 	IdempotencyKey string
@@ -241,6 +244,9 @@ const opCreateTransaction = "create_transaction"
 // initialises payment. A replayed idempotent request returns the original
 // transaction (replayed=true).
 func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest) (t *tx.Transaction, replayed bool, err error) {
+	if err := gifts.Validate(req.IsGift, req.RecipientPhone, req.NotifyRecipient); err != nil {
+		return nil, false, err
+	}
 	now := o.Now()
 	err = o.st.InTx(ctx, func(r store.Repos) error {
 		if req.IdempotencyKey != "" {
@@ -277,8 +283,8 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		if q.Used || now.After(q.ExpiresAt) {
 			return ErrQuoteExpired
 		}
-		// Re-check access: it may have been revoked since the quote.
-		if _, err := registry.AuthorizeIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {
+		// Serialize this authorization and creation with meter access changes.
+		if _, err := registry.AuthorizeForUpdateIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {
 			return err
 		}
 		if err := r.Quotes().MarkUsed(ctx, q.ID); err != nil {
@@ -290,6 +296,23 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		t = tx.New(req.CustomerID, q, req.IsGift, req.RecipientName, now)
 		if err := r.Transactions().Create(ctx, t); err != nil {
 			return err
+		}
+		if req.IsGift {
+			g := gifts.Gift{TransactionID: t.ID, PurchaserID: req.CustomerID, RecipientName: req.RecipientName, NotificationRequested: req.NotifyRecipient, CreatedAt: now}
+			if req.RecipientPhone != "" {
+				if o.box.KeyVersion == "" {
+					return errors.New("gift encryption key version unavailable")
+				}
+				encrypted, err := o.box.EncryptBound(req.RecipientPhone, []byte("gift-contact:"+t.ID.String()))
+				if err != nil {
+					return err
+				}
+				g.ContactCiphertext = encrypted
+				g.ContactKeyVersion = o.box.KeyVersion
+			}
+			if err := r.Gifts().Create(ctx, g); err != nil {
+				return err
+			}
 		}
 		if err := emit(ctx, r, "electricity.transaction.created", t.ID, map[string]any{"gift": t.IsGift}); err != nil {
 			return err
@@ -749,4 +772,11 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		}
 		return emit(ctx, r, "electricity.refund.completed", t.ID, nil)
 	})
+}
+
+// HashGiftRequest protects low-entropy recipient contact in idempotency records.
+// Use only for requests carrying recipient contact; keys must be retained across
+// the configured idempotency window to preserve replay behaviour.
+func (o *Orchestrator) HashGiftRequest(body []byte) string {
+	return o.box.Hash("gift-request:" + string(body))
 }

@@ -14,12 +14,12 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | Foundation: transaction engine, mocks, API | ✅ merged | [PR #1](https://github.com/Teamthy/Meterly/pull/1) |
 | M1: PostgreSQL persistence, atomic units of work | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
 | M2: api/worker split, Resume/reconciliation, config | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
-| M3: Paystack payment adapter | ✅ done, in open PR | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
-| M4: OIDC auth, admin API, audit, rate limits | ✅ done, in open PR | [PR #3](https://github.com/Teamthy/Meterly/pull/3) (same branch) |
+| M3: Paystack payment adapter | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
+| M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) (same branch) |
 | M5: notifications, gifting delivery, token sharing, receipts | ⏳ next | — |
 | M6: OpenAPI, metrics/tracing, Dockerfile | ⏳ | — |
 
-**Open action for the founder:** review and merge [PR #3](https://github.com/Teamthy/Meterly/pull/3) (M3 + M4 + handoff). After it merges, the next session must `git merge origin/main` into the branch before new work (force-pushes are blocked).
+PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
 CI (`.github/workflows/ci.yml`) runs gofmt, vet, `go test -race` against a PostgreSQL 16 service, and fails if the PostgreSQL subtests were skipped. It passed on GitHub for PR #2.
 
@@ -105,7 +105,7 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` with hashed destinations. Receipts.
+**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` destination handling. Purchaser-only JSON/HTML receipts and COPY metadata are implemented; external sending remains.
 
 **M6:** `api/openapi.yaml` plus a route-coverage test, OpenTelemetry, Prometheus `/metrics`, distroless Dockerfiles.
 
@@ -117,6 +117,30 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - legal review: NERC and state regulators, the CBN-licensed payment money flow, NDPA 2023
 
 ## 8. Session log (newest first)
+
+- **Opt-in held-candidate worker:** `NOTIFICATION_CANDIDATES_SINCE` (nonzero RFC3339 timestamp) enables bounded collection; absent means off. Inclusive event-created-at cutoff applies independently of published status; a late commit whose creation time predates the cutoff is excluded. No sends or recipient consent. Keep cutoff stable across replicas and define rollout/backfill/retention before production; database does not enforce consistency. Worker now waits for background loops during shutdown. Boundary, delayed arrival, opt-in/default, log privacy and worker tests pass on memory/PostgreSQL. Supabase remains untouched.
+
+
+- **Purchase/removal serialization:** transaction creation now locks the meter before reauthorizing the purchase grant, serializing with self-removal and registration. Deterministic gate tests force both lock orderings against memory/PostgreSQL: removal first rejects creation without consuming the quote; creation first leaves the committed purchase in flight. Future grant mutation paths must also take the meter lock. Race suite and vet pass with disposable local PostgreSQL.
+
+
+- **Meter access hardening:** registration now grants PURCHASE only, never MANAGE based on a meter number. `DELETE /v1/meters/{id}` removes caller's own access atomically with audit; row locking serializes registration/removal. Invalid permission comparisons fail closed. Concurrent removal and injected audit failure tested on memory/PostgreSQL; HTTP tests cover privacy, restored registration, quote reauthorization and isolation. Legacy MANAGE grants persist unverified; do not use them for household delegation. Existing in-flight purchases are not cancelled. Verified ownership and household delegation remain unimplemented.
+
+
+- **Held notification candidates:** migration 0005 and the then-unwired transactional consumer record metadata-only candidates for allowlisted events, independently of outbox publication. Unique event keys, row locks and rollback tests cover concurrent/replayed consumption on memory and PostgreSQL. No sender or consent/destination logic is wired; candidates must never be treated as delivery jobs. Define retention and a historical-event cutoff/backfill policy before enabling. Supabase was not migrated.
+
+
+- **Encrypted gift-contact storage:** optional E.164 recipient phone and purchaser notification request are stored as AES-GCM ciphertext bound to the transaction, with a key version. New migration 0004 adds metadata; creation is atomic with the transaction and idempotency record. Contact-bearing request hashes use HMAC. This does not establish recipient consent, send messages, or implement key rotation and retention. HTTP tests cover encryption, associated data, idempotency and log/outbox/response redaction against both memory and PostgreSQL 16.16; race tests and vet use the temporary offline module overlay. Migration 0004 has not been applied to Supabase.
+
+
+- **Copy metadata:** added purchaser-only, idempotent COPY record and history endpoints. Records, audit and outbox metadata commit atomically; no token is copied into the record, and the endpoint does not send messages or prove delivery. Concurrent duplicate requests and HTTP authorization tests pass on memory and PostgreSQL 16.16. The local PG server was downloaded temporarily from an npm-packaged distribution because Docker and system PostgreSQL were unavailable; it is not part of the repo. `go test -race -count=1` and `go vet` passed with the temporary offline Go module overlay. SMS/email/WhatsApp, durable notification delivery remained unimplemented at that point; gift contact storage was added subsequently.
+
+
+- **Notification foundation:** added privacy-preserving event templates and process-local mock SMS/email/WhatsApp sender contracts with concurrent dedup tests. They are not connected to the outbox or real providers; durable contact storage and ambiguous-send handling are still required. `go test -race` and `go vet` passed with the temporary offline module overlay; PostgreSQL tests remained skipped (no local PostgreSQL or Docker). M5 is not complete.
+
+
+- **Receipt slice:** added purchaser-only JSON and escaped printable HTML transaction records with no-store headers and independently displayed statuses. Unit and HTTP tests cover pending, completed, ownership, no token leakage and HTML escaping. Ran `go test -race` and `go vet` with a temporary offline module overlay and Go 1.27.4; PostgreSQL tests were skipped because this sandbox had neither Docker nor PostgreSQL binaries. M5 remains incomplete. No live provider or Supabase changes were made.
+
 
 - **2026-11-21 (later): M4.** Opened PR #3 (M3 + handoff). Built:
   - `internal/auth`: OIDC verifier using only the stdlib (RS256/ES256, iss/aud/exp/nbf/iat, ≤60s skew, cached JWKS with rate-limited refresh on rotation, discovery), roles claim, MFA gate for staff.

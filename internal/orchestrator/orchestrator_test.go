@@ -166,7 +166,7 @@ func (e *env) user(t *testing.T, name string) string {
 
 func (e *env) register(t *testing.T, user, meter string) *meters.Meter {
 	t.Helper()
-	m, err := e.o.Meters.Register(e.ctx, e.user(t, user), meter, "IKEDC", "Home", meters.PermManage)
+	m, err := e.o.Meters.Register(e.ctx, e.user(t, user), meter, "IKEDC", "Home")
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -689,14 +689,14 @@ func TestAccessControl(t *testing.T) {
 			t.Fatalf("stranger quote: %v", err)
 		}
 		member := e.user(t, "member")
-		if _, err := e.o.Meters.Register(e.ctx, member, "45012345678", "IKEDC", "Mum", meters.PermPurchase); err != nil {
+		if _, err := e.o.Meters.Register(e.ctx, member, "45012345678", "IKEDC", "Mum"); err != nil {
 			t.Fatal(err)
 		}
 		q, err := e.o.CreateQuote(e.ctx, member, m.ID, 500000, orchestrator.PrefAuto)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := e.o.Meters.Revoke(e.ctx, m.ID, member); err != nil {
+		if err := e.o.Meters.RemoveSavedMeter(e.ctx, member, m.ID); err != nil {
 			t.Fatal(err)
 		}
 		if _, _, err := e.o.CreateTransaction(e.ctx, orchestrator.CreateRequest{CustomerID: member, QuoteID: q.ID}); !errors.Is(err, meters.ErrForbidden) {
@@ -707,7 +707,7 @@ func TestAccessControl(t *testing.T) {
 			t.Fatalf("got %d transactions", len(txns))
 		}
 		list, _ := e.o.Meters.ListForUser(e.ctx, e.user(t, "owner"))
-		if len(list) != 1 || list[0].Permission != meters.PermManage {
+		if len(list) != 1 || list[0].Permission != meters.PermPurchase {
 			t.Fatalf("owner list %+v", list)
 		}
 	})
@@ -740,8 +740,189 @@ func TestQuoteSingleUseAndLimits(t *testing.T) {
 
 func TestInvalidMeterRejected(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
-		if _, err := e.o.Meters.Register(e.ctx, e.user(t, "u1"), "01234567890", "IKEDC", "", meters.PermManage); !errors.Is(err, meters.ErrInvalidMeter) {
+		if _, err := e.o.Meters.Register(e.ctx, e.user(t, "u1"), "01234567890", "IKEDC", ""); !errors.Is(err, meters.ErrInvalidMeter) {
 			t.Fatalf("got %v", err)
 		}
 	})
+}
+
+// failAuditStore proves self-removal rolls back when its audit write fails.
+type failAuditStore struct{ store.Store }
+type failAuditRepos struct{ store.Repos }
+type failAuditRepo struct{ store.AuditRepo }
+
+func (s failAuditStore) InTx(ctx context.Context, fn func(store.Repos) error) error {
+	return s.Store.InTx(ctx, func(r store.Repos) error { return fn(failAuditRepos{r}) })
+}
+func (r failAuditRepos) Audit() store.AuditRepo                { return failAuditRepo{r.Repos.Audit()} }
+func (r failAuditRepo) Add(context.Context, audit.Event) error { return errCrash }
+
+func TestSelfMeterRemovalAtomicAndConcurrent(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		u := e.user(t, "self")
+		m := e.register(t, "self", "45012345678")
+		broken := registry.New(failAuditStore{e.st}, nil, nil, nil)
+		if err := broken.RemoveSavedMeter(e.ctx, u, m.ID); !errors.Is(err, errCrash) {
+			t.Fatalf("audit failure: %v", err)
+		}
+		if _, err := e.o.Meters.Authorize(e.ctx, u, m.ID, meters.PermPurchase); err != nil {
+			t.Fatalf("revocation did not roll back: %v", err)
+		}
+		var wg sync.WaitGroup
+		var removed, missing atomic.Int32
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := e.o.Meters.RemoveSavedMeter(e.ctx, u, m.ID)
+				if err == nil {
+					removed.Add(1)
+				} else if errors.Is(err, meters.ErrNotFound) {
+					missing.Add(1)
+				} else {
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		if removed.Load() != 1 || missing.Load() != 11 {
+			t.Fatalf("remove %d missing %d", removed.Load(), missing.Load())
+		}
+		events, err := e.st.Repos().Audit().ForResource(e.ctx, "meter", m.ID)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("audit events %d: %v", len(events), err)
+		}
+	})
+}
+
+// gateMeterStore pauses one operation after obtaining the meter lock, allowing
+// tests to force each ordering of creation and self-removal.
+type gateMeterStore struct {
+	store.Store
+	entered chan struct{}
+	release chan struct{}
+	once    atomic.Bool
+}
+type gateMeterRepos struct {
+	store.Repos
+	gate *gateMeterStore
+}
+type gateMeterRepo struct {
+	store.MeterRepo
+	gate *gateMeterStore
+}
+
+func (s *gateMeterStore) InTx(ctx context.Context, fn func(store.Repos) error) error {
+	return s.Store.InTx(ctx, func(r store.Repos) error { return fn(gateMeterRepos{r, s}) })
+}
+func (r gateMeterRepos) Meters() store.MeterRepo { return gateMeterRepo{r.Repos.Meters(), r.gate} }
+func (r gateMeterRepo) GetForUpdate(ctx context.Context, id uuid.UUID) (*meters.Meter, error) {
+	m, err := r.MeterRepo.GetForUpdate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if r.gate.once.CompareAndSwap(false, true) {
+		close(r.gate.entered)
+		select {
+		case <-r.gate.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return m, nil
+}
+
+func TestPurchaseAndSelfRemovalSerialize(t *testing.T) {
+	for _, first := range []string{"purchase", "remove"} {
+		t.Run(first, func(t *testing.T) {
+			each(t, func(t *testing.T, e *env) {
+				ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
+				defer cancel()
+				user := e.user(t, "self")
+				m := e.register(t, "self", "45012345678")
+				q, err := e.o.CreateQuote(ctx, user, m.ID, 500000, orchestrator.PrefToken)
+				if err != nil {
+					t.Fatal(err)
+				}
+				gated := &gateMeterStore{Store: e.st, entered: make(chan struct{}), release: make(chan struct{})}
+				box, err := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "test")
+				if err != nil {
+					t.Fatal(err)
+				}
+				gatedReg := registry.New(gated, box, e.hv, e.hr)
+				gatedO := orchestrator.New(orchestrator.DefaultConfig(), gated, gatedReg, box, e.hp, e.hv, e.hr, nil)
+				create := func(o *orchestrator.Orchestrator) error {
+					_, _, err := o.CreateTransaction(ctx, orchestrator.CreateRequest{CustomerID: user, QuoteID: q.ID, Email: "synthetic@example.com"})
+					return err
+				}
+				remove := func(g *registry.Registry) error { return g.RemoveSavedMeter(ctx, user, m.ID) }
+				firstDone := make(chan error, 1)
+				secondDone := make(chan error, 1)
+				started := make(chan struct{})
+				if first == "purchase" {
+					go func() { firstDone <- create(gatedO) }()
+				} else {
+					go func() { firstDone <- remove(gatedReg) }()
+				}
+				select {
+				case <-gated.entered:
+				case <-ctx.Done():
+					t.Fatal("first operation never acquired lock")
+				}
+				go func() {
+					close(started)
+					if first == "purchase" {
+						secondDone <- remove(e.o.Meters)
+					} else {
+						secondDone <- create(e.o)
+					}
+				}()
+				<-started
+				select {
+				case err := <-secondDone:
+					close(gated.release)
+					t.Fatalf("second operation bypassed meter lock: %v", err)
+				case <-time.After(150 * time.Millisecond):
+				}
+				close(gated.release)
+				select {
+				case err := <-firstDone:
+					if err != nil {
+						t.Fatalf("first operation failed: %v", err)
+					}
+				case <-ctx.Done():
+					t.Fatal("first operation timed out")
+				}
+				var secondErr error
+				select {
+				case secondErr = <-secondDone:
+				case <-ctx.Done():
+					t.Fatal("second operation timed out")
+				}
+				if first == "purchase" && secondErr != nil {
+					t.Fatalf("remove after committed purchase: %v", secondErr)
+				}
+				if first == "remove" && !errors.Is(secondErr, meters.ErrForbidden) {
+					t.Fatalf("purchase after removal: %v", secondErr)
+				}
+				ts, err := e.o.ListForCustomer(ctx, user)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := 0
+				if first == "purchase" {
+					want = 1
+				}
+				if len(ts) != want {
+					t.Fatalf("got %d transactions want %d", len(ts), want)
+				}
+				if first == "remove" {
+					quote, err := e.o.GetQuote(ctx, user, q.ID)
+					if err != nil || quote.Used {
+						t.Fatal("rejected purchase consumed quote")
+					}
+				}
+			})
+		})
+	}
 }

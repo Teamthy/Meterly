@@ -85,3 +85,26 @@ func Mask(v string, visible int) string {
 	}
 	return strings.Repeat("*", len(v)-visible) + v[len(v)-visible:]
 }
+
+// EncryptBound binds ciphertext to its purpose and resource using AEAD data.
+func (b *Box) EncryptBound(plaintext string, context []byte) ([]byte, error) {
+	if plaintext == "" || len(context) == 0 {
+		return nil, errors.New("secure: plaintext and context required")
+	}
+	nonce := make([]byte, b.aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	return b.aead.Seal(nonce, nonce, []byte(plaintext), context), nil
+}
+func (b *Box) DecryptBound(ciphertext, context []byte) (string, error) {
+	ns := b.aead.NonceSize()
+	if len(context) == 0 || len(ciphertext) < ns+b.aead.Overhead() {
+		return "", errors.New("secure: invalid ciphertext")
+	}
+	pt, err := b.aead.Open(nil, ciphertext[:ns], ciphertext[ns:], context)
+	if err != nil {
+		return "", errors.New("secure: ciphertext authentication failed")
+	}
+	return string(pt), nil
+}

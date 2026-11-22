@@ -34,8 +34,8 @@ This maps the *Electricity Technology Platform: Product Requirements, Architectu
 2. ~~Real payment adapter~~ (M3 done: Paystack with HMAC webhooks, server-side verify, idempotent refunds; tested against a stateful fake, **not yet against the live Paystack sandbox**).
 3. **First real vending adapter**, through an aggregator API or a DisCo's third-party vending interface.
 4. ~~OIDC authentication and admin API~~ (M4 done: OIDC/JWKS with MFA-gated staff roles; `/v1/admin/*` with search, detail, reconcile, fallback, audited token reveal, requeue, operator refund and provider switches; audit log; rate limits).
-5. **Notifications** (SMS/WhatsApp/email) consuming outbox events: token delivery to gift recipients.
-6. **Token sharing records** (`token_shares`), receipts, households (FR-007/008).
+5. **Notifications** (SMS/WhatsApp/email) consuming outbox events: token delivery to gift recipients. Safe templates, a test-only mock sender, encrypted gift-contact storage and a durable held-candidate consumer exist. Candidate collection is wired behind an explicit cutoff and disabled by default; recipient consent, deliverable intents and real sending remain outstanding.
+6. **Token sharing and households** (FR-007/008). Purchaser-only COPY metadata and JSON/HTML transaction records are implemented. Self-service saves now grant purchase-only access, and users can remove their own saved access with an audit trail. External channel sending, receipt delivery, verified ownership and household delegation remain outstanding; existing legacy MANAGE grants are unverified.
 7. OpenAPI 3.1 document (`api/openapi.yaml`) generated from or checked against the handlers.
 8. Business dashboard, admin console and developer platform (Phases 5–7).
 

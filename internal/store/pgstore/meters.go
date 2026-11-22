@@ -3,6 +3,7 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,13 @@ func scanMeter(row pgx.Row) (*meters.Meter, error) {
 
 func (r meterRepo) Get(ctx context.Context, id uuid.UUID) (*meters.Meter, error) {
 	return scanMeter(r.db.QueryRow(ctx, `SELECT `+meterCols+` FROM meters m JOIN distribution_companies d ON d.id = m.disco_id WHERE m.id = $1`, id))
+}
+
+func (r meterRepo) GetForUpdate(ctx context.Context, id uuid.UUID) (*meters.Meter, error) {
+	if !r.inTx {
+		return nil, errors.New("meter lock requires transaction")
+	}
+	return scanMeter(r.db.QueryRow(ctx, `SELECT `+meterCols+` FROM meters m JOIN distribution_companies d ON d.id=m.disco_id WHERE m.id=$1 FOR UPDATE OF m`, id))
 }
 
 func (r meterRepo) GetByHash(ctx context.Context, hash string) (*meters.Meter, error) {
