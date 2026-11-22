@@ -14,12 +14,12 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | Foundation: transaction engine, mocks, API | ✅ merged | [PR #1](https://github.com/Teamthy/Meterly/pull/1) |
 | M1: PostgreSQL persistence, atomic units of work | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
 | M2: api/worker split, Resume/reconciliation, config | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
-| M3: Paystack payment adapter | ✅ done, in open PR | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
-| M4: OIDC auth, admin API, audit, rate limits | ✅ done, in open PR | [PR #3](https://github.com/Teamthy/Meterly/pull/3) (same branch) |
+| M3: Paystack payment adapter | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
+| M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) (same branch) |
 | M5: notifications, gifting delivery, token sharing, receipts | ⏳ next | — |
 | M6: OpenAPI, metrics/tracing, Dockerfile | ⏳ | — |
 
-**Open action for the founder:** review and merge [PR #3](https://github.com/Teamthy/Meterly/pull/3) (M3 + M4 + handoff). After it merges, the next session must `git merge origin/main` into the branch before new work (force-pushes are blocked).
+PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
 CI (`.github/workflows/ci.yml`) runs gofmt, vet, `go test -race` against a PostgreSQL 16 service, and fails if the PostgreSQL subtests were skipped. It passed on GitHub for PR #2.
 
@@ -105,7 +105,7 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` with hashed destinations. Receipts.
+**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` with hashed destinations. Purchaser-only JSON/HTML receipts are implemented; delivery and sharing remain.
 
 **M6:** `api/openapi.yaml` plus a route-coverage test, OpenTelemetry, Prometheus `/metrics`, distroless Dockerfiles.
 
@@ -117,6 +117,9 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - legal review: NERC and state regulators, the CBN-licensed payment money flow, NDPA 2023
 
 ## 8. Session log (newest first)
+
+- **Receipt slice:** added purchaser-only JSON and escaped printable HTML transaction records with no-store headers and independently displayed statuses. Unit and HTTP tests cover pending, completed, ownership, no token leakage and HTML escaping. Ran `go test -race` and `go vet` with a temporary offline module overlay and Go 1.27.4; PostgreSQL tests were skipped because this sandbox had neither Docker nor PostgreSQL binaries. M5 remains incomplete. No live provider or Supabase changes were made.
+
 
 - **2026-11-21 (later): M4.** Opened PR #3 (M3 + handoff). Built:
   - `internal/auth`: OIDC verifier using only the stdlib (RS256/ES256, iss/aud/exp/nbf/iat, ≤60s skew, cached JWKS with rate-limited refresh on rotation, discovery), roles claim, MFA gate for staff.

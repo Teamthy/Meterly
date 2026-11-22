@@ -73,3 +73,9 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
   - `CLIENT_IP_HEADER` takes the client IP from the right-most value of a header the trusted proxy appended
   - move to a shared store (Redis) when one replica's view stops being enough
 - **Admin search pagination** is keyset on `created_at` (`before=` / `next_before`). Transactions created in the same microsecond across a page boundary could be skipped; add an ID tiebreaker if that ever matters.
+
+
+## Receipts (M5, initial slice)
+
+- A receipt is a purchaser-only transaction record, available while pending as well as after completion. It reports payment, vending, delivery and overall states independently, and does not claim meter delivery from provider acceptance. It is not a tax invoice or settlement statement.
+- JSON is the default; `?format=html` provides a printable, escaped HTML rendering. Both use `Cache-Control: no-store` and omit tokens, checkout details, recipient contact and provider references. Sharing and notification delivery are not yet implemented.

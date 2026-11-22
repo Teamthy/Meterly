@@ -117,6 +117,17 @@ func endToEnd(t *testing.T, st store.Store) {
 		t.Fatalf("idempotency conflict: %d", code)
 	}
 
+	// A pending record is not presented as successful.
+	if code, receipt := c.do("GET", "/v1/electricity/transactions/"+id+"/receipt", "ada", nil, nil); code != 200 || receipt["payment_status"] != "PENDING" || receipt["overall_status"] != "PAYMENT_PENDING" {
+		t.Fatalf("pending receipt %d %v", code, receipt)
+	}
+	if code, _ := c.do("GET", "/v1/electricity/transactions/"+id+"/receipt", "eve", nil, nil); code != 404 {
+		t.Fatalf("other user read receipt: %d", code)
+	}
+	if code, _ := c.do("GET", "/v1/electricity/transactions/"+id+"/receipt?format=pdf", "ada", nil, nil); code != 400 {
+		t.Fatalf("unsupported format: %d", code)
+	}
+
 	ref := txn["checkout_url"].(string)[strings.LastIndex(txn["checkout_url"].(string), "/")+1:]
 	c.do("POST", "/v1/dev/payments/"+ref+"/complete", "", map[string]any{}, nil)
 	if code, _ := c.do("POST", "/v1/payments/webhooks/mockpay", "", map[string]any{"reference": ref}, nil); code != 401 {
@@ -135,6 +146,21 @@ func endToEnd(t *testing.T, st store.Store) {
 	code, tok := c.do("GET", "/v1/electricity/transactions/"+id+"/token", "ada", nil, nil)
 	if code != 200 {
 		t.Fatalf("token %d %v", code, tok)
+	}
+	// The HTML version is private and contains neither raw meter number nor token.
+	req, _ := http.NewRequest("GET", srv.URL+"/v1/electricity/transactions/"+id+"/receipt?format=html", nil)
+	req.Header.Set("Authorization", "Bearer ada")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != "no-store" || !strings.Contains(resp.Header.Get("Content-Type"), "text/html") || !strings.Contains(string(html), "CONFIRMED") || strings.Contains(string(html), meter) || strings.Contains(string(html), tok["token"].(string)) {
+		t.Fatalf("invalid or sensitive HTML receipt, status=%d", resp.StatusCode)
 	}
 	token := tok["token"].(string)
 	if code, _ := c.do("GET", "/v1/electricity/transactions/"+id+"/token", "eve", nil, nil); code != 404 {
