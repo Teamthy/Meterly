@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/orchestrator"
@@ -343,10 +344,12 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		QuoteID       uuid.UUID `json:"quote_id"`
-		Email         string    `json:"email"`
-		IsGift        bool      `json:"is_gift"`
-		RecipientName string    `json:"recipient_name"`
+		QuoteID         uuid.UUID `json:"quote_id"`
+		Email           string    `json:"email"`
+		IsGift          bool      `json:"is_gift"`
+		RecipientName   string    `json:"recipient_name"`
+		RecipientPhone  string    `json:"recipient_phone"`
+		NotifyRecipient bool      `json:"notify_recipient"`
 	}
 	if json.Unmarshal(body, &req) != nil || req.QuoteID == uuid.Nil {
 		writeErr(w, 400, "INVALID_REQUEST", "quote_id is required")
@@ -357,9 +360,13 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "a valid email is required")
 		return
 	}
+	requestHash := idempotency.HashRequest(body)
+	if req.RecipientPhone != "" {
+		requestHash = s.O.HashGiftRequest(body)
+	}
 	t, _, err := s.O.CreateTransaction(r.Context(), orchestrator.CreateRequest{
-		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName,
-		IdempotencyKey: key, RequestHash: idempotency.HashRequest(body),
+		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName, RecipientPhone: req.RecipientPhone, NotifyRecipient: req.NotifyRecipient,
+		IdempotencyKey: key, RequestHash: requestHash,
 	})
 	if err != nil && t == nil {
 		s.mapErr(w, r, err)
@@ -585,6 +592,8 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 403, "FORBIDDEN", "you do not have access to this meter")
 	case errors.Is(err, orchestrator.ErrNotEligible):
 		writeErr(w, 422, "METER_NOT_ELIGIBLE", err.Error())
+	case errors.Is(err, gifts.ErrInvalidContact):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference):
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrQuoteExpired), errors.Is(err, orchestrator.ErrQuoteNotFound):

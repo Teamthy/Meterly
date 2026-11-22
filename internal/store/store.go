@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/events"
+	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
@@ -49,6 +50,7 @@ type Repos interface {
 	Audit() AuditRepo
 	Providers() ProviderRepo
 	TokenShares() TokenShareRepo
+	Gifts() GiftRepo
 }
 
 type AuditRepo interface {
@@ -152,4 +154,10 @@ type TokenShareRepo interface {
 	AddCopy(context.Context, tokenshares.Share) error
 	GetCopy(context.Context, uuid.UUID, uuid.UUID, string) (tokenshares.Share, error)
 	ListCopies(context.Context, uuid.UUID, string) ([]tokenshares.Share, error)
+}
+
+// GiftRepo stores encrypted contact metadata; no raw recipient contact.
+type GiftRepo interface {
+	Create(context.Context, gifts.Gift) error
+	Get(context.Context, uuid.UUID) (gifts.Gift, error)
 }

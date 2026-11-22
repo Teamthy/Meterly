@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/events"
+	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
@@ -39,13 +40,14 @@ type Store struct {
 	audit       []audit.Event
 	providerOff map[string]bool
 	tokenShares []tokenshares.Share
+	gifts       map[uuid.UUID]gifts.Gift
 }
 
 func New() *Store {
 	return &Store{
 		users: map[string]string{}, meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
-		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
+		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{}, gifts: map[uuid.UUID]gifts.Gift{},
 	}
 }
 
@@ -96,6 +98,7 @@ func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
 func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
 func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
 func (r *repos) TokenShares() store.TokenShareRepo   { return shareRepo{r} }
+func (r *repos) Gifts() store.GiftRepo               { return giftRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -613,4 +616,26 @@ func (r shareRepo) GetCopy(_ context.Context, shareID, txnID uuid.UUID, user str
 		}
 	}
 	return tokenshares.Share{}, store.ErrNotFound
+}
+
+type giftRepo struct{ *repos }
+
+func (r giftRepo) Create(_ context.Context, g gifts.Gift) error {
+	defer r.lock()()
+	if _, ok := r.s.gifts[g.TransactionID]; ok {
+		return store.ErrDuplicate
+	}
+	g.ContactCiphertext = append([]byte(nil), g.ContactCiphertext...)
+	r.s.gifts[g.TransactionID] = g
+	r.onUndo(func() { delete(r.s.gifts, g.TransactionID) })
+	return nil
+}
+func (r giftRepo) Get(_ context.Context, id uuid.UUID) (gifts.Gift, error) {
+	defer r.lock()()
+	g, ok := r.s.gifts[id]
+	if !ok {
+		return gifts.Gift{}, store.ErrNotFound
+	}
+	g.ContactCiphertext = append([]byte(nil), g.ContactCiphertext...)
+	return g, nil
 }

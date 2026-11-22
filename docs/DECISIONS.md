@@ -93,3 +93,11 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - Only a purchaser may report a `COPY` action for a confirmed vend whose token has been released via the token path. Recording the action is not evidence that a clipboard operation or recipient delivery occurred. Unsupported channels are rejected; no SMS, email or WhatsApp is sent.
 - Each copy record contains only actor, vending record, channel and time. It is committed alongside a redacted audit event, an outbox metadata event and an idempotency reservation, with the transaction row locked. Retried requests return the original record within the configured idempotency window; requests with the same key for a different transaction conflict. No token or recipient destination is stored in this record or event. Token reads remain separately authorised and audited.
 - The history endpoint returns up to 200 most recent records. External notification and destination handling require separate consent, encrypted contact storage, and delivery reconciliation.
+
+
+## Gift contact storage (M5, partial)
+
+- Gift purchases may include a phone in E.164 format with an explicit `notify_recipient` request. This records only the purchaser's request, **not** the recipient's consent; no message is sent and contact is not returned from APIs or placed in outbox payloads.
+- Contact encryption uses AES-GCM with transaction-specific associated data (`gift-contact:<transaction UUID>`) and stores the existing encryption key version. Contact-bearing idempotency request hashes use a domain-separated HMAC rather than a plain hash. Keep the HMAC key stable through the idempotency retention window; a future keyring is needed for rotation and old-key decryptions.
+- Creation of gift contact, transaction, idempotency and outbox event is atomic. Migration 0004 adds key-version and request fields; its constraint is `NOT VALID` to avoid failing on unknown legacy data while still enforcing new writes. Audit and validate legacy rows before running `VALIDATE CONSTRAINT` in a later migration.
+- Recipient opt-in/consent, retention/deletion controls, delivery intents, destination routing and provider-specific ambiguous-send reconciliation are still required before any notification can use the contact. Do not interpret purchaser request as permission to send.

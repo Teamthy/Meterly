@@ -254,6 +254,70 @@ func endToEnd(t *testing.T, st store.Store) {
 		t.Fatalf("readyz %d", code)
 	}
 
+	// Use a fresh server/rate limiter for a separate gift flow.
+	giftSrv := httptest.NewServer(s.Routes())
+	defer giftSrv.Close()
+	c = client{t, giftSrv}
+	// Gift contact is optional, encrypted, bound to this transaction, and not sent.
+	code, giftQuote := c.do("POST", "/v1/electricity/quotes", "ada", map[string]any{"meter_id": m["meter_id"], "amount_minor": 500000, "currency": "NGN"}, nil)
+	if code != 201 {
+		t.Fatalf("gift quote: %d", code)
+	}
+	phone := "+2348000000123" // synthetic only
+	giftKey := map[string]string{"Idempotency-Key": "gift-contact-123456789"}
+	giftBody := map[string]any{"quote_id": giftQuote["quote_id"], "email": "ada@example.com", "is_gift": true, "recipient_name": "Family", "recipient_phone": phone, "notify_recipient": true}
+	code, giftResponse := c.do("POST", "/v1/electricity/transactions", "ada", giftBody, giftKey)
+	if code != 202 {
+		t.Fatalf("gift create: %d %v", code, giftResponse)
+	}
+	giftID := uuid.MustParse(giftResponse["transaction_id"].(string))
+	giftRecord, err := st.Repos().Gifts().Get(context.Background(), giftID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !giftRecord.NotificationRequested || giftRecord.ContactKeyVersion != "t1" || strings.Contains(string(giftRecord.ContactCiphertext), phone) {
+		t.Fatal("gift contact not protected")
+	}
+	contact, err := box.DecryptBound(giftRecord.ContactCiphertext, []byte("gift-contact:"+giftID.String()))
+	if err != nil || contact != phone {
+		t.Fatal("gift contact could not be recovered")
+	}
+	if _, err := box.DecryptBound(giftRecord.ContactCiphertext, []byte("gift-contact:"+uuid.NewString())); err == nil {
+		t.Fatal("gift ciphertext not bound to transaction")
+	}
+	code, againGift := c.do("POST", "/v1/electricity/transactions", "ada", giftBody, giftKey)
+	if code != 202 || againGift["transaction_id"] != giftID.String() {
+		t.Fatal("gift idempotent replay failed")
+	}
+	changedBody := map[string]any{}
+	for k, v := range giftBody {
+		changedBody[k] = v
+	}
+	changedBody["recipient_phone"] = "+2348000000456"
+	if code, _ := c.do("POST", "/v1/electricity/transactions", "ada", changedBody, giftKey); code != 409 {
+		t.Fatalf("changed recipient phone not rejected: %d", code)
+	}
+	if b, _ := json.Marshal(giftResponse); strings.Contains(string(b), phone) {
+		t.Fatal("gift phone leaked in response")
+	}
+	events, err := st.Repos().Outbox().ForAggregate(context.Background(), giftID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(events); strings.Contains(string(b), phone) {
+		t.Fatal("gift phone leaked into outbox")
+	}
+	if strings.Contains(logs.String(), phone) {
+		t.Fatal("gift phone leaked in logs")
+	}
+	code, invalidQuote := c.do("POST", "/v1/electricity/quotes", "ada", map[string]any{"meter_id": m["meter_id"], "amount_minor": 500000, "currency": "NGN"}, nil)
+	if code != 201 {
+		t.Fatal("invalid gift quote")
+	}
+	invalid := map[string]any{"quote_id": invalidQuote["quote_id"], "email": "ada@example.com", "is_gift": true, "recipient_phone": phone}
+	if code, _ := c.do("POST", "/v1/electricity/transactions", "ada", invalid, map[string]string{"Idempotency-Key": "gift-invalid-1234567"}); code != 400 {
+		t.Fatalf("unsolicited contact accepted: %d", code)
+	}
 	// Sensitive values must never reach the logs.
 	out := logs.String()
 	digits := strings.ReplaceAll(token, "-", "")

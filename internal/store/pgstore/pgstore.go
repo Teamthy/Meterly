@@ -71,6 +71,7 @@ func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
 func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
 func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
 func (r *repos) TokenShares() store.TokenShareRepo   { return shareRepo{r} }
+func (r *repos) Gifts() store.GiftRepo               { return giftRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
