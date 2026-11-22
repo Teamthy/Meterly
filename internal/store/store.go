@@ -20,6 +20,7 @@ import (
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -51,6 +52,7 @@ type Repos interface {
 	Providers() ProviderRepo
 	TokenShares() TokenShareRepo
 	Gifts() GiftRepo
+	NotificationCandidates() NotificationCandidateRepo
 }
 
 type AuditRepo interface {
@@ -160,4 +162,12 @@ type TokenShareRepo interface {
 type GiftRepo interface {
 	Create(context.Context, gifts.Gift) error
 	Get(context.Context, uuid.UUID) (gifts.Gift, error)
+}
+
+// NotificationCandidateRepo is a held, non-deliverable record of relevant
+// outbox events. Claim and Record must run within the same Store.InTx.
+type NotificationCandidateRepo interface {
+	Claim(context.Context, int) ([]notificationintents.Intent, error)
+	Record(context.Context, notificationintents.Intent) error
+	Get(context.Context, uuid.UUID) (notificationintents.Intent, error)
 }

@@ -6,6 +6,7 @@ package memstore
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -41,13 +43,14 @@ type Store struct {
 	providerOff map[string]bool
 	tokenShares []tokenshares.Share
 	gifts       map[uuid.UUID]gifts.Gift
+	candidates  map[uuid.UUID]notificationintents.Intent
 }
 
 func New() *Store {
 	return &Store{
 		users: map[string]string{}, meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
-		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{}, gifts: map[uuid.UUID]gifts.Gift{},
+		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{}, gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
 	}
 }
 
@@ -88,17 +91,18 @@ func (r *repos) onUndo(f func()) {
 	}
 }
 
-func (r *repos) Users() store.UserRepo               { return r }
-func (r *repos) Meters() store.MeterRepo             { return meterRepo{r} }
-func (r *repos) Quotes() store.QuoteRepo             { return quoteRepo{r} }
-func (r *repos) Transactions() store.TransactionRepo { return txnRepo{r} }
-func (r *repos) Ledger() store.LedgerRepo            { return ledgerRepo{r} }
-func (r *repos) Outbox() store.OutboxRepo            { return outboxRepo{r} }
-func (r *repos) Idempotency() store.IdempotencyRepo  { return idemRepo{r} }
-func (r *repos) Audit() store.AuditRepo              { return auditRepo{r} }
-func (r *repos) Providers() store.ProviderRepo       { return providerRepo{r} }
-func (r *repos) TokenShares() store.TokenShareRepo   { return shareRepo{r} }
-func (r *repos) Gifts() store.GiftRepo               { return giftRepo{r} }
+func (r *repos) Users() store.UserRepo                                   { return r }
+func (r *repos) Meters() store.MeterRepo                                 { return meterRepo{r} }
+func (r *repos) Quotes() store.QuoteRepo                                 { return quoteRepo{r} }
+func (r *repos) Transactions() store.TransactionRepo                     { return txnRepo{r} }
+func (r *repos) Ledger() store.LedgerRepo                                { return ledgerRepo{r} }
+func (r *repos) Outbox() store.OutboxRepo                                { return outboxRepo{r} }
+func (r *repos) Idempotency() store.IdempotencyRepo                      { return idemRepo{r} }
+func (r *repos) Audit() store.AuditRepo                                  { return auditRepo{r} }
+func (r *repos) Providers() store.ProviderRepo                           { return providerRepo{r} }
+func (r *repos) TokenShares() store.TokenShareRepo                       { return shareRepo{r} }
+func (r *repos) Gifts() store.GiftRepo                                   { return giftRepo{r} }
+func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -638,4 +642,72 @@ func (r giftRepo) Get(_ context.Context, id uuid.UUID) (gifts.Gift, error) {
 	}
 	g.ContactCiphertext = append([]byte(nil), g.ContactCiphertext...)
 	return g, nil
+}
+
+type candidateRepo struct{ *repos }
+
+func (r candidateRepo) Claim(_ context.Context, limit int) ([]notificationintents.Intent, error) {
+	if !r.inTx {
+		return nil, errors.New("candidate claim requires transaction")
+	}
+	if limit <= 0 {
+		return nil, errors.New("invalid candidate limit")
+	}
+	allowed := map[string]bool{}
+	for _, typ := range notificationintents.EventTypes() {
+		allowed[typ] = true
+	}
+	var out []notificationintents.Intent
+	for _, e := range r.s.outbox {
+		if e.AggregateType != "electricity_transaction" || !allowed[e.Type] {
+			continue
+		}
+		if _, ok := r.s.candidates[e.ID]; ok {
+			continue
+		}
+		out = append(out, notificationintents.Intent{EventID: e.ID, TransactionID: e.AggregateID, EventType: e.Type})
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+func (r candidateRepo) Record(_ context.Context, c notificationintents.Intent) error {
+	if !r.inTx {
+		return errors.New("candidate record requires transaction")
+	}
+	if old, ok := r.s.candidates[c.EventID]; ok {
+		if old.TransactionID != c.TransactionID || old.EventType != c.EventType {
+			return store.ErrConflict
+		}
+		return nil
+	}
+	// Claim is the source of candidate metadata; reject unmatched events.
+	found := false
+	for _, e := range r.s.outbox {
+		if e.ID == c.EventID && e.AggregateType == "electricity_transaction" && e.AggregateID == c.TransactionID && e.Type == c.EventType {
+			found = true
+			break
+		}
+	}
+	allowed := false
+	for _, v := range notificationintents.EventTypes() {
+		if v == c.EventType {
+			allowed = true
+		}
+	}
+	if !found || !allowed {
+		return store.ErrNotFound
+	}
+	r.s.candidates[c.EventID] = c
+	r.onUndo(func() { delete(r.s.candidates, c.EventID) })
+	return nil
+}
+func (r candidateRepo) Get(_ context.Context, id uuid.UUID) (notificationintents.Intent, error) {
+	defer r.lock()()
+	c, ok := r.s.candidates[id]
+	if !ok {
+		return c, store.ErrNotFound
+	}
+	return c, nil
 }

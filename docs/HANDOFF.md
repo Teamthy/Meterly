@@ -118,6 +118,9 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 8. Session log (newest first)
 
+- **Held notification candidates:** migration 0005 and an unwired transactional consumer record metadata-only candidates for allowlisted events, independently of outbox publication. Unique event keys, row locks and rollback tests cover concurrent/replayed consumption on memory and PostgreSQL. No sender or consent/destination logic is wired; candidates must never be treated as delivery jobs. Define retention and a historical-event cutoff/backfill policy before enabling. Supabase was not migrated.
+
+
 - **Encrypted gift-contact storage:** optional E.164 recipient phone and purchaser notification request are stored as AES-GCM ciphertext bound to the transaction, with a key version. New migration 0004 adds metadata; creation is atomic with the transaction and idempotency record. Contact-bearing request hashes use HMAC. This does not establish recipient consent, send messages, or implement key rotation and retention. HTTP tests cover encryption, associated data, idempotency and log/outbox/response redaction against both memory and PostgreSQL 16.16; race tests and vet use the temporary offline module overlay. Migration 0004 has not been applied to Supabase.
 
 
