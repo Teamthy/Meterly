@@ -43,6 +43,29 @@ type Config struct {
 	RemoteProvider      string // mock | none
 	ProviderEnvironment string // SANDBOX | PRODUCTION
 
+	// Notification providers and gates (M5).
+	SMSProvider                 string // mock | africastalking | none
+	EmailProvider               string // mock | resend | none
+	WhatsAppProvider            string // mock | whatsapp | none
+	AfricasTalkingUsername      string
+	AfricasTalkingAPIKey        string
+	AfricasTalkingSenderID      string
+	AfricasTalkingWebhookSecret string
+	AfricasTalkingBaseURL       string
+	ResendAPIKey                string
+	ResendFrom                  string
+	ResendWebhookSecret         string
+	ResendBaseURL               string
+	WhatsAppPhoneNumberID       string
+	WhatsAppAccessToken         string
+	WhatsAppAppSecret           string
+	WhatsAppVerifyToken         string
+	WhatsAppAPIVersion          string
+	WhatsAppBaseURL             string
+	FeatureGiftSMS              bool
+	NotificationInterval        time.Duration
+	NotificationHMACRetention   time.Duration
+
 	// Authentication: "dev" (bearer token = subject) or "oidc".
 	AuthMode       string
 	OIDCIssuer     string
@@ -67,7 +90,12 @@ type Config struct {
 
 // UsesMocks reports whether any provider is an in-process mock.
 func (c Config) UsesMocks() bool {
-	return c.PaymentProvider == "mock" || c.VendingProvider == "mock" || c.RemoteProvider == "mock"
+	return c.PaymentProvider == "mock" ||
+		c.VendingProvider == "mock" ||
+		c.RemoteProvider == "mock" ||
+		c.SMSProvider == "mock" ||
+		c.EmailProvider == "mock" ||
+		c.WhatsAppProvider == "mock"
 }
 
 // Load reads configuration using getenv (os.Getenv in production).
@@ -133,6 +161,41 @@ func Load(getenv func(string) string) (Config, error) {
 		ResumeInterval:      dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:      dur("OUTBOX_INTERVAL", 2*time.Second),
 		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
+	}
+
+	notifDefault := "none"
+	if c.Mode == Dev {
+		notifDefault = "mock"
+	}
+	c.SMSProvider = get("SMS_PROVIDER", notifDefault)
+	c.EmailProvider = get("EMAIL_PROVIDER", notifDefault)
+	c.WhatsAppProvider = get("WHATSAPP_PROVIDER", notifDefault)
+	c.AfricasTalkingUsername = strings.TrimSpace(getenv("AFRICASTALKING_USERNAME"))
+	c.AfricasTalkingAPIKey = strings.TrimSpace(getenv("AFRICASTALKING_API_KEY"))
+	c.AfricasTalkingSenderID = strings.TrimSpace(getenv("AFRICASTALKING_SENDER_ID"))
+	c.AfricasTalkingWebhookSecret = strings.TrimSpace(getenv("AFRICASTALKING_WEBHOOK_SECRET"))
+	c.AfricasTalkingBaseURL = strings.TrimSpace(getenv("AFRICASTALKING_BASE_URL"))
+	c.ResendAPIKey = strings.TrimSpace(getenv("RESEND_API_KEY"))
+	c.ResendFrom = strings.TrimSpace(getenv("RESEND_FROM"))
+	c.ResendWebhookSecret = strings.TrimSpace(getenv("RESEND_WEBHOOK_SECRET"))
+	c.ResendBaseURL = strings.TrimSpace(getenv("RESEND_BASE_URL"))
+	c.WhatsAppPhoneNumberID = strings.TrimSpace(getenv("WHATSAPP_PHONE_NUMBER_ID"))
+	c.WhatsAppAccessToken = strings.TrimSpace(getenv("WHATSAPP_ACCESS_TOKEN"))
+	c.WhatsAppAppSecret = strings.TrimSpace(getenv("WHATSAPP_APP_SECRET"))
+	c.WhatsAppVerifyToken = strings.TrimSpace(getenv("WHATSAPP_VERIFY_TOKEN"))
+	c.WhatsAppAPIVersion = get("WHATSAPP_API_VERSION", "v21.0")
+	c.WhatsAppBaseURL = strings.TrimSpace(getenv("WHATSAPP_BASE_URL"))
+	c.NotificationInterval = dur("NOTIFICATION_INTERVAL", 2*time.Second)
+	c.NotificationHMACRetention = dur("NOTIFICATION_HMAC_RETENTION", 365*24*time.Hour)
+
+	// FEATURE_GIFT_SMS defaults to false everywhere until legal sign-off.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_GIFT_SMS"))) {
+	case "", "false", "0":
+		c.FeatureGiftSMS = false
+	case "true", "1":
+		c.FeatureGiftSMS = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_GIFT_SMS: must be true or false"))
 	}
 
 	// No default: opting in requires an explicit fixed event-time boundary.
@@ -220,6 +283,51 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.ProviderEnvironment != "SANDBOX" && c.ProviderEnvironment != "PRODUCTION" {
 		errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT: must be SANDBOX or PRODUCTION"))
+	}
+
+	switch c.SMSProvider {
+	case "mock", "none":
+	case "africastalking":
+		if c.AfricasTalkingUsername == "" || c.AfricasTalkingAPIKey == "" {
+			errs = append(errs, errors.New("AFRICASTALKING_USERNAME and AFRICASTALKING_API_KEY are required when SMS_PROVIDER=africastalking"))
+		}
+		if c.Mode == Production && c.AfricasTalkingUsername == "sandbox" {
+			errs = append(errs, errors.New("AFRICASTALKING_USERNAME cannot be sandbox in MODE=production"))
+		}
+		if c.Mode != Dev && c.AfricasTalkingBaseURL != "" && !strings.HasPrefix(c.AfricasTalkingBaseURL, "https://") {
+			errs = append(errs, errors.New("AFRICASTALKING_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("SMS_PROVIDER: unsupported value %q (available: mock, africastalking, none)", c.SMSProvider))
+	}
+
+	switch c.EmailProvider {
+	case "mock", "none":
+	case "resend":
+		if c.ResendAPIKey == "" || c.ResendFrom == "" {
+			errs = append(errs, errors.New("RESEND_API_KEY and RESEND_FROM are required when EMAIL_PROVIDER=resend"))
+		}
+		if c.Mode != Dev && c.ResendBaseURL != "" && !strings.HasPrefix(c.ResendBaseURL, "https://") {
+			errs = append(errs, errors.New("RESEND_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("EMAIL_PROVIDER: unsupported value %q (available: mock, resend, none)", c.EmailProvider))
+	}
+
+	switch c.WhatsAppProvider {
+	case "mock", "none":
+	case "whatsapp":
+		if c.WhatsAppPhoneNumberID == "" || c.WhatsAppAccessToken == "" {
+			errs = append(errs, errors.New("WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN are required when WHATSAPP_PROVIDER=whatsapp"))
+		}
+		if c.Mode != Dev && c.WhatsAppAppSecret == "" {
+			errs = append(errs, errors.New("WHATSAPP_APP_SECRET is required outside dev when WHATSAPP_PROVIDER=whatsapp"))
+		}
+		if c.Mode != Dev && c.WhatsAppBaseURL != "" && !strings.HasPrefix(c.WhatsAppBaseURL, "https://") {
+			errs = append(errs, errors.New("WHATSAPP_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("WHATSAPP_PROVIDER: unsupported value %q (available: mock, whatsapp, none)", c.WhatsAppProvider))
 	}
 
 	switch c.AuthMode {

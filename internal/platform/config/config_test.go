@@ -112,3 +112,26 @@ func TestNotificationCandidateCutoff(t *testing.T) {
 		t.Fatalf("cutoff: %+v %v", c, err)
 	}
 }
+
+func TestNotificationProvidersAndGiftSMSFlag(t *testing.T) {
+	c, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.FeatureGiftSMS || c.SMSProvider != "mock" || c.EmailProvider != "mock" || c.WhatsAppProvider != "mock" || c.NotificationHMACRetention != 365*24*time.Hour {
+		t.Fatalf("unexpected dev notification defaults: %+v", c)
+	}
+
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_GIFT_SMS": "yes"})); err == nil || !strings.Contains(err.Error(), "FEATURE_GIFT_SMS") {
+		t.Fatalf("invalid FEATURE_GIFT_SMS must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "SMS_PROVIDER": "africastalking"})); err == nil || !strings.Contains(err.Error(), "AFRICASTALKING_USERNAME") {
+		t.Fatalf("missing AT credentials must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "EMAIL_PROVIDER": "resend"})); err == nil || !strings.Contains(err.Error(), "RESEND_API_KEY") {
+		t.Fatalf("missing Resend credentials must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "WHATSAPP_PROVIDER": "whatsapp"})); err == nil || !strings.Contains(err.Error(), "WHATSAPP_PHONE_NUMBER_ID") {
+		t.Fatalf("missing WhatsApp credentials must fail: %v", err)
+	}
+}

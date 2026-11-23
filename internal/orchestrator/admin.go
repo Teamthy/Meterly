@@ -9,6 +9,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/ledger"
+	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -227,6 +228,13 @@ func (o *Orchestrator) SetProviderEnabled(ctx context.Context, name string, enab
 	default:
 		if o.remote != nil && name == o.remote.Name() {
 			typ = "AMI"
+		} else {
+			for _, np := range o.notifProviders {
+				if name == np {
+					typ = "NOTIFICATION"
+					break
+				}
+			}
 		}
 	}
 	if typ == "" {
@@ -255,6 +263,7 @@ func (o *Orchestrator) ProviderStatus(ctx context.Context) (map[string]bool, err
 	if o.remote != nil {
 		names = append(names, o.remote.Name())
 	}
+	names = append(names, o.notifProviders...)
 	out := map[string]bool{}
 	for _, n := range names {
 		ok, err := o.st.Repos().Providers().Enabled(ctx, n)
@@ -273,10 +282,11 @@ func (o *Orchestrator) Search(ctx context.Context, f store.TxnFilter) ([]*tx.Tra
 
 // Detail is everything an operator needs to investigate one transaction.
 type Detail struct {
-	Transaction *tx.Transaction
-	Ledger      []ledger.Transaction
-	Events      []events.Event
-	Audit       []audit.Event
+	Transaction   *tx.Transaction
+	Ledger        []ledger.Transaction
+	Events        []events.Event
+	Audit         []audit.Event
+	Notifications []notifications.OperatorView
 }
 
 func (o *Orchestrator) Detail(ctx context.Context, id uuid.UUID) (*Detail, error) {
@@ -293,6 +303,30 @@ func (o *Orchestrator) Detail(ctx context.Context, id uuid.UUID) (*Detail, error
 		return nil, err
 	}
 	if d.Audit, err = r.Audit().ForResource(ctx, resourceTxn, id); err != nil {
+		return nil, err
+	}
+	delivs, err := r.Notifications().ForTransaction(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	d.Notifications = make([]notifications.OperatorView, len(delivs))
+	for i := range delivs {
+		d.Notifications[i] = delivs[i].RedactedView()
+	}
+	return d, nil
+}
+
+// DetailForOperator loads Detail and fail-closed audits the operator's view of
+// the transaction's notification delivery history.
+func (o *Orchestrator) DetailForOperator(ctx context.Context, id uuid.UUID, actor audit.Actor) (*Detail, error) {
+	d, err := o.Detail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	ev := actor.Event("notification_deliveries.view", "notification_deliveries", id, map[string]any{
+		"count": len(d.Notifications),
+	})
+	if err := o.st.Repos().Audit().Add(ctx, ev); err != nil {
 		return nil, err
 	}
 	return d, nil

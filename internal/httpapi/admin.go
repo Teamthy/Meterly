@@ -130,12 +130,23 @@ func (s *Server) adminDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	d, err := s.O.Detail(r.Context(), id)
+	actor := audit.Actor{
+		UserID:        userID(r),
+		Type:          audit.ActorOperator,
+		CorrelationID: audit.CorrelationFrom(r.Context()),
+	}
+	d, err := s.O.DetailForOperator(r.Context(), id, actor)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"transaction": adminView(d.Transaction), "ledger": d.Ledger, "events": d.Events, "audit": d.Audit})
+	writeJSON(w, 200, map[string]any{
+		"transaction":   adminView(d.Transaction),
+		"ledger":        d.Ledger,
+		"events":        d.Events,
+		"audit":         d.Audit,
+		"notifications": d.Notifications,
+	})
 }
 
 func (s *Server) adminAction(fn func(ctx context.Context, id uuid.UUID, a audit.Actor) (*tx.Transaction, error)) http.HandlerFunc {
