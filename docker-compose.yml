@@ -1,7 +1,15 @@
-# Local PostgreSQL for development and integration tests.
-#   docker compose up -d
-#   export DATABASE_URL=postgres://meterly:meterly@localhost:5432/meterly?sslmode=disable
-#   make migrate && make test
+# Full local Meterly stack: PostgreSQL 16 -> migrations -> API (+ in-process dev worker).
+#
+#   docker compose up -d --build
+#   ./scripts/smoke-compose.sh
+#
+# Public API:        http://localhost:8080
+# Internal metrics:  http://127.0.0.1:9090/metrics
+#
+# Note: cmd/worker intentionally refuses to start when any provider is an
+# in-memory mock (mock state is process-local). The standalone worker service is
+# therefore placed behind the "worker" profile (`docker compose --profile worker ...`)
+# for staging/production-like configurations with real adapters.
 services:
   postgres:
     image: postgres:16
@@ -10,13 +18,66 @@ services:
       POSTGRES_PASSWORD: meterly
       POSTGRES_DB: meterly
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U meterly"]
+      test: ["CMD-SHELL", "pg_isready -U meterly -d meterly"]
       interval: 2s
       timeout: 3s
       retries: 20
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgres://meterly:meterly@postgres:5432/meterly?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      MODE: dev
+      PORT: "8080"
+      METRICS_ADDR: ":9090"
+      METRICS_REFRESH_INTERVAL: "5s"
+      DATABASE_URL: postgres://meterly:meterly@postgres:5432/meterly?sslmode=disable
+      TOKEN_ENC_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      METER_HMAC_KEY: ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100
+      RUN_WORKER: "true"
+    ports:
+      - "${API_PORT:-8080}:8080"
+      - "127.0.0.1:${METRICS_PORT:-9090}:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    profiles: ["worker"]
+    build:
+      context: .
+      target: worker
+    environment:
+      MODE: staging
+      METRICS_ADDR: ":9090"
+      DATABASE_URL: postgres://meterly:meterly@postgres:5432/meterly?sslmode=disable
+      TOKEN_ENC_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      METER_HMAC_KEY: ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
 volumes:
   pgdata:

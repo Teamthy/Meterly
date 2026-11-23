@@ -22,6 +22,7 @@ import (
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/notificationservice"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
@@ -46,6 +47,8 @@ type Server struct {
 	Auth          auth.Authenticator
 	Payments      providers.PaymentProvider
 	Notifications *notificationservice.Service
+	Metrics       *observability.Registry
+	Tracer        *observability.Tracer
 	Log           *slog.Logger
 	Ready         func(context.Context) error
 	Limits        Limits
@@ -55,6 +58,28 @@ type Server struct {
 	DevRemote *mock.RemoteCredit
 
 	writes, authFails, hooks ratelimit.Limiter
+	patterns                 []string
+}
+
+type patternMux struct {
+	*http.ServeMux
+	patterns []string
+}
+
+func (m *patternMux) Handle(pattern string, handler http.Handler) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.Handle(pattern, handler)
+}
+
+func (m *patternMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.HandleFunc(pattern, handler)
+}
+
+// RegisteredPatterns returns a copy of the exact patterns registered on the
+// underlying ServeMux during the most recent Routes() call.
+func (s *Server) RegisteredPatterns() []string {
+	return append([]string(nil), s.patterns...)
 }
 
 type caller struct {
@@ -81,7 +106,7 @@ func (s *Server) Routes() http.Handler {
 	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
 	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
 
-	mux := http.NewServeMux()
+	mux := &patternMux{ServeMux: http.NewServeMux()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
 
@@ -120,10 +145,35 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST /v1/dev/reconcile", s.devReconcile)
 		mux.HandleFunc("POST /v1/dev/transactions/{transaction_id}/resume", s.devResume)
 	}
-	return s.withCorrelation(mux)
+	s.patterns = append([]string(nil), mux.patterns...)
+	return s.withCorrelation(mux.ServeMux)
 }
 
 // ---- middleware ------------------------------------------------------------
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status = code
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if !r.wroteHeader {
+		r.status = http.StatusOK
+		r.wroteHeader = true
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (s *Server) withCorrelation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,11 +182,32 @@ func (s *Server) withCorrelation(next http.Handler) http.Handler {
 			cid = uuid.New()
 		}
 		w.Header().Set("X-Correlation-ID", cid.String())
+
+		ctx := audit.WithCorrelation(r.Context(), cid)
+		ctx = s.Tracer.ExtractHTTP(ctx, r.Header)
+		ctx, sp := s.Tracer.StartSpan(ctx, r.Method+" UNMATCHED", observability.SpanKindServer,
+			observability.StringAttr("http.request.method", r.Method),
+		)
+
 		start := time.Now()
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		next.ServeHTTP(w, r.WithContext(audit.WithCorrelation(r.Context(), cid)))
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		r.Body = http.MaxBytesReader(rec, r.Body, 1<<20)
+		r2 := r.WithContext(ctx)
+		next.ServeHTTP(rec, r2)
+
+		dur := time.Since(start)
+		route := observability.SafeRoute(r2.Pattern)
+		s.Metrics.ObserveHTTPRequest(route, rec.status, dur)
+		if sp != nil {
+			if route != "UNMATCHED" {
+				sp.SetName(route)
+			}
+			sp.SetAttr(observability.StringAttr("http.route", route))
+			sp.SetAttr(observability.IntAttr("http.response.status_code", rec.status))
+			sp.End(rec.status >= 500)
+		}
 		// Never log bodies: they can contain meter numbers and tokens.
-		s.Log.Info("request", "method", r.Method, "path", r.Pattern, "cid", cid, "ms", time.Since(start).Milliseconds())
+		s.Log.Info("request", "method", r.Method, "path", route, "status", rec.status, "cid", cid, "ms", dur.Milliseconds())
 	})
 }
 

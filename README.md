@@ -14,10 +14,17 @@ In-memory, no database:
 MODE=dev go run ./cmd/api        # listens on :8080, worker runs in-process
 ```
 
-With PostgreSQL:
+With PostgreSQL (full local stack via Docker Compose — runs PostgreSQL 16, `migrate`, and `api` on `:8080` with internal Prometheus metrics on `127.0.0.1:9090/metrics`):
 
 ```bash
-docker compose up -d
+docker compose up -d --build
+./scripts/smoke-compose.sh
+```
+
+Or run Go binaries directly on the host against Compose PostgreSQL:
+
+```bash
+docker compose up -d postgres
 export DATABASE_URL='postgres://meterly:meterly@localhost:5432/meterly?sslmode=disable'
 go run ./cmd/migrate
 MODE=dev go run ./cmd/api
@@ -54,6 +61,12 @@ Configuration is read from the environment and validated at startup (`internal/p
 **Token copy history:** purchaser-only `POST /v1/electricity/transactions/{id}/token/shares` accepts `{"channel":"COPY"}` and requires an `Idempotency-Key` (16–128 characters); `GET` on the same path lists recorded copy actions. The entry is only a client-reported action—not proof of clipboard use, delivery or meter credit. No token or destination is stored in share metadata. SMS, email and WhatsApp sending are not implemented. Tokens work only on their own meter; sharing does not transfer credit.
 
 **Receipt:** The purchaser can request `GET /v1/electricity/transactions/{id}/receipt` as JSON, or append `?format=html` for a printable HTML transaction record. Responses are `no-store`, display separate payment, vending and delivery states, and never include the token or checkout details. Pending records are not presented as completed deliveries.
+
+**Observability, OpenAPI & Graceful Shutdown (M6):**
+- **OpenAPI 3.1 (`api/openapi.yaml`):** complete specification covering all 34 production routes, request/response schemas, `bearerAuth` security scheme, and the standard error envelope + all 18 error codes, enforced in CI by a bidirectional mux-pattern and AST error-code parity test (`internal/httpapi/openapi_test.go`).
+- **Prometheus metrics (`METRICS_ADDR`, default `:9090`, `off` to disable):** served strictly on a separate internal listener (never on the public API port), exposing `http_requests_total`, `http_request_duration_seconds`, `provider_calls_total`, `provider_call_duration_seconds`, `transactions_by_status` (refreshed every `METRICS_REFRESH_INTERVAL`, default `1m`), `manual_review_open`, `resume_escalations_total`, `outbox_lag_seconds`, and `notification_deliveries_total`. Meter numbers, tokens, phone numbers, emails, user IDs and transaction IDs are never used as metric labels.
+- **OpenTelemetry tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`):** W3C `traceparent` extraction/injection and OTLP/HTTP JSON span export for every HTTP request and outbound provider call with `meterly.correlation_id`; zero-overhead no-op when unset.
+- **Containers & graceful shutdown:** multi-stage `Dockerfile` building static non-root `gcr.io/distroless/static-debian12:nonroot` images for `api`, `worker`, and `migrate`. On `SIGINT`/`SIGTERM`, `cmd/api` and `cmd/worker` drain in-flight HTTP requests, stop worker tickers from starting new claims, finish already-claimed operations within `SHUTDOWN_TIMEOUT`, flush the OTel tracer, and only then close PostgreSQL.
 
 **Payments:** `PAYMENT_PROVIDER=mock` (default) or `paystack`. For Paystack, set `PAYSTACK_SECRET_KEY` (only `sk_test_…` is accepted outside production), optionally `PAYSTACK_CALLBACK_URL`, and point Paystack's webhook at `POST /v1/payments/webhooks/paystack`. Vending and remote credit are still mocks. Outside `MODE=dev` it requires `DATABASE_URL`, `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex characters each), and non-mock providers.
 
@@ -116,9 +129,12 @@ internal/
   providers/              contracts for payment, vending, remote-credit providers
   providers/mock/         deterministic mocks for every success and failure path
   secure/                 AES-GCM token encryption, HMAC meter lookup, masking
-  httpapi/                /v1 REST API (spec §7)
+  httpapi/                /v1 REST API (spec §7) + OpenAPI parity tests
+  observability/          Prometheus exposition & OTLP/HTTP JSON tracing (stdlib)
   platform/config/        environment configuration, validated at startup
   platform/migrate/       migration runner
+api/openapi.yaml          OpenAPI 3.1 specification for all production routes
+Dockerfile                multi-stage non-root distroless targets (api, worker, migrate)
 migrations/               SQL migrations (embedded into the binaries)
 docs/                     roadmap and decisions
 ```

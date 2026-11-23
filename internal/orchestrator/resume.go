@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -170,17 +171,39 @@ func snapshot(t *tx.Transaction) progress {
 // after ResumeMaxAttempts checks without progress. It returns how many
 // transactions were processed and how many made progress.
 func (o *Orchestrator) ResumeDue(ctx context.Context) (processed, progressed int, err error) {
+	return o.ResumeDueWithDrain(ctx, ctx)
+}
+
+// ResumeDueWithDrain stops starting new transaction claims once stopCtx is
+// cancelled while allowing an already-started claim to finish using drainCtx.
+func (o *Orchestrator) ResumeDueWithDrain(stopCtx, drainCtx context.Context) (processed, progressed int, err error) {
+	if stopCtx.Err() != nil {
+		return 0, 0, nil
+	}
+	if drainCtx == nil {
+		drainCtx = stopCtx
+	}
 	now := o.Now()
-	ids, err := o.st.Repos().Transactions().ClaimDue(ctx, now, now.Add(-o.cfg.ResumeStaleAfter), o.cfg.ResumeLease, o.cfg.ResumeBatch)
+	ids, err := o.st.Repos().Transactions().ClaimDue(stopCtx, now, now.Add(-o.cfg.ResumeStaleAfter), o.cfg.ResumeLease, o.cfg.ResumeBatch)
 	if err != nil {
+		if stopCtx.Err() != nil && errors.Is(err, context.Canceled) {
+			return 0, 0, nil
+		}
 		return 0, 0, err
 	}
 	for _, id := range ids {
-		before, err := o.Get(ctx, id)
+		if stopCtx.Err() != nil {
+			break
+		}
+		itemCtx := drainCtx
+		if audit.CorrelationFrom(itemCtx) == nil {
+			itemCtx = audit.WithCorrelation(itemCtx, uuid.New())
+		}
+		before, err := o.Get(itemCtx, id)
 		if err != nil {
 			continue
 		}
-		after, rerr := o.Resume(ctx, id)
+		after, rerr := o.Resume(itemCtx, id)
 		paused := errors.Is(rerr, ErrProviderDisabled)
 		if rerr != nil && !paused {
 			o.log.Warn("resume failed", "txn", id, "err", rerr)
@@ -190,7 +213,7 @@ func (o *Orchestrator) ResumeDue(ctx context.Context) (processed, progressed int
 			progressed++
 		}
 		processed++
-		if err := o.schedule(ctx, id, moved, paused); err != nil {
+		if err := o.schedule(itemCtx, id, moved, paused); err != nil {
 			o.log.Warn("schedule failed", "txn", id, "err", err)
 		}
 	}
@@ -239,7 +262,8 @@ func (o *Orchestrator) schedule(ctx context.Context, id uuid.UUID, moved, paused
 		}
 		return nil
 	})
-	if escalated {
+	if err == nil && escalated {
+		o.metrics.IncResumeEscalations()
 		o.log.Warn("transaction escalated to manual review", "txn", id, "metric", "resume_escalations_total")
 	}
 	return err

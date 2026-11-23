@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 )
 
@@ -161,6 +162,7 @@ func (c *Client) SendDelivery(ctx context.Context, req notifications.SendRequest
 	hreq.Header.Set("Authorization", "Bearer "+c.accessToken)
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
+	observability.InjectHTTP(ctx, hreq.Header)
 
 	res, err := c.http.Do(hreq)
 	if err != nil {

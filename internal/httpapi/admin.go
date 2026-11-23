@@ -16,7 +16,7 @@ import (
 // Admin API (spec §11). Operators investigate and nudge transactions;
 // admins can also refund from review and switch providers. Every mutating
 // action needs a reason and is audited.
-func (s *Server) adminRoutes(mux *http.ServeMux) {
+func (s *Server) adminRoutes(mux *patternMux) {
 	op, admin := s.authed(auth.RoleOperator, false), s.authed(auth.RoleAdmin, false)
 	mux.Handle("GET /v1/admin/transactions", op(s.adminSearch))
 	mux.Handle("GET /v1/admin/transactions/{transaction_id}", op(s.adminDetail))

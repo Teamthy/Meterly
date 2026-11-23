@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 )
 
@@ -103,6 +104,7 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	observability.InjectHTTP(ctx, req.Header)
 	res, err := c.http.Do(req)
 	if err != nil {
 		// Never include the URL-bearing error text verbatim in callers' logs

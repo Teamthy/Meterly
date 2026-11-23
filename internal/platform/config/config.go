@@ -74,6 +74,11 @@ type Config struct {
 	OIDCRolesClaim string
 	OIDCMFAValues  []string // staff roles require one of these in "amr"
 
+	// Observability (M6).
+	MetricsAddr            string        // internal Prometheus bind address (default ":9090", "off" disables)
+	MetricsRefreshInterval time.Duration // gauge refresh period (default 1m)
+	OTelEndpoint           string        // OTEL_EXPORTER_OTLP_ENDPOINT; empty = no-op tracer
+
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
 	RateAuthFailuresPerMin int
@@ -145,22 +150,25 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	c := Config{
-		Mode:                Mode(get("MODE", "")),
-		HTTPAddr:            ":" + get("PORT", "8080"),
-		DatabaseURL:         getenv("DATABASE_URL"),
-		TokenEncKey:         key("TOKEN_ENC_KEY"),
-		MeterHMACKey:        key("METER_HMAC_KEY"),
-		KeyVersion:          get("KEY_VERSION", "v1"),
-		PaymentProvider:     get("PAYMENT_PROVIDER", "mock"),
-		VendingProvider:     get("VENDING_PROVIDER", "mock"),
-		RemoteProvider:      get("REMOTE_PROVIDER", "mock"),
-		ProviderEnvironment: get("PROVIDER_ENVIRONMENT", "SANDBOX"),
-		PaystackSecretKey:   getenv("PAYSTACK_SECRET_KEY"),
-		PaystackBaseURL:     get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
-		PaystackCallbackURL: getenv("PAYSTACK_CALLBACK_URL"),
-		ResumeInterval:      dur("RESUME_INTERVAL", 15*time.Second),
-		OutboxInterval:      dur("OUTBOX_INTERVAL", 2*time.Second),
-		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
+		Mode:                   Mode(get("MODE", "")),
+		HTTPAddr:               ":" + get("PORT", "8080"),
+		MetricsAddr:            get("METRICS_ADDR", ":9090"),
+		MetricsRefreshInterval: dur("METRICS_REFRESH_INTERVAL", time.Minute),
+		OTelEndpoint:           strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+		DatabaseURL:            getenv("DATABASE_URL"),
+		TokenEncKey:            key("TOKEN_ENC_KEY"),
+		MeterHMACKey:           key("METER_HMAC_KEY"),
+		KeyVersion:             get("KEY_VERSION", "v1"),
+		PaymentProvider:        get("PAYMENT_PROVIDER", "mock"),
+		VendingProvider:        get("VENDING_PROVIDER", "mock"),
+		RemoteProvider:         get("REMOTE_PROVIDER", "mock"),
+		ProviderEnvironment:    get("PROVIDER_ENVIRONMENT", "SANDBOX"),
+		PaystackSecretKey:      getenv("PAYSTACK_SECRET_KEY"),
+		PaystackBaseURL:        get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
+		PaystackCallbackURL:    getenv("PAYSTACK_CALLBACK_URL"),
+		ResumeInterval:         dur("RESUME_INTERVAL", 15*time.Second),
+		OutboxInterval:         dur("OUTBOX_INTERVAL", 2*time.Second),
+		ShutdownTimeout:        dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 
 	notifDefault := "none"
@@ -368,6 +376,15 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("mock providers are only allowed in MODE=dev; no real provider adapters are configured yet"))
 		}
 	}
+	switch strings.ToLower(c.MetricsAddr) {
+	case "off", "none", "disabled":
+		c.MetricsAddr = ""
+	default:
+		if c.MetricsAddr == c.HTTPAddr {
+			errs = append(errs, errors.New("METRICS_ADDR must not equal the public HTTP listen address"))
+		}
+	}
+
 	if c.DatabaseURL == "" && !c.RunWorker {
 		errs = append(errs, errors.New("the in-memory store needs RUN_WORKER=true (there is no shared state for a separate worker)"))
 	}

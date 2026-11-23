@@ -1,0 +1,2028 @@
+openapi: 3.1.0
+info:
+  title: Meterly API
+  version: 1.0.0
+  summary: Prepaid electricity purchasing, gift vending, delivery orchestration and operator reconciliation API.
+  description: |
+    Meterly separates payment, vending and delivery into independent state dimensions so that
+    money, STS tokens and remote meter commands are never lost, duplicated or conflated.
+
+    - Monetary values are always integer minor units (`amount_minor` in kobo for `NGN`).
+    - STS tokens and raw meter numbers are never logged or returned on general transaction endpoints;
+      token retrieval is isolated to purchaser-only and audited operator reveal endpoints with `Cache-Control: no-store`.
+    - Prometheus operational metrics are exposed only on a separate internal port (`METRICS_ADDR`, default `:9090`)
+      and never on this public API surface.
+servers:
+  - url: http://localhost:8080
+    description: Local API server
+
+tags:
+  - name: Health
+    description: Liveness and readiness probes.
+  - name: Meters
+    description: Meter validation, registration, saved-meter access and capabilities.
+  - name: Electricity
+    description: Quotes, purchases, server-side payment verification, STS token retrieval, local copy tracking and receipts.
+  - name: Notifications
+    description: Account notification preferences and provider inbound webhooks.
+  - name: Webhooks
+    description: Signature-verified payment provider webhooks.
+  - name: Admin
+    description: Operator and administrator investigation, reconciliation, audited token reveal, refunds and provider switches (OIDC + MFA required outside dev).
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      tags: [Health]
+      summary: Liveness check
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/XCorrelationID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /readyz:
+    get:
+      operationId: getReadyz
+      tags: [Health]
+      summary: Readiness check (database reachable and zero pending migrations)
+      security: []
+      responses:
+        "200":
+          description: Service is ready to accept traffic.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/XCorrelationID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "503":
+          description: Database unreachable or migrations pending.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /v1/meters/validate:
+    post:
+      operationId: validateMeter
+      tags: [Meters]
+      summary: Validate a meter number with the vending provider without granting saved access
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateMeterRequest"
+      responses:
+        "200":
+          description: Meter validated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeterValidationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/meters:
+    post:
+      operationId: registerMeter
+      tags: [Meters]
+      summary: Validate and save a meter for the authenticated user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterMeterRequest"
+      responses:
+        "201":
+          description: Meter saved for the user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meter"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+    get:
+      operationId: listMeters
+      tags: [Meters]
+      summary: List meters saved by the authenticated user
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Saved meters for the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListedMeterListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/meters/{meter_id}:
+    parameters:
+      - $ref: "#/components/parameters/MeterIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getMeter
+      tags: [Meters]
+      summary: Get details of a saved meter
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Meter details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Meter"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: removeSavedMeter
+      tags: [Meters]
+      summary: Revoke the authenticated caller's saved access to a meter
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Saved access removed.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/meters/{meter_id}/capabilities:
+    parameters:
+      - $ref: "#/components/parameters/MeterIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getMeterCapabilities
+      tags: [Meters]
+      summary: Get token vending, remote credit and remote reading capabilities for a saved meter
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Meter capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/beneficiaries:
+    post:
+      operationId: addBeneficiary
+      tags: [Meters]
+      summary: Save another person's meter for gift purchases (grants PURCHASE access only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddBeneficiaryRequest"
+      responses:
+        "201":
+          description: Beneficiary meter saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BeneficiaryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/electricity/quotes:
+    post:
+      operationId: createElectricityQuote
+      tags: [Electricity]
+      summary: Create a priced, single-use, time-limited electricity purchase quote
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateQuoteRequest"
+      responses:
+        "201":
+          description: Quote created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/electricity/transactions:
+    post:
+      operationId: createElectricityTransaction
+      tags: [Electricity]
+      summary: Consume a quote and initialise payment idempotently
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTransactionRequest"
+      responses:
+        "202":
+          description: Transaction created and payment checkout initialised.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    get:
+      operationId: listElectricityTransactions
+      tags: [Electricity]
+      summary: List electricity transactions created by the authenticated purchaser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Transactions owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/electricity/transactions/{transaction_id}:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getElectricityTransaction
+      tags: [Electricity]
+      summary: Get an electricity transaction owned by the caller
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Transaction details (never contains the raw STS token).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionView"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/electricity/transactions/{transaction_id}/status:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getElectricityTransactionStatus
+      tags: [Electricity]
+      summary: Poll transaction status across payment, vending and delivery dimensions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current transaction status view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionView"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/electricity/transactions/{transaction_id}/payment-check:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: checkElectricityTransactionPayment
+      tags: [Electricity]
+      summary: Trigger server-side payment verification and workflow continuation
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Updated transaction state after server-side provider check.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionView"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/electricity/transactions/{transaction_id}/token:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getElectricityTransactionToken
+      tags: [Electricity]
+      summary: Retrieve the decrypted STS token for a vended TOKEN-delivery transaction (purchaser only)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Decrypted STS token (`Cache-Control: no-store`)."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/electricity/transactions/{transaction_id}/token/shares:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: recordTokenCopyShare
+      tags: [Electricity]
+      summary: Record a purchaser-reported local COPY action for an STS token (metadata only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordTokenShareRequest"
+      responses:
+        "201":
+          description: Copy metadata recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordTokenShareResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      operationId: listTokenCopyShares
+      tags: [Electricity]
+      summary: List purchaser-reported local COPY actions for a transaction
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Recorded token copy metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenShareListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/electricity/transactions/{transaction_id}/receipt:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - name: format
+        in: query
+        required: false
+        description: Output representation (`json` default, or `html`).
+        schema:
+          type: string
+          enum: [json, html]
+    get:
+      operationId: getElectricityTransactionReceipt
+      tags: [Electricity]
+      summary: Get a token-free, status-honest transaction record in JSON or HTML
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Transaction receipt (JSON or CSP-hardened HTML).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Receipt"
+            text/html:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/me/notification-preferences:
+    get:
+      operationId: getNotificationPreferences
+      tags: [Notifications]
+      summary: Get the authenticated user's transactional notification channel preferences
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Current notification channel preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    put:
+      operationId: putNotificationPreferences
+      tags: [Notifications]
+      summary: Update the authenticated user's transactional notification channel preferences
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferences"
+      responses:
+        "200":
+          description: Updated notification channel preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/payments/webhooks/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Active payment provider slug (for example `paystack`).
+        schema:
+          type: string
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: receivePaymentWebhook
+      tags: [Webhooks]
+      summary: Receive an HMAC-authenticated payment webhook hint and trigger server-side verification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Webhook acknowledged (`received` or `ignored`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/notifications/inbound/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Notification provider slug (`africastalking`, `resend`, or `whatsapp`).
+        schema:
+          type: string
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: verifyNotificationInboundChallenge
+      tags: [Notifications]
+      summary: Verify provider webhook subscription challenge (WhatsApp Cloud API GET handshake)
+      security: []
+      parameters:
+        - name: hub.mode
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: hub.verify_token
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: hub.challenge
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Challenge verified; echoes `hub.challenge`.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      operationId: receiveNotificationInboundWebhook
+      tags: [Notifications]
+      summary: Receive signature-verified inbound notification events (STOP opt-outs and WhatsApp 24h windows)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        "200":
+          description: Inbound webhook processed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/admin/transactions:
+    get:
+      operationId: adminSearchTransactions
+      tags: [Admin]
+      summary: Search transactions across customers with keyset pagination (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: review
+          in: query
+          required: false
+          description: When `true`, return only transactions flagged for manual review.
+          schema:
+            type: boolean
+        - name: payment_status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/PaymentState"
+        - name: vending_status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/VendingState"
+        - name: delivery_status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/DeliveryState"
+        - name: customer_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: meter_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          required: false
+          description: Exclusive upper bound on `created_at` (RFC 3339 timestamp).
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Matching transactions and optional `next_before` cursor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTransactionSearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/transactions/{transaction_id}:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: adminGetTransactionDetail
+      tags: [Admin]
+      summary: Inspect transaction state, ledger postings, outbox events, audit trail and redacted notifications
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Operator investigation bundle (never includes raw STS token or PII destinations).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTransactionDetailResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/transactions/{transaction_id}/reconcile:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminReconcileTransaction
+      tags: [Admin]
+      summary: Run an audited reconciliation pass on a transaction (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Reconciled transaction view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTransactionView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/admin/transactions/{transaction_id}/fallback-to-token:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminFallbackToToken
+      tags: [Admin]
+      summary: Convert a failed remote-credit delivery with an existing vended token to TOKEN delivery (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Updated transaction view after fallback to TOKEN delivery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTransactionView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/transactions/{transaction_id}/token-reveal:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminRevealToken
+      tags: [Admin]
+      summary: Audited break-glass reveal of a vended STS token (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: "Audited STS token reveal (`Cache-Control: no-store`)."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTokenRevealResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/transactions/{transaction_id}/requeue:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminRequeueTransaction
+      tags: [Admin]
+      summary: Clear manual review and return an unsettled transaction to automated processing (admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Requeued transaction view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTransactionView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/transactions/{transaction_id}/refund:
+    parameters:
+      - $ref: "#/components/parameters/TransactionIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminRefundTransaction
+      tags: [Admin]
+      summary: Approve and execute an idempotent refund for a safe-to-refund reviewed transaction (admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Transaction view after refund execution or initiation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTransactionView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/admin/providers:
+    get:
+      operationId: adminListProviders
+      tags: [Admin]
+      summary: List configured payment, vending, remote-credit and notification providers with switch states
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Provider switch statuses.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProviderListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/providers/{name}/enable:
+    parameters:
+      - $ref: "#/components/parameters/ProviderNamePath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminEnableProvider
+      tags: [Admin]
+      summary: Re-enable a previously disabled provider integration (admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Provider enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProviderStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/providers/{name}/disable:
+    parameters:
+      - $ref: "#/components/parameters/ProviderNamePath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminDisableProvider
+      tags: [Admin]
+      summary: Pause outbound calls to a provider integration via kill switch (admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Provider disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminProviderStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        OIDC RS256 Bearer JWT outside `MODE=dev`. Staff endpoints (`/v1/admin/*`) require the
+        `operator` or `admin` role claim and a verified MFA authentication method reference (`amr`).
+
+  headers:
+    XCorrelationID:
+      description: Request correlation UUID echoed on responses and attached to audit events and OTel spans.
+      schema:
+        type: string
+        format: uuid
+
+  parameters:
+    CorrelationIDHeader:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: Optional caller-supplied correlation UUID; generated if omitted or invalid.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated idempotency key (16–128 characters).
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    MeterIDPath:
+      name: meter_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TransactionIDPath:
+      name: transaction_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProviderNamePath:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Malformed JSON, unknown field or invalid request parameter.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthenticated:
+      description: Missing/invalid Bearer token or invalid webhook signature.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: Authenticated caller lacks required permission, role or MFA claim.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Requested resource or provider does not exist or is not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: State transition conflict, unavailable token or idempotency key conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UnprocessableEntity:
+      description: Domain validation failure (invalid meter, expired quote, out-of-range amount or unconfirmed payment).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: Rate limit exceeded; inspect `Retry-After` header.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ProviderUnavailable:
+      description: Upstream provider timed out or returned an ambiguous error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    ServiceUnavailable:
+      description: Provider temporarily disabled by an operator kill switch.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  schemas:
+    ErrorCode:
+      type: string
+      description: Stable machine-readable error code returned inside `ErrorEnvelope`.
+      enum:
+        - INVALID_REQUEST
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - RATE_LIMITED
+        - NOT_FOUND
+        - METER_NOT_FOUND
+        - METER_VALIDATION_FAILED
+        - METER_NOT_ELIGIBLE
+        - QUOTE_EXPIRED
+        - TRANSACTION_NOT_FOUND
+        - PAYMENT_UNCONFIRMED
+        - DELIVERY_FAILED
+        - IDEMPOTENCY_CONFLICT
+        - PROVIDER_NOT_FOUND
+        - INVALID_SIGNATURE
+        - INVALID_WEBHOOK
+        - PROVIDER_UNAVAILABLE
+        - INTERNAL_ERROR
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id, details]
+          additionalProperties: false
+          properties:
+            code:
+              $ref: "#/components/schemas/ErrorCode"
+            message:
+              type: string
+            request_id:
+              type: string
+              description: Correlation UUID for the request.
+            details:
+              type: object
+              additionalProperties: true
+
+    StatusResponse:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+
+    MoneyAmount:
+      type: object
+      required: [amount_minor, currency]
+      additionalProperties: false
+      properties:
+        amount_minor:
+          type: integer
+          format: int64
+          description: Amount in minor units (kobo for NGN).
+        currency:
+          type: string
+          enum: [NGN]
+
+    Capability:
+      type: object
+      required: [supported, authorised, reachable, confirmed, last_verified_at]
+      additionalProperties: false
+      properties:
+        supported:
+          type: boolean
+        authorised:
+          type: boolean
+        reachable:
+          type: [boolean, "null"]
+        confirmed:
+          type: boolean
+        last_verified_at:
+          type: [string, "null"]
+          format: date-time
+
+    Capabilities:
+      type: object
+      required: [token_vending, remote_credit, remote_reading]
+      additionalProperties: false
+      properties:
+        token_vending:
+          $ref: "#/components/schemas/Capability"
+        remote_credit:
+          $ref: "#/components/schemas/Capability"
+        remote_reading:
+          $ref: "#/components/schemas/Capability"
+
+    ValidateMeterRequest:
+      type: object
+      required: [meter_number, disco_code]
+      additionalProperties: false
+      properties:
+        meter_number:
+          type: string
+          minLength: 1
+        disco_code:
+          type: string
+          minLength: 1
+        label:
+          type: string
+        display_name:
+          type: string
+
+    RegisterMeterRequest:
+      type: object
+      required: [meter_number, disco_code]
+      additionalProperties: false
+      properties:
+        meter_number:
+          type: string
+          minLength: 1
+        disco_code:
+          type: string
+          minLength: 1
+        label:
+          type: string
+        display_name:
+          type: string
+
+    AddBeneficiaryRequest:
+      type: object
+      required: [meter_number, disco_code, display_name]
+      additionalProperties: false
+      properties:
+        meter_number:
+          type: string
+          minLength: 1
+        disco_code:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+          minLength: 1
+        label:
+          type: string
+
+    MeterValidationResponse:
+      type: object
+      required:
+        - valid
+        - validation_status
+        - masked_meter_number
+        - disco
+        - meter_type
+        - customer_name
+        - capabilities
+      additionalProperties: false
+      properties:
+        valid:
+          type: boolean
+        validation_status:
+          type: string
+          enum: [VERIFIED]
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        meter_type:
+          type: string
+        customer_name:
+          type: string
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+
+    Meter:
+      type: object
+      required:
+        - meter_id
+        - masked_meter_number
+        - disco
+        - meter_type
+        - customer_name
+        - address
+        - validated_at
+        - capabilities
+      additionalProperties: false
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        meter_type:
+          type: string
+        customer_name:
+          type: string
+        address:
+          type: string
+        validated_at:
+          type: string
+          format: date-time
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+
+    MeterPermission:
+      type: string
+      enum: [VIEW, PURCHASE, MANAGE]
+
+    ListedMeter:
+      allOf:
+        - $ref: "#/components/schemas/Meter"
+        - type: object
+          required: [label, permission]
+          properties:
+            label:
+              type: string
+            permission:
+              $ref: "#/components/schemas/MeterPermission"
+
+    ListedMeterListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListedMeter"
+
+    BeneficiaryResponse:
+      type: object
+      required: [meter_id, display_name, masked_meter_number, customer_name]
+      additionalProperties: false
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        masked_meter_number:
+          type: string
+        customer_name:
+          type: string
+
+    DeliveryPreference:
+      type: string
+      enum: [AUTO, REMOTE, TOKEN]
+
+    DeliveryMethod:
+      type: string
+      enum: [TOKEN, REMOTE]
+
+    PaymentState:
+      type: string
+      enum: [CREATED, PENDING, CONFIRMED, FAILED, REFUND_PENDING, REFUNDED]
+
+    VendingState:
+      type: string
+      enum: [NOT_STARTED, PENDING, CONFIRMED, FAILED, UNKNOWN]
+
+    DeliveryState:
+      type: string
+      enum: [NOT_STARTED, PENDING, ACCEPTED, CONFIRMED, FAILED, UNKNOWN]
+
+    OverallStatus:
+      type: string
+      enum:
+        - PAYMENT_PENDING
+        - FAILED
+        - VENDING_PENDING
+        - DELIVERY_PENDING
+        - RECONCILIATION_PENDING
+        - MANUAL_REVIEW
+        - REFUND_PENDING
+        - REFUNDED
+        - COMPLETED
+
+    CreateQuoteRequest:
+      type: object
+      required: [meter_id, amount_minor, currency]
+      additionalProperties: false
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+        currency:
+          type: string
+          enum: [NGN]
+        delivery_preference:
+          $ref: "#/components/schemas/DeliveryPreference"
+
+    Quote:
+      type: object
+      required:
+        - quote_id
+        - meter_id
+        - amount
+        - fee
+        - total
+        - delivery_method
+        - delivery_options
+        - expires_at
+      additionalProperties: false
+      properties:
+        quote_id:
+          type: string
+          format: uuid
+        meter_id:
+          type: string
+          format: uuid
+        amount:
+          $ref: "#/components/schemas/MoneyAmount"
+        fee:
+          $ref: "#/components/schemas/MoneyAmount"
+        total:
+          $ref: "#/components/schemas/MoneyAmount"
+        delivery_method:
+          $ref: "#/components/schemas/DeliveryMethod"
+        delivery_options:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryMethod"
+        expires_at:
+          type: string
+          format: date-time
+
+    CreateTransactionRequest:
+      type: object
+      required: [quote_id, email]
+      additionalProperties: false
+      properties:
+        quote_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        is_gift:
+          type: boolean
+        recipient_name:
+          type: string
+        recipient_phone:
+          type: string
+          description: Optional E.164 gift recipient phone encrypted at rest; never logged or returned.
+        notify_recipient:
+          type: boolean
+
+    StateEvent:
+      type: object
+      required: [at, dimension, from, to]
+      additionalProperties: false
+      properties:
+        at:
+          type: string
+          format: date-time
+        dimension:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        note:
+          type: string
+
+    TransactionView:
+      type: object
+      required:
+        - transaction_id
+        - status
+        - payment_status
+        - vending_status
+        - delivery_status
+        - delivery_method
+        - meter_id
+        - is_gift
+        - recipient_name
+        - amount_minor
+        - fee_minor
+        - total_minor
+        - currency
+        - units_kwh
+        - failure_code
+        - review_reason
+        - checkout_url
+        - history
+        - created_at
+        - updated_at
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/OverallStatus"
+        payment_status:
+          $ref: "#/components/schemas/PaymentState"
+        vending_status:
+          $ref: "#/components/schemas/VendingState"
+        delivery_status:
+          $ref: "#/components/schemas/DeliveryState"
+        delivery_method:
+          $ref: "#/components/schemas/DeliveryMethod"
+        meter_id:
+          type: string
+          format: uuid
+        is_gift:
+          type: boolean
+        recipient_name:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          enum: [NGN]
+        units_kwh:
+          type: string
+        failure_code:
+          type: string
+        review_reason:
+          type: string
+        checkout_url:
+          type: string
+        history:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/StateEvent"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TransactionListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TransactionView"
+
+    TokenResponse:
+      type: object
+      required: [transaction_id, token, units_kwh, masked_meter_number, note]
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        token:
+          type: string
+        units_kwh:
+          type: string
+        masked_meter_number:
+          type: string
+        note:
+          type: string
+
+    RecordTokenShareRequest:
+      type: object
+      required: [channel]
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum: [COPY]
+
+    TokenShare:
+      type: object
+      required: [share_id, transaction_id, channel, recorded_at]
+      additionalProperties: false
+      properties:
+        share_id:
+          type: string
+          format: uuid
+        transaction_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [COPY]
+        recorded_at:
+          type: string
+          format: date-time
+
+    RecordTokenShareResponse:
+      type: object
+      required: [share, note]
+      additionalProperties: false
+      properties:
+        share:
+          $ref: "#/components/schemas/TokenShare"
+        note:
+          type: string
+
+    TokenShareListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/TokenShare"
+
+    Receipt:
+      type: object
+      required:
+        - transaction_id
+        - masked_meter_number
+        - disco
+        - amount_minor
+        - fee_minor
+        - total_minor
+        - currency
+        - payment_status
+        - vending_status
+        - delivery_status
+        - delivery_method
+        - overall_status
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          enum: [NGN]
+        payment_status:
+          $ref: "#/components/schemas/PaymentState"
+        vending_status:
+          $ref: "#/components/schemas/VendingState"
+        delivery_status:
+          $ref: "#/components/schemas/DeliveryState"
+        delivery_method:
+          $ref: "#/components/schemas/DeliveryMethod"
+        overall_status:
+          $ref: "#/components/schemas/OverallStatus"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NotificationPreferences:
+      type: object
+      required: [sms, email, whatsapp]
+      additionalProperties: false
+      properties:
+        sms:
+          type: boolean
+        email:
+          type: boolean
+        whatsapp:
+          type: boolean
+
+    AdminReasonRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+
+    AdminTransactionView:
+      allOf:
+        - $ref: "#/components/schemas/TransactionView"
+        - type: object
+          required:
+            - customer_id
+            - check_attempts
+            - next_check_at
+            - payment_provider
+            - payment_reference
+            - vending_provider
+            - vending_reference
+            - delivery_provider
+            - delivery_reference
+            - refund_reference
+            - refund_amount_minor
+            - token_available
+          properties:
+            customer_id:
+              type: string
+              format: uuid
+            check_attempts:
+              type: integer
+            next_check_at:
+              type: string
+              format: date-time
+            payment_provider:
+              type: string
+            payment_reference:
+              type: string
+            vending_provider:
+              type: string
+            vending_reference:
+              type: string
+            delivery_provider:
+              type: string
+            delivery_reference:
+              type: string
+            refund_reference:
+              type: string
+            refund_amount_minor:
+              type: integer
+              format: int64
+            token_available:
+              type: boolean
+
+    AdminTransactionSearchResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminTransactionView"
+        next_before:
+          type: string
+          format: date-time
+
+    LedgerEntry:
+      type: object
+      required: [Account, Direction, Amount]
+      properties:
+        Account:
+          type: string
+          enum:
+            - PSP_SETTLEMENT_RECEIVABLE
+            - CUSTOMER_FUNDS_CLEARING
+            - PROVIDER_PAYABLE
+            - REFUND_PAYABLE
+            - PLATFORM_FEE_REVENUE
+        Direction:
+          type: string
+          enum: [DEBIT, CREDIT]
+        Amount:
+          $ref: "#/components/schemas/MoneyAmount"
+
+    LedgerTransaction:
+      type: object
+      required: [ID, Reference, SourceType, SourceID, Description, PostedAt, Entries]
+      properties:
+        ID:
+          type: string
+          format: uuid
+        Reference:
+          type: string
+        SourceType:
+          type: string
+        SourceID:
+          type: string
+          format: uuid
+        Description:
+          type: string
+        PostedAt:
+          type: string
+          format: date-time
+        Entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/LedgerEntry"
+
+    OutboxEvent:
+      type: object
+      required: [id, type, aggregate_type, aggregate_id, payload, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        aggregate_type:
+          type: string
+        aggregate_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        published_at:
+          type: [string, "null"]
+          format: date-time
+
+    AuditEvent:
+      type: object
+      required: [id, actor_type, action, resource_type, metadata, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actor_user_id:
+          type: string
+        actor_type:
+          type: string
+          enum: [USER, OPERATOR, SYSTEM, PROVIDER]
+        action:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+          format: uuid
+        correlation_id:
+          type: string
+          format: uuid
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationOperatorView:
+      type: object
+      required:
+        - id
+        - recipient_kind
+        - channel
+        - template_id
+        - template_version
+        - status
+        - attempts
+        - created_at
+        - updated_at
+        - next_attempt_at
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipient_kind:
+          type: string
+          enum: [PURCHASER, GIFT_RECIPIENT]
+        channel:
+          type: string
+          enum: [SMS, EMAIL, WHATSAPP]
+        template_id:
+          type: string
+        template_version:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, SENDING, SENT, FAILED, UNKNOWN, SUPPRESSED]
+        attempts:
+          type: integer
+        last_error_code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        next_attempt_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: string
+          format: date-time
+
+    AdminTransactionDetailResponse:
+      type: object
+      required: [transaction, ledger, events, audit, notifications]
+      additionalProperties: false
+      properties:
+        transaction:
+          $ref: "#/components/schemas/AdminTransactionView"
+        ledger:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/LedgerTransaction"
+        events:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/OutboxEvent"
+        audit:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        notifications:
+          type: [array, "null"]
+          items:
+            $ref: "#/components/schemas/NotificationOperatorView"
+
+    AdminTokenRevealResponse:
+      type: object
+      required: [transaction_id, token, units_kwh]
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        token:
+          type: string
+        units_kwh:
+          type: string
+
+    AdminProviderStatus:
+      type: object
+      required: [name, enabled]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+
+    AdminProviderListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminProviderStatus"

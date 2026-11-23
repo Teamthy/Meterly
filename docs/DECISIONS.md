@@ -174,6 +174,36 @@ Deduplication is enforced in PostgreSQL and `memstore` by `UNIQUE (event_id, rec
 
 ### Privacy, retention and operator audit (NDPA 2023)
 
-- **Retention:** `notification_deliveries` stores no message body or plaintext destination; a periodic worker sweep clears `destination_hmac` (`SET destination_hmac = NULL`) on settled rows older than `NOTIFICATION_HMAC_RETENTION` (default `8760h` / 365 days).
+- **Retention:** `notification_deliveries` stores no message body or plaintext destination; a periodic worker sweep clears `destination_hmac` (`SET destination_hmac = ''`) on settled rows older than `NOTIFICATION_HMAC_RETENTION` (default `8760h` / 365 days).
 - **Operator audit:** `GET /v1/admin/transactions/{id}` includes redacted delivery attempt metadata (`notifications` array: channel, recipient kind, template ID/version, status, attempts, error code, timestamps—never content or destination) and writes an `audit_events` record (`action: "notification_deliveries.view"`, `resource_type: "notification_deliveries"`, `resource_id: <transaction_id>`) before returning.
+
+---
+
+## M6 — Production readiness (OpenAPI 3.1, metrics, tracing, containers, graceful shutdown)
+
+### `gopkg.in/yaml.v3` for OpenAPI verification
+
+We add `gopkg.in/yaml.v3` (`v3.0.1`) solely to parse `api/openapi.yaml` in the automated route-coverage and schema-completeness test (`internal/httpapi/openapi_test.go`). It is a pure-Go, zero-runtime-dependency library used only in tests so partner-facing OpenAPI 3.1 YAML stays human-editable while CI proves bidirectional parity against the `http.ServeMux` patterns registered by `httpapi.Server.Routes()`.
+
+### Stdlib Prometheus exposition and OpenTelemetry OTLP/HTTP JSON
+
+Following the same minimal-dependency principle used for OIDC/JWKS in M4 (`internal/auth/oidc.go`), we implement Prometheus text exposition (`text/plain; version=0.0.4`) and OpenTelemetry W3C TraceContext (`traceparent`) + OTLP/HTTP JSON trace export (`POST <OTEL_EXPORTER_OTLP_ENDPOINT>/v1/traces`, `ExportTraceServiceRequest`) using the Go standard library (`internal/observability`):
+
+1. **Zero supply-chain surface:** avoids pulling 25+ transitive gRPC/protobuf/SDK modules into the money-handling binary.
+2. **Compile-time label safety:** `metrics.Registry` exposes typed methods for the exact approved metric set (`http_requests_total{route,code}`, `http_request_duration_seconds{route}`, `provider_calls_total{provider,op,outcome}`, `provider_call_duration_seconds{provider,op}`, `transactions_by_status{status}`, `manual_review_open`, `resume_escalations_total`, `outbox_lag_seconds`, `notification_deliveries_total{channel,status}`). Unmatched HTTP paths map to `route="UNMATCHED"` so attacker-chosen URLs can neither explode cardinality nor leak path values, and no API accepts arbitrary label keys (preventing meter numbers, user IDs, or transaction IDs from ever reaching `/metrics`).
+3. **Internal metrics port:** `/metrics` is served exclusively on a dedicated listener (`METRICS_ADDR`, default `:9090`, disableable via `METRICS_ADDR=off` in tests) and is never mounted on the public API mux.
+4. **OTLP tracing:** when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, tracing is a zero-allocation no-op. When set, one server span per HTTP request and one client span per external provider call are exported asynchronously in bounded batches with `meterly.correlation_id` and low-cardinality attributes only (never bodies, tokens, meter numbers, phones, or emails), and flushed during graceful shutdown.
+
+### Graceful shutdown ordering
+
+`app.Serve` coordinates shutdown on `SIGTERM`/`SIGINT` (or context cancellation) in strict order:
+1. Stop scheduling new background worker ticks while granting any already-running tick a bounded `ShutdownTimeout` context so in-flight claimed provider calls finish and commit their resulting state transitions before database connections close.
+2. Drain the public HTTP server (`http.Server.Shutdown`), completing in-flight requests while rejecting new ones.
+3. Wait on the worker `sync.WaitGroup` until all loops exit cleanly.
+4. Shut down the internal metrics HTTP server and flush buffered OpenTelemetry spans before `App.Close()` closes the store.
+
+### Container packaging
+
+A single multi-stage `Dockerfile` builds static (`CGO_ENABLED=0`) binaries for three targets (`api`, `worker`, `migrate`) on `gcr.io/distroless/static-debian12:nonroot` running as `nonroot:nonroot` (UID 65532), with `docker-compose.yml` running `postgres` → `migrate` → `api` out of the box and CI verifying both image builds and an end-to-end purchase smoke test.
+
 

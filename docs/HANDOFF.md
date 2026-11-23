@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M5 (notification delivery, verified contact capture, Africa's Talking / Resend / WhatsApp adapters, preferences & inbound STOP).
+> **Last updated:** 2026-11-23, after M6 (OpenAPI 3.1, Prometheus `/metrics`, OTLP tracing, distroless containers & graceful shutdown).
 
 ## 1. What Meterly is
 
@@ -16,8 +16,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M2: api/worker split, Resume/reconciliation, config | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
 | M3: Paystack payment adapter | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
 | M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3), [PR #4](https://github.com/Teamthy/Meterly/pull/4) |
-| M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
-| M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles | ⏳ next | — |
+| M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ merged | [PR #5](https://github.com/Teamthy/Meterly/pull/5) |
+| M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -44,7 +44,10 @@ internal/notifications  templates (i18n catalog + gift SMS), status transitions,
   resend (+resendtest)                   email adapter + status API + Svix webhook verification
   whatsapp (+whatsapptest)               WhatsApp Cloud API (template outside 24h window) + X-Hub-Signature-256
 internal/notificationservice   outbox sink -> notification_deliveries, claim/send/UNKNOWN engine, inbound STOP, retention purge
+internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
 internal/httpapi        /v1 REST + /v1/admin (admin.go) + /v1/me/notification-preferences + /v1/notifications/inbound/{provider}
+api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
+Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
 internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
@@ -110,7 +113,7 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M6 (next session):** `api/openapi.yaml` (OpenAPI 3.1) plus a route-coverage test against `httpapi.Server.Routes()`, Prometheus `/metrics` (internal port or admin-gated), OpenTelemetry spans with correlation IDs (zero sensitive attributes), structured JSON logging hardening, and multi-stage distroless Dockerfiles (`deploy/Dockerfile.api`, `deploy/Dockerfile.worker`, `deploy/Dockerfile.migrate`).
+**M7 (next milestone — blocked on partner selection & sandbox credentials):** first real vending adapter (e.g. Buypower / VTpass / Irecharge or direct DisCo vending API), preserving strict `ErrAmbiguous` -> `UNKNOWN` -> `GetVendStatus(idempotencyKey)` reconciliation semantics.
 
 **Blocked on the founder or partners (not code):**
 - a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed for M7 and before any non-dev deployment)
@@ -120,6 +123,12 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
+
+- **2026-11-23 (later): M6 production readiness completed (M5 merged in PR #5).**
+  - OpenAPI 3.1 (`api/openapi.yaml` + `internal/httpapi/openapi_test.go`): authored full OpenAPI 3.1.0 contract covering all 34 production routes, schemas, `bearerAuth` security scheme, and standard error envelope + all 18 error codes; added `Server.RegisteredPatterns()` and CI tests verifying bidirectional mux parity, `$ref` integrity, path parameter coverage, and AST `writeErr` code coverage (`gopkg.in/yaml.v3` justified in `docs/DECISIONS.md`).
+  - Observability (`internal/observability`): implemented stdlib Prometheus 0.0.4 metrics registry served strictly on an internal listener (`METRICS_ADDR`, default `:9090`, `404` on public API port) with zero PII/high-cardinality labels (`http_requests_total`, `http_request_duration_seconds`, `provider_calls_total`, `provider_call_duration_seconds`, 1-minute `transactions_by_status` / `manual_review_open` / `outbox_lag_seconds` gauges, `resume_escalations_total`, `notification_deliveries_total`), plus W3C `traceparent` + OTLP/HTTP JSON span export (`OTEL_EXPORTER_OTLP_ENDPOINT`) with `meterly.correlation_id` on every HTTP and provider span.
+  - Graceful shutdown (`internal/app/app.go`, `internal/app/shutdown_test.go`): unified ordered shutdown draining public HTTP, stopping worker loops from claiming new rows while finishing in-flight claims within `SHUTDOWN_TIMEOUT`, shutting down the internal metrics listener, flushing OTel spans, and only then closing PostgreSQL; verified under `-race`.
+  - Containers & CI (`Dockerfile`, `.dockerignore`, `docker-compose.yml`, `scripts/smoke-compose.sh`, `.github/workflows/ci.yml`): added multi-stage non-root `gcr.io/distroless/static-debian12:nonroot` targets (`api`, `worker`, `migrate`), extended `docker-compose.yml` for the full stack, and added CI image builds + compose end-to-end purchase and metrics smoke test.
 
 - **2026-11-23: M5 notification delivery completed.**
   - Schema (`migrations/0006_notifications.sql`): dropped unused plaintext `users.email`/`users.phone` columns and indexes; added bound-encrypted contact columns (`email_ciphertext`, `email_hmac`, `email_masked`, `email_key_version`, `phone_ciphertext`, `phone_hmac`, `phone_masked`, `phone_key_version`, `display_name`) on `users`; created `notification_preferences`, `opt_outs`, `whatsapp_service_windows`, and `notification_deliveries` (`UNIQUE (event_id, recipient_kind, channel)`). Kept `notification_candidates` (`0005`) intact.

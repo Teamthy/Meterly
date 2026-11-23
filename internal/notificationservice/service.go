@@ -26,6 +26,7 @@ import (
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
@@ -48,6 +49,7 @@ type Config struct {
 	FeatureGiftSMS    bool
 	HMACRetention     time.Duration
 	StaleSendingAfter time.Duration
+	Metrics           *observability.Registry
 	Now               func() time.Time
 	Log               *slog.Logger
 }
@@ -60,6 +62,7 @@ type Service struct {
 	featureGiftSMS    bool
 	hmacRetention     time.Duration
 	staleSendingAfter time.Duration
+	metrics           *observability.Registry
 	now               func() time.Time
 	log               *slog.Logger
 }
@@ -104,6 +107,7 @@ func New(cfg Config) (*Service, error) {
 		featureGiftSMS:    cfg.FeatureGiftSMS,
 		hmacRetention:     ret,
 		staleSendingAfter: stale,
+		metrics:           cfg.Metrics,
 		now:               nowFn,
 		log:               log,
 	}, nil
@@ -199,8 +203,12 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 				CreatedAt:       now,
 				UpdatedAt:       now,
 			}
-			if _, err := r.Notifications().CreateDelivery(ctx, gd); err != nil {
+			inserted, err := r.Notifications().CreateDelivery(ctx, gd)
+			if err != nil {
 				return err
+			}
+			if inserted && status == notifications.StatusSuppressed {
+				s.metrics.IncNotificationDelivery(string(notifications.SMS), string(notifications.StatusSuppressed))
 			}
 		}
 	}
@@ -257,8 +265,12 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 			CreatedAt:       now,
 			UpdatedAt:       now,
 		}
-		if _, err := r.Notifications().CreateDelivery(ctx, pd); err != nil {
+		inserted, err := r.Notifications().CreateDelivery(ctx, pd)
+		if err != nil {
 			return err
+		}
+		if inserted && status == notifications.StatusSuppressed {
+			s.metrics.IncNotificationDelivery(string(ch), string(notifications.StatusSuppressed))
 		}
 	}
 	return nil
@@ -299,21 +311,40 @@ func (s *Service) giftDestinationHMAC(g gifts.Gift) (string, bool, error) {
 // ProcessBatch processes up to limit due notification deliveries. Safe to run
 // across multiple concurrent workers.
 func (s *Service) ProcessBatch(ctx context.Context, limit int) (int, error) {
+	return s.ProcessBatchWithDrain(ctx, ctx, limit)
+}
+
+// ProcessBatchWithDrain stops claiming new due deliveries once stopCtx is
+// cancelled while allowing an already-claimed delivery to finish on drainCtx.
+func (s *Service) ProcessBatchWithDrain(stopCtx, drainCtx context.Context, limit int) (int, error) {
+	if stopCtx.Err() != nil {
+		return 0, nil
+	}
+	if drainCtx == nil {
+		drainCtx = stopCtx
+	}
 	if limit <= 0 {
 		limit = 50
 	}
 	now := s.now().UTC()
 	staleBefore := now.Add(-s.staleSendingAfter)
-	ids, err := s.st.Repos().Notifications().ListDueDeliveries(ctx, now, staleBefore, limit)
+	ids, err := s.st.Repos().Notifications().ListDueDeliveries(stopCtx, now, staleBefore, limit)
 	if err != nil {
+		if stopCtx.Err() != nil && errors.Is(err, context.Canceled) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	processed := 0
 	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return processed, err
+		if stopCtx.Err() != nil {
+			return processed, nil
 		}
-		did, err := s.ProcessOne(ctx, id)
+		itemCtx := drainCtx
+		if audit.CorrelationFrom(itemCtx) == nil {
+			itemCtx = audit.WithCorrelation(itemCtx, uuid.New())
+		}
+		did, err := s.ProcessOne(itemCtx, id)
 		if err != nil {
 			s.log.Warn("notification delivery step failed", "delivery_id", id, "err", err)
 			continue
@@ -361,6 +392,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 		if err != nil || !recovered {
 			return recovered, err
 		}
+		s.metrics.IncNotificationDelivery(string(snap.Channel), string(notifications.StatusUnknown))
 		snap, err = s.st.Repos().Notifications().GetDelivery(ctx, id)
 		if err != nil {
 			return true, err
@@ -415,9 +447,10 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 	}
 
 	var (
-		claimed    bool
-		suppressed bool
-		sendReq    notifications.SendRequest
+		claimed       bool
+		suppressed    bool
+		settledStatus notifications.Status
+		sendReq       notifications.SendRequest
 	)
 	claimNow := s.now().UTC()
 	err = s.st.InTx(ctx, func(r store.Repos) error {
@@ -465,6 +498,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 			}
 			d.LastErrorCode = supCode
 			suppressed = true
+			settledStatus = notifications.StatusSuppressed
 			return r.Notifications().UpdateDelivery(ctx, d)
 		}
 		if permFailCode != "" {
@@ -473,6 +507,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 			}
 			d.LastErrorCode = permFailCode
 			suppressed = true
+			settledStatus = notifications.StatusFailed
 			return r.Notifications().UpdateDelivery(ctx, d)
 		}
 
@@ -488,8 +523,17 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 		claimed = true
 		return nil
 	})
-	if err != nil || suppressed || !claimed {
-		return suppressed, err
+	if err != nil {
+		return false, err
+	}
+	if suppressed {
+		if settledStatus != "" {
+			s.metrics.IncNotificationDelivery(string(snap.Channel), string(settledStatus))
+		}
+		return true, nil
+	}
+	if !claimed {
+		return false, nil
 	}
 
 	// Execute provider call strictly outside DB transaction.
@@ -499,6 +543,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 	sendReq.Message.Destination = ""
 
 	finishNow := s.now().UTC()
+	var postStatus notifications.Status
 	err = s.st.InTx(ctx, func(r store.Repos) error {
 		d, err := r.Notifications().GetDeliveryForUpdate(ctx, id)
 		if err != nil {
@@ -514,6 +559,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 			d.ProviderRef = res.ProviderRef
 			d.LastErrorCode = ""
 			d.SentAt = &finishNow
+			postStatus = notifications.StatusSent
 			return r.Notifications().UpdateDelivery(ctx, d)
 		}
 
@@ -525,6 +571,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 			if !d.TokenBearing() && d.Attempts < 2 {
 				d.NextAttemptAt = finishNow.Add(notifications.Backoff(d.Attempts))
 			}
+			postStatus = notifications.StatusUnknown
 			s.log.Warn("notification delivery outcome ambiguous; marked UNKNOWN",
 				"delivery_id", d.ID, "channel", d.Channel, "recipient_kind", d.RecipientKind, "attempts", d.Attempts)
 			return r.Notifications().UpdateDelivery(ctx, d)
@@ -535,6 +582,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 				return err
 			}
 			d.LastErrorCode = code
+			postStatus = notifications.StatusFailed
 			return r.Notifications().UpdateDelivery(ctx, d)
 		}
 
@@ -547,6 +595,7 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 				return err
 			}
 			d.LastErrorCode = code
+			postStatus = notifications.StatusFailed
 			return r.Notifications().UpdateDelivery(ctx, d)
 		}
 		if err := d.Transition(notifications.StatusPending, finishNow); err != nil {
@@ -556,12 +605,18 @@ func (s *Service) ProcessOne(ctx context.Context, id uuid.UUID) (bool, error) {
 		d.NextAttemptAt = finishNow.Add(notifications.Backoff(d.Attempts))
 		return r.Notifications().UpdateDelivery(ctx, d)
 	})
+	if err == nil && postStatus != "" {
+		s.metrics.IncNotificationDelivery(string(snap.Channel), string(postStatus))
+	}
 	return true, err
 }
 
 func (s *Service) settleUnknown(ctx context.Context, id uuid.UUID, to notifications.Status, errCode string) (bool, error) {
 	now := s.now().UTC()
-	var settled bool
+	var (
+		settled bool
+		ch      notifications.Channel
+	)
 	err := s.st.InTx(ctx, func(r store.Repos) error {
 		d, err := r.Notifications().GetDeliveryForUpdate(ctx, id)
 		if err != nil {
@@ -577,9 +632,13 @@ func (s *Service) settleUnknown(ctx context.Context, id uuid.UUID, to notificati
 		if to == notifications.StatusSent {
 			d.SentAt = &now
 		}
+		ch = d.Channel
 		settled = true
 		return r.Notifications().UpdateDelivery(ctx, d)
 	})
+	if err == nil && settled {
+		s.metrics.IncNotificationDelivery(string(ch), string(to))
+	}
 	return settled, err
 }
 

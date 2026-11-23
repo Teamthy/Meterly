@@ -69,6 +69,37 @@ func New() *Store {
 
 func (s *Store) Close() {}
 
+func (s *Store) MetricsSnapshot(_ context.Context, now time.Time) (store.MetricsSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	byStatus := make(map[tx.Overall]int64)
+	for _, t := range s.txns {
+		st := t.Status()
+		byStatus[st]++
+	}
+	var oldest time.Time
+	for _, e := range s.outbox {
+		if e.PublishedAt != nil {
+			continue
+		}
+		if oldest.IsZero() || e.CreatedAt.Before(oldest) {
+			oldest = e.CreatedAt
+		}
+	}
+	var lag float64
+	if !oldest.IsZero() {
+		if d := now.Sub(oldest).Seconds(); d > 0 {
+			lag = d
+		}
+	}
+	return store.MetricsSnapshot{
+		TransactionsByStatus: byStatus,
+		ManualReviewOpen:     byStatus[tx.OverallManualReview],
+		OutboxLagSeconds:     lag,
+	}, nil
+}
+
 func (s *Store) InTx(_ context.Context, fn func(store.Repos) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
