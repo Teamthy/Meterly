@@ -30,33 +30,33 @@ import (
 type Store struct {
 	mu sync.Mutex
 
-	users         map[string]string
-	userIDs       map[string]bool
-	userContacts  map[string]notifications.UserContacts
-	meters        map[uuid.UUID]*meters.Meter
-	meterByHash   map[string]uuid.UUID
-	grants        []*meters.Grant
-	quotes        map[uuid.UUID]*tx.Quote
-	txns          map[uuid.UUID]*tx.Transaction
-	txnByPayRef   map[string]uuid.UUID
-	ledger        []ledger.Transaction
-	ledgerByRef   map[string]int
-	outbox        []*events.Event
-	idem          map[string]*idempotency.Record
-	audit         []audit.Event
-	providerOff   map[string]bool
-	tokenShares   []tokenshares.Share
-	gifts         map[uuid.UUID]gifts.Gift
-	candidates    map[uuid.UUID]notificationintents.Intent
-	notifPrefs    map[string]notifications.Preferences
-	optOuts       map[string]notifications.OptOut
-	waWindows     map[string]time.Time
-	deliveries         map[uuid.UUID]*notifications.Delivery
-	deliveryByKey      map[string]uuid.UUID
-	payReqs            map[uuid.UUID]*payrequests.PaymentRequest
-	payReqByCodeHMAC   map[string]uuid.UUID
-	payers             map[uuid.UUID]payrequests.Payer
-	payerByStatusHMAC  map[string]uuid.UUID
+	users             map[string]string
+	userIDs           map[string]bool
+	userContacts      map[string]notifications.UserContacts
+	meters            map[uuid.UUID]*meters.Meter
+	meterByHash       map[string]uuid.UUID
+	grants            []*meters.Grant
+	quotes            map[uuid.UUID]*tx.Quote
+	txns              map[uuid.UUID]*tx.Transaction
+	txnByPayRef       map[string]uuid.UUID
+	ledger            []ledger.Transaction
+	ledgerByRef       map[string]int
+	outbox            []*events.Event
+	idem              map[string]*idempotency.Record
+	audit             []audit.Event
+	providerOff       map[string]bool
+	tokenShares       []tokenshares.Share
+	gifts             map[uuid.UUID]gifts.Gift
+	candidates        map[uuid.UUID]notificationintents.Intent
+	notifPrefs        map[string]notifications.Preferences
+	optOuts           map[string]notifications.OptOut
+	waWindows         map[string]time.Time
+	deliveries        map[uuid.UUID]*notifications.Delivery
+	deliveryByKey     map[string]uuid.UUID
+	payReqs           map[uuid.UUID]*payrequests.PaymentRequest
+	payReqByCodeHMAC  map[string]uuid.UUID
+	payers            map[uuid.UUID]payrequests.Payer
+	payerByStatusHMAC map[string]uuid.UUID
 }
 
 func New() *Store {

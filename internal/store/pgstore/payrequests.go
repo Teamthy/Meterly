@@ -116,8 +116,8 @@ const payReqSelectSQL = `
 
 func (r payReqRepo) scanOne(row pgx.Row) (*payrequests.PaymentRequest, error) {
 	var (
-		p                    payrequests.PaymentRequest
-		mode, curr, statusS  string
+		p                   payrequests.PaymentRequest
+		mode, curr, statusS string
 	)
 	err := row.Scan(
 		&p.ID, &p.RequesterID, &p.MeterID, &mode,
