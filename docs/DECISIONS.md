@@ -216,5 +216,44 @@ A single multi-stage `Dockerfile` builds static (`CGO_ENABLED=0`) binaries for t
 4. **Pure-stdlib QR PNG generation:** To keep zero external dependencies in the production binary, `internal/payrequests/qr.go` implements ISO/IEC 18004 QR Version 1–6 Byte-mode encoding (GF(256) Reed-Solomon ECC + penalty-minimized mask selection) rendered via `image/png`.
 5. **Feature flag:** Gated behind `FEATURE_PAY_FOR_ME` (`true` by default in `MODE=dev`, `false` outside dev until rollout).
 
+---
+
+## M8: Split the Meter & Reusable Funding Pot (`internal/pots`, `migrations/0009_funding_pots.sql`)
+
+### Legal gate (open founder / counsel question)
+
+Collecting money from several contributors and holding it up to `POT_MAX_HOLD` (default `72h`) until a purchase target is reached may constitute holding customer funds under CBN/Paystack rules. Before enabling in production, the founder must confirm with Paystack and legal counsel whether pooled holds up to 72 hours are permitted under Meterly's merchant agreement as-is, or require a Paystack split-payment / licensed escrow arrangement. Split the Meter is therefore gated behind `FEATURE_SPLIT_METER` (defaults to `true` in `MODE=dev` and **`false`** outside `dev`) with a bounded `POT_MAX_HOLD` (default `72h`, maximum `168h`).
+
+### Double-entry ledger table (`POT_FUNDS_HELD`)
+
+We introduce the liability account `POT_FUNDS_HELD` (`LIABILITY`, `NGN`). Every contribution, overfund refund, allocation, vend, POT-transaction vend-failure return, and contributor refund posts balanced, idempotent entries:
+
+| Event | Debit | Credit | Idempotent Reference |
+|---|---|---|---|
+| Contribution verified at PSP (`paid_minor`) | `PSP_SETTLEMENT_RECEIVABLE` | `POT_FUNDS_HELD` | `pot-contrib:<contrib_id>` |
+| Overfund / late-payment refund owed (`excess_minor`) | `POT_FUNDS_HELD` | `REFUND_PAYABLE` | `pot-refund-due:<contrib_id>:1` |
+| Allocation to POT-funded electricity transaction (`alloc_minor`) | `POT_FUNDS_HELD` | `CUSTOMER_FUNDS_CLEARING` | `pot-alloc:<alloc_id>` |
+| Electricity vended (`Total = Amount + Fee`) | `CUSTOMER_FUNDS_CLEARING` (`Total`) | `PROVIDER_PAYABLE` (`Amount`) + `PLATFORM_FEE_REVENUE` (`Fee`) | `vend:<txn_id>` (unchanged) |
+| Vend failure (or operator refund) on POT-funded transaction (`Total`) | `CUSTOMER_FUNDS_CLEARING` | `POT_FUNDS_HELD` | `refund-pot:<txn_id>` |
+| Expiry / cancel / vend-failure contributor refund owed (`retained_minor`) | `POT_FUNDS_HELD` | `REFUND_PAYABLE` | `pot-refund-due:<contrib_id>:<seq>` |
+| Contributor refund executed at PSP (`refund_step_minor`) | `REFUND_PAYABLE` | `PSP_SETTLEMENT_RECEIVABLE` | `pot-refund-paid:<contrib_id>:<seq>` |
+
+Invariants enforced and tested:
+1. Global trial balance remains strictly `0` at every step.
+2. `POT_FUNDS_HELD` nets to `0` for every `SETTLED` or `REFUNDED` pot.
+3. The platform fee (`FeeMinor`, default ₦100) is charged once on allocation (never per contribution): `target_minor` includes `FeeMinor`, so contributors pay exact shares without per-share fee multiplication.
+
+### Pot, contribution and `FundingSource` state machines
+
+1. **Pot (`Kind`: `SPLIT_METER` | `LANDLORD_BULK`):**
+   - Funding & purchase path: `OPEN → FUNDED → ALLOCATING → SETTLED`.
+   - Unfunded expiry / organiser cancellation path: `OPEN → EXPIRED|CANCELLED → REFUNDING → REFUNDED` (transitions directly from `REFUNDING` to `REFUNDED` inside the same commit when zero paid contributions exist).
+   - Post-funding failure path: if the organiser lost `PURCHASE` before allocation or a POT-funded electricity transaction definitively fails vend (`VendFailed`), funds return to `POT_FUNDS_HELD` and the pot moves `FUNDED|ALLOCATING → REFUNDING → REFUNDED`. While an allocated transaction's vending is `UNKNOWN`, the pot stays in `ALLOCATING` and **never** refunds contributors.
+2. **Contribution (`Status`: `PENDING` | `PAID` | `REFUND_PENDING` | `REFUNDED` | `FAILED`):**
+   - Tracks `amount_minor` (PSP charge), `retained_minor` (applied toward `target_minor`), `refund_amount_minor` (total owed back to contributor), and `refunded_minor` (confirmed refunded by PSP), plus an explicit `refund_claimed` lease so concurrent workers claim each PSP refund call (`refund:contribution:<id>` for single-step refunds; `refund:contribution:<id>:<seq>` if a second principal refund follows an earlier partial overfund refund) at most once. Repeated refund failures escalate the pot to `review_reason` after `ResumeMaxAttempts`.
+3. **Transaction `FundingSource` (`PSP` | `POT`):**
+   - `transactions.Transaction` gains `FundingSource` (default `PSP`). A `POT`-funded transaction is created inside the allocation's `InTx` with `Payment = PayConfirmed` and empty `PaymentProviderRef`. Both `Orchestrator.refund` and `Orchestrator.OperatorRefund` branch on `FundingSource`: `PSP` calls `payments.RefundPayment`, whereas `POT` posts `Dr CUSTOMER_FUNDS_CLEARING / Cr POT_FUNDS_HELD`, marks the allocation returned, queues contributor refunds on the pot, and drives the pot refund sweep.
+
+
 
 
