@@ -20,6 +20,7 @@ import (
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/notificationintents"
+	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -28,29 +29,41 @@ import (
 type Store struct {
 	mu sync.Mutex
 
-	users       map[string]string
-	meters      map[uuid.UUID]*meters.Meter
-	meterByHash map[string]uuid.UUID
-	grants      []*meters.Grant
-	quotes      map[uuid.UUID]*tx.Quote
-	txns        map[uuid.UUID]*tx.Transaction
-	txnByPayRef map[string]uuid.UUID
-	ledger      []ledger.Transaction
-	ledgerByRef map[string]int
-	outbox      []*events.Event
-	idem        map[string]*idempotency.Record
-	audit       []audit.Event
-	providerOff map[string]bool
-	tokenShares []tokenshares.Share
-	gifts       map[uuid.UUID]gifts.Gift
-	candidates  map[uuid.UUID]notificationintents.Intent
+	users         map[string]string
+	userIDs       map[string]bool
+	userContacts  map[string]notifications.UserContacts
+	meters        map[uuid.UUID]*meters.Meter
+	meterByHash   map[string]uuid.UUID
+	grants        []*meters.Grant
+	quotes        map[uuid.UUID]*tx.Quote
+	txns          map[uuid.UUID]*tx.Transaction
+	txnByPayRef   map[string]uuid.UUID
+	ledger        []ledger.Transaction
+	ledgerByRef   map[string]int
+	outbox        []*events.Event
+	idem          map[string]*idempotency.Record
+	audit         []audit.Event
+	providerOff   map[string]bool
+	tokenShares   []tokenshares.Share
+	gifts         map[uuid.UUID]gifts.Gift
+	candidates    map[uuid.UUID]notificationintents.Intent
+	notifPrefs    map[string]notifications.Preferences
+	optOuts       map[string]notifications.OptOut
+	waWindows     map[string]time.Time
+	deliveries    map[uuid.UUID]*notifications.Delivery
+	deliveryByKey map[string]uuid.UUID
 }
 
 func New() *Store {
 	return &Store{
-		users: map[string]string{}, meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
+		users: map[string]string{}, userIDs: map[string]bool{}, userContacts: map[string]notifications.UserContacts{},
+		meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
-		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{}, gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
+		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
+		gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
+		notifPrefs: map[string]notifications.Preferences{}, optOuts: map[string]notifications.OptOut{},
+		waWindows: map[string]time.Time{}, deliveries: map[uuid.UUID]*notifications.Delivery{},
+		deliveryByKey: map[string]uuid.UUID{},
 	}
 }
 
@@ -103,6 +116,7 @@ func (r *repos) Providers() store.ProviderRepo                           { retur
 func (r *repos) TokenShares() store.TokenShareRepo                       { return shareRepo{r} }
 func (r *repos) Gifts() store.GiftRepo                                   { return giftRepo{r} }
 func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
+func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -113,7 +127,11 @@ func (r *repos) EnsureByExternalID(_ context.Context, ext string) (string, error
 	}
 	id := uuid.NewString()
 	r.s.users[ext] = id
-	r.onUndo(func() { delete(r.s.users, ext) })
+	r.s.userIDs[id] = true
+	r.onUndo(func() {
+		delete(r.s.users, ext)
+		delete(r.s.userIDs, id)
+	})
 	return id, nil
 }
 
