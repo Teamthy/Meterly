@@ -79,6 +79,12 @@ type Config struct {
 	MetricsRefreshInterval time.Duration // gauge refresh period (default 1m)
 	OTelEndpoint           string        // OTEL_EXPORTER_OTLP_ENDPOINT; empty = no-op tracer
 
+	// Pay-for-Me shareable payment request links (M7).
+	FeaturePayForMe      bool
+	PublicBaseURL        string
+	RatePublicPayPerMin  int
+	RatePublicLinkPerMin int
+
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
 	RateAuthFailuresPerMin int
@@ -206,6 +212,22 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("FEATURE_GIFT_SMS: must be true or false"))
 	}
 
+	// FEATURE_PAY_FOR_ME defaults to true in MODE=dev and false outside dev.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_PAY_FOR_ME"))) {
+	case "":
+		c.FeaturePayForMe = c.Mode == Dev
+	case "false", "0":
+		c.FeaturePayForMe = false
+	case "true", "1":
+		c.FeaturePayForMe = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_PAY_FOR_ME: must be true or false"))
+	}
+	c.PublicBaseURL = strings.TrimRight(get("PUBLIC_BASE_URL", "https://meterly.ng"), "/")
+	if c.Mode != Dev && !strings.HasPrefix(c.PublicBaseURL, "https://") {
+		errs = append(errs, errors.New("PUBLIC_BASE_URL must be https outside dev"))
+	}
+
 	// No default: opting in requires an explicit fixed event-time boundary.
 	if v := strings.TrimSpace(getenv("NOTIFICATION_CANDIDATES_SINCE")); v != "" {
 		since, err := time.Parse(time.RFC3339Nano, v)
@@ -231,6 +253,8 @@ func Load(getenv func(string) string) (Config, error) {
 	c.RateWritesPerMin = int(integer("RATE_LIMIT_WRITES_PER_MIN", 30))
 	c.RateAuthFailuresPerMin = int(integer("RATE_LIMIT_AUTH_FAILURES_PER_MIN", 20))
 	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
+	c.RatePublicPayPerMin = int(integer("RATE_LIMIT_PUBLIC_PAY_PER_MIN", 60))
+	c.RatePublicLinkPerMin = int(integer("RATE_LIMIT_PUBLIC_LINK_PER_MIN", 10))
 	c.ClientIPHeader = getenv("CLIENT_IP_HEADER")
 
 	o := orchestrator.DefaultConfig()

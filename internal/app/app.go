@@ -323,9 +323,12 @@ func (a *App) Handler() http.Handler {
 		Metrics: a.Metrics, Tracer: a.Tracer, Log: a.Log, Ready: a.Ready,
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,
-			WebhooksPerMinute: a.Cfg.RateWebhooksPerMin, ClientIPHeader: a.Cfg.ClientIPHeader,
+			WebhooksPerMinute: a.Cfg.RateWebhooksPerMin, PublicPayPerMinute: a.Cfg.RatePublicPayPerMin,
+			PublicLinkPerMinute: a.Cfg.RatePublicLinkPerMin, ClientIPHeader: a.Cfg.ClientIPHeader,
 		},
-		Dev: a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
+		PayForMeDisabled: !a.Cfg.FeaturePayForMe,
+		PublicBaseURL:    a.Cfg.PublicBaseURL,
+		Dev:              a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
 	}
 	h := s.Routes()
 	if a.wrapPublic != nil {

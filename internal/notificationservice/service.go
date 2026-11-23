@@ -28,6 +28,7 @@ import (
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/outbox"
+	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
@@ -214,10 +215,7 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 	}
 
 	contacts, err := r.Users().Contacts(ctx, t.CustomerID)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 	prefs, err := r.Notifications().GetPreferences(ctx, t.CustomerID)
@@ -227,6 +225,7 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 		return err
 	}
 
+	var purchaserEmailActiveHMAC string
 	for _, ch := range []notifications.Channel{notifications.SMS, notifications.Email, notifications.WhatsApp} {
 		destHMAC := contactHMACForChannel(contacts, ch)
 		if destHMAC == "" {
@@ -248,6 +247,8 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 			if optedOut {
 				status = notifications.StatusSuppressed
 				errCode = "RECIPIENT_OPTED_OUT"
+			} else if ch == notifications.Email {
+				purchaserEmailActiveHMAC = destHMAC
 			}
 		}
 		pd := &notifications.Delivery{
@@ -271,6 +272,62 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 		}
 		if inserted && status == notifications.StatusSuppressed {
 			s.metrics.IncNotificationDelivery(string(ch), string(notifications.StatusSuppressed))
+		}
+	}
+
+	// Guest Pay-for-Me payers receive token-free payment/refund receipts via email
+	// (never token.available or remote_delivery.confirmed).
+	if e.Type == "payment.confirmed" || e.Type == "refund.completed" {
+		payer, pErr := r.PayRequests().GetPayer(ctx, t.ID)
+		if pErr != nil && !errors.Is(pErr, store.ErrNotFound) {
+			return pErr
+		}
+		if pErr == nil && len(payer.EmailCiphertext) > 0 {
+			plainEmail, decErr := payrequests.OpenPayerEmail(s.box, t.ID, payer.EmailCiphertext)
+			if decErr != nil {
+				return decErr
+			}
+			normEmail, nErr := notifications.NormalizeEmail(plainEmail)
+			if nErr == nil {
+				payerHMAC := notifications.DestinationHMAC(s.box, normEmail)
+				status := notifications.StatusPending
+				errCode := ""
+				if purchaserEmailActiveHMAC != "" && payerHMAC == purchaserEmailActiveHMAC {
+					status = notifications.StatusSuppressed
+					errCode = "DUPLICATE_DESTINATION"
+				} else {
+					optedOut, oErr := r.Notifications().IsOptedOut(ctx, payerHMAC, notifications.Email)
+					if oErr != nil {
+						return oErr
+					}
+					if optedOut {
+						status = notifications.StatusSuppressed
+						errCode = "RECIPIENT_OPTED_OUT"
+					}
+				}
+				pyd := &notifications.Delivery{
+					EventID:         e.ID,
+					TransactionID:   t.ID,
+					RecipientKind:   notifications.RecipientPayer,
+					Channel:         notifications.Email,
+					DestinationHMAC: payerHMAC,
+					TemplateID:      spec.ID,
+					TemplateVersion: spec.Version,
+					Locale:          notifications.LocaleEN,
+					Status:          status,
+					NextAttemptAt:   now,
+					LastErrorCode:   errCode,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				}
+				inserted, err := r.Notifications().CreateDelivery(ctx, pyd)
+				if err != nil {
+					return err
+				}
+				if inserted && status == notifications.StatusSuppressed {
+					s.metrics.IncNotificationDelivery(string(notifications.Email), string(notifications.StatusSuppressed))
+				}
+			}
 		}
 	}
 	return nil
@@ -793,6 +850,58 @@ func (s *Service) prepareSendInTx(
 				TransactionID: d.TransactionID,
 				Channel:       d.Channel,
 				Destination:   dest,
+				Subject:       content.Subject,
+				Body:          content.Body,
+			},
+		}, "", "", nil
+
+	case notifications.RecipientPayer:
+		if d.Channel != notifications.Email {
+			return req, "", "UNSUPPORTED_CHANNEL", nil
+		}
+		if d.TemplateID != notifications.TemplatePaymentConfirmed && d.TemplateID != notifications.TemplateRefundCompleted {
+			return req, "TEMPLATE_NOT_PERMITTED_FOR_PAYER", "", nil
+		}
+		payer, err := r.PayRequests().GetPayer(ctx, t.ID)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && len(payer.EmailCiphertext) == 0) {
+			return req, "CONTACT_MISSING", "", nil
+		}
+		if err != nil {
+			return req, "", "", err
+		}
+		plainEmail, err := payrequests.OpenPayerEmail(s.box, t.ID, payer.EmailCiphertext)
+		if err != nil {
+			return req, "", "CONTACT_DECRYPT_FAILED", nil
+		}
+		normEmail, err := notifications.NormalizeEmail(plainEmail)
+		if err != nil {
+			return req, "", "INVALID_RECIPIENT_EMAIL", nil
+		}
+		destHMAC := notifications.DestinationHMAC(s.box, normEmail)
+		optedOut, err := r.Notifications().IsOptedOut(ctx, destHMAC, notifications.Email)
+		if err != nil {
+			return req, "", "", err
+		}
+		if optedOut {
+			return req, "RECIPIENT_OPTED_OUT", "", nil
+		}
+		content, ver, err := notifications.RenderPurchaserTemplate(d.TemplateID, d.Locale)
+		if err != nil {
+			return req, "", "UNKNOWN_TEMPLATE", nil
+		}
+		d.DestinationHMAC = destHMAC
+		d.TemplateVersion = ver
+		return notifications.SendRequest{
+			DeliveryID:      d.ID,
+			IdempotencyKey:  idempotencyKey(d.ID),
+			TemplateID:      d.TemplateID,
+			TemplateVersion: ver,
+			Locale:          d.Locale,
+			Message: notifications.Message{
+				EventID:       d.EventID,
+				TransactionID: d.TransactionID,
+				Channel:       notifications.Email,
+				Destination:   normEmail,
 				Subject:       content.Subject,
 				Body:          content.Body,
 			},
