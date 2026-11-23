@@ -58,6 +58,28 @@ type Server struct {
 	DevRemote *mock.RemoteCredit
 
 	writes, authFails, hooks ratelimit.Limiter
+	patterns                 []string
+}
+
+type patternMux struct {
+	*http.ServeMux
+	patterns []string
+}
+
+func (m *patternMux) Handle(pattern string, handler http.Handler) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.Handle(pattern, handler)
+}
+
+func (m *patternMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.HandleFunc(pattern, handler)
+}
+
+// RegisteredPatterns returns a copy of the exact patterns registered on the
+// underlying ServeMux during the most recent Routes() call.
+func (s *Server) RegisteredPatterns() []string {
+	return append([]string(nil), s.patterns...)
 }
 
 type caller struct {
@@ -84,7 +106,7 @@ func (s *Server) Routes() http.Handler {
 	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
 	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
 
-	mux := http.NewServeMux()
+	mux := &patternMux{ServeMux: http.NewServeMux()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
 
@@ -123,7 +145,8 @@ func (s *Server) Routes() http.Handler {
 		mux.HandleFunc("POST /v1/dev/reconcile", s.devReconcile)
 		mux.HandleFunc("POST /v1/dev/transactions/{transaction_id}/resume", s.devResume)
 	}
-	return s.withCorrelation(mux)
+	s.patterns = append([]string(nil), mux.patterns...)
+	return s.withCorrelation(mux.ServeMux)
 }
 
 // ---- middleware ------------------------------------------------------------
