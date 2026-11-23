@@ -17,6 +17,7 @@ const (
 	ActorUser     ActorType = "USER"
 	ActorOperator ActorType = "OPERATOR"
 	ActorSystem   ActorType = "SYSTEM"
+	ActorProvider ActorType = "PROVIDER"
 )
 
 type Event struct {

@@ -190,6 +190,25 @@ func (o *OIDC) Verify(ctx context.Context, token string) (Principal, error) {
 		o.cfg.Log.Warn("staff roles ignored: token has no MFA", "sub_len", len(sub))
 		p.Roles = nil
 	}
+	if verified, ok := claims["email_verified"].(bool); ok && verified {
+		if em, _ := claims["email"].(string); em != "" {
+			if norm, valid := cleanVerifiedEmail(em); valid {
+				p.VerifiedEmail = norm
+			}
+		}
+	}
+	if verified, ok := claims["phone_number_verified"].(bool); ok && verified {
+		if ph, _ := claims["phone_number"].(string); ph != "" {
+			if norm, valid := cleanVerifiedPhone(ph); valid {
+				p.VerifiedPhone = norm
+			}
+		}
+	}
+	if name, _ := claims["name"].(string); name != "" {
+		p.DisplayName = cleanDisplayName(name)
+	} else if given, _ := claims["given_name"].(string); given != "" {
+		p.DisplayName = cleanDisplayName(given)
+	}
 	return p, nil
 }
 
