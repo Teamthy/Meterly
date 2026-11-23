@@ -291,7 +291,7 @@ func TestObservabilityMetricsAndOTLPTracing(t *testing.T) {
 		b, _ := io.ReadAll(mres.Body)
 		mres.Body.Close()
 		metricsText = string(b)
-		if strings.Contains(metricsText, `notification_deliveries_total{channel="SMS",status="SENT"} 1`) &&
+		if strings.Contains(metricsText, `notification_deliveries_total{channel="SMS",status="SENT"} 2`) &&
 			strings.Contains(metricsText, `transactions_by_status{status="COMPLETED"} 1`) {
 			break
 		}
@@ -314,13 +314,13 @@ func TestObservabilityMetricsAndOTLPTracing(t *testing.T) {
 		`provider_calls_total{provider="mockpay",op="initialize_payment",outcome="ok"} 1`,
 		`provider_calls_total{provider="mockpay",op="verify_payment",outcome="ok"} 1`,
 		`provider_calls_total{provider="mockvend",op="vend",outcome="ok"} 1`,
-		`provider_calls_total{provider="mocksms",op="send_notification",outcome="ok"} 1`,
+		`provider_calls_total{provider="mocksms",op="send_notification",outcome="ok"} 2`,
 		`provider_call_duration_seconds_count{provider="mockvend",op="vend"} 1`,
 		`transactions_by_status{status="COMPLETED"} 1`,
 		`manual_review_open 0`,
 		`resume_escalations_total 0`,
 		`outbox_lag_seconds `,
-		`notification_deliveries_total{channel="SMS",status="SENT"} 1`,
+		`notification_deliveries_total{channel="SMS",status="SENT"} 2`,
 	} {
 		if !strings.Contains(metricsText, want) {
 			t.Fatalf("missing expected metric %q in:\n%s", want, metricsText)

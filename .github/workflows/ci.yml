@@ -34,3 +34,21 @@ jobs:
         run: |
           go run ./cmd/migrate
           go run ./cmd/migrate
+
+  containers:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: build distroless non-root images (api, worker, migrate)
+        run: |
+          docker build --target api -t meterly-api:ci .
+          docker build --target worker -t meterly-worker:ci .
+          docker build --target migrate -t meterly-migrate:ci .
+          for img in meterly-api:ci meterly-worker:ci meterly-migrate:ci; do
+            u=$(docker image inspect "$img" --format '{{.Config.User}}')
+            echo "$img user=$u"
+            test "$u" = "nonroot:nonroot"
+          done
+      - name: compose-up mock purchase & observability smoke test
+        run: ./scripts/smoke-compose.sh
