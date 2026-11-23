@@ -105,6 +105,8 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
+> **Full plan:** [`docs/prompts/MASTER_PROMPT_M5_TO_FEATURES.md`](prompts/MASTER_PROMPT_M5_TO_FEATURES.md) is the detailed master prompt for M5 (finish notification delivery), M6 (production readiness) and five features: M7 Pay-for-Me links, M8 Split the Meter (Funding Pot), M9 AutoPower, M10 Landlord Power Desk, M11 Meterly Offline (USSD + WhatsApp). It includes the legal and founder gates (pooled funds, gift SMS consent, USSD shortcode).
+
 **M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` destination handling. Purchaser-only JSON/HTML receipts and COPY metadata are implemented; external sending remains.
 
 **M6:** `api/openapi.yaml` plus a route-coverage test, OpenTelemetry, Prometheus `/metrics`, distroless Dockerfiles.
@@ -117,6 +119,8 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - legal review: NERC and state regulators, the CBN-licensed payment money flow, NDPA 2023
 
 ## 8. Session log (newest first)
+
+- **2026-11-23: planning only.** Synced the branch to `main` (`68acdab`, PR #4 merged: partial M5). Wrote `docs/prompts/MASTER_PROMPT_M5_TO_FEATURES.md`, the complete build brief from M5 to the five distinctive features, grounded in the code as it is on `main`. No code changed. Tests not rerun (no code changes).
 
 - **Opt-in held-candidate worker:** `NOTIFICATION_CANDIDATES_SINCE` (nonzero RFC3339 timestamp) enables bounded collection; absent means off. Inclusive event-created-at cutoff applies independently of published status; a late commit whose creation time predates the cutoff is excluded. No sends or recipient consent. Keep cutoff stable across replicas and define rollout/backfill/retention before production; database does not enforce consistency. Worker now waits for background loops during shutdown. Boundary, delayed arrival, opt-in/default, log privacy and worker tests pass on memory/PostgreSQL. Supabase remains untouched.
 
