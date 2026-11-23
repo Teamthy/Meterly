@@ -429,9 +429,15 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := t.SetPayment(tx.PayFailed, "expired: provider reports unpaid after "+o.cfg.PaymentExpiry.String()); err != nil {
 				return err
 			}
+			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
+				return err
+			}
 			return emit(ctx, r, "payment.failed", t.ID, map[string]any{"reason": "expired"})
 		case providers.PaymentFailed:
 			if err := t.SetPayment(tx.PayFailed, "provider reports failure"); err != nil {
+				return err
+			}
+			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
 				return err
 			}
 			return emit(ctx, r, "payment.failed", t.ID, nil)

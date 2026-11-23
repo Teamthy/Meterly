@@ -22,6 +22,7 @@ import (
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -78,6 +79,7 @@ type Repos interface {
 	Gifts() GiftRepo
 	NotificationCandidates() NotificationCandidateRepo
 	Notifications() NotificationRepo
+	PayRequests() PayRequestRepo
 }
 
 type AuditRepo interface {
@@ -225,4 +227,21 @@ type NotificationRepo interface {
 	ListDueDeliveries(ctx context.Context, now, staleSendingBefore time.Time, limit int) ([]uuid.UUID, error)
 	ForTransaction(ctx context.Context, txnID uuid.UUID) ([]notifications.Delivery, error)
 	PurgeOldDestinationHMACs(ctx context.Context, cutoff time.Time) (int, error)
+}
+
+// PayRequestRepo persists Pay-for-Me payment requests and guest transaction
+// payers. Codes and plaintext contacts are never stored.
+type PayRequestRepo interface {
+	Create(ctx context.Context, p *payrequests.PaymentRequest) error
+	Get(ctx context.Context, id uuid.UUID) (*payrequests.PaymentRequest, error)
+	GetForUpdate(ctx context.Context, id uuid.UUID) (*payrequests.PaymentRequest, error)
+	GetByCodeHMAC(ctx context.Context, codeHMAC string) (*payrequests.PaymentRequest, error)
+	GetByCodeHMACForUpdate(ctx context.Context, codeHMAC string) (*payrequests.PaymentRequest, error)
+	Update(ctx context.Context, p *payrequests.PaymentRequest) error
+	ListForRequester(ctx context.Context, requesterID string) ([]*payrequests.PaymentRequest, error)
+	CreatePayer(ctx context.Context, payer payrequests.Payer) error
+	GetPayer(ctx context.Context, txnID uuid.UUID) (payrequests.Payer, error)
+	GetPayerForUpdate(ctx context.Context, txnID uuid.UUID) (payrequests.Payer, error)
+	GetPayerByStatusHMAC(ctx context.Context, statusHMAC string) (payrequests.Payer, error)
+	MarkPayerSlotReleased(ctx context.Context, txnID uuid.UUID) error
 }

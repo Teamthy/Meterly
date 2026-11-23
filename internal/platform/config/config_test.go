@@ -18,6 +18,9 @@ func TestDevDefaults(t *testing.T) {
 	if !c.RunWorker || c.DatabaseURL != "" || c.HTTPAddr != ":8080" || c.Orchestrator.PaymentExpiry != 2*time.Hour {
 		t.Fatalf("%+v", c)
 	}
+	if !c.FeaturePayForMe || c.PublicBaseURL != "https://meterly.ng" {
+		t.Fatalf("unexpected M7 dev defaults: FeaturePayForMe=%v PublicBaseURL=%q", c.FeaturePayForMe, c.PublicBaseURL)
+	}
 }
 
 func TestModeRequired(t *testing.T) {

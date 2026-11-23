@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M6 (OpenAPI 3.1, Prometheus `/metrics`, OTLP tracing, distroless containers & graceful shutdown).
+> **Last updated:** 2026-11-23, after M7 (F1 Pay-for-Me shareable payment request links).
 
 ## 1. What Meterly is
 
@@ -17,7 +17,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M3: Paystack payment adapter | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
 | M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3), [PR #4](https://github.com/Teamthy/Meterly/pull/4) |
 | M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ merged | [PR #5](https://github.com/Teamthy/Meterly/pull/5) |
-| M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
+| M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ merged | [PR #6](https://github.com/Teamthy/Meterly/pull/6) |
+| M7: F1 Pay-for-Me shareable payment request links | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -44,8 +45,9 @@ internal/notifications  templates (i18n catalog + gift SMS), status transitions,
   resend (+resendtest)                   email adapter + status API + Svix webhook verification
   whatsapp (+whatsapptest)               WhatsApp Cloud API (template outside 24h window) + X-Hub-Signature-256
 internal/notificationservice   outbox sink -> notification_deliveries, claim/send/UNKNOWN engine, inbound STOP, retention purge
+internal/payrequests    Pay-for-Me domain, 128-bit base32 HMAC codes, anti-phishing validation, pure-stdlib QR PNG encoder
 internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/httpapi        /v1 REST + /v1/admin (admin.go) + /v1/me/notification-preferences + /v1/notifications/inbound/{provider}
+internal/httpapi        /v1 REST + /v1/admin (admin.go) + /v1/payment-requests + /v1/public/pay/* + /v1/notifications/inbound/{provider}
 api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
 Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
@@ -53,7 +55,7 @@ internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
 internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
-migrations/0001_init.sql .. 0006_notifications.sql
+migrations/0001_init.sql .. 0008_payer_notifications.sql
 ```
 
 How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
@@ -113,16 +115,21 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M7 (next milestone — blocked on partner selection & sandbox credentials):** first real vending adapter (e.g. Buypower / VTpass / Irecharge or direct DisCo vending API), preserving strict `ErrAmbiguous` -> `UNKNOWN` -> `GetVendStatus(idempotencyKey)` reconciliation semantics.
+**M8 (next milestone):** F5 Household multi-user — verified ownership, roles (`OWNER`, `PURCHASER`, `VIEWER`), invitation links, and household purchase visibility without leaking STS tokens to non-purchasers unless explicitly allowed.
 
 **Blocked on the founder or partners (not code):**
-- a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed for M7 and before any non-dev deployment)
-- an **AMI/HES remote-credit** partner and an authorised test on a real meter (M8)
+- a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed for M10 and before any non-dev deployment)
+- an **AMI/HES remote-credit** partner and an authorised test on a real meter
 - live sandbox credentials + webhook configuration to verify Paystack, Africa's Talking, Resend and WhatsApp Cloud API against live provider sandboxes
 - legal sign-off (NDPA/NCC) before enabling `FEATURE_GIFT_SMS=true` in production
 - choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
+
+- **2026-11-23 (latest): M7 Pay-for-Me links completed (M6 merged in PR #6).**
+  - Domain & QR (`internal/payrequests`): 128-bit unpadded RFC 4648 base32 link and guest status codes indexed solely by domain-separated HMAC-SHA256 (`payrequest-code:<code>`, `payer-status-code:<code>`) with constant-time comparison, AES-256-GCM bound encryption for notes, guest emails, guest names and replay status codes, anti-phishing URL/domain rejection on notes and payer names, and a pure-stdlib ISO/IEC 18004 QR Code PNG encoder (`EncodeQRPNGBase64`).
+  - Schema & stores (`migrations/0007_payment_requests.sql`, `migrations/0008_payer_notifications.sql`, `internal/store/{memstore,pgstore}`): added `payment_requests`, `transaction_payers` (`slot_released` guard), and widened `notification_deliveries.recipient_kind` to include `'PAYER'` for token-free payment/refund receipt emails (with automatic `DUPLICATE_DESTINATION` suppression when payer == requester).
+  - Orchestrator & HTTP API (`internal/orchestrator/payrequests.go`, `internal/httpapi/payrequests.go`, `api/openapi.yaml`): implemented `POST/GET/DELETE /v1/payment-requests`, `GET /v1/public/pay/{code}`, `POST /v1/public/pay/{code}/checkout`, and `GET /v1/public/pay/status/{status_code}` behind `FEATURE_PAY_FOR_ME` (`no-store` + `Referrer-Policy: no-referrer`, per-IP + per-link rate limits, `SELECT ... FOR UPDATE` slot concurrency returning `409 LINK_ALREADY_PAID`, `409 LINK_UNUSABLE` on revoked meter grant, automatic slot reopening across all three `PayFailed` paths, and mid-checkout link expiry honouring). Verified with `-race` on both `memstore` and PostgreSQL 16.16 + `paystacktest`.
 
 - **2026-11-23 (later): M6 production readiness completed (M5 merged in PR #5).**
   - OpenAPI 3.1 (`api/openapi.yaml` + `internal/httpapi/openapi_test.go`): authored full OpenAPI 3.1.0 contract covering all 34 production routes, schemas, `bearerAuth` security scheme, and standard error envelope + all 18 error codes; added `Server.RegisteredPatterns()` and CI tests verifying bidirectional mux parity, `$ref` integrity, path parameter coverage, and AST `writeErr` code coverage (`gopkg.in/yaml.v3` justified in `docs/DECISIONS.md`).

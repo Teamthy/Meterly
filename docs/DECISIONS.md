@@ -206,4 +206,15 @@ Following the same minimal-dependency principle used for OIDC/JWKS in M4 (`inter
 
 A single multi-stage `Dockerfile` builds static (`CGO_ENABLED=0`) binaries for three targets (`api`, `worker`, `migrate`) on `gcr.io/distroless/static-debian12:nonroot` running as `nonroot:nonroot` (UID 65532), with `docker-compose.yml` running `postgres` → `migrate` → `api` out of the box and CI verifying both image builds and an end-to-end purchase smoke test.
 
+## M7: Pay-for-Me links (`internal/payrequests`, `migrations/0007_payment_requests.sql`)
+
+### Secret codes, AEAD-bound metadata, and idempotent replay
+
+1. **128-bit base32 link and status codes:** Both the shareable link code (`/p/{code}`) and the guest payer's status code (`/v1/public/pay/status/{status_code}`) are generated from 16 bytes of `crypto/rand` encoded with unpadded RFC 4648 base32 (26 uppercase characters). Database lookups use domain-separated keyed HMAC-SHA256 (`payrequest-code:<code>` and `payer-status-code:<code>`) with `UNIQUE` indexes and constant-time comparison; plaintext link codes are never stored.
+2. **Encrypted note, guest PII, and replay status code:** Request notes (`<= 140` runes, URLs forbidden to prevent phishing) are encrypted with `secure.Box.EncryptBound` bound to `payrequest-note:<request_id>`. On `transaction_payers`, the guest payer's email, optional payer name, and status code are encrypted bound to `payer-email:<txn_id>`, `payer-name:<txn_id>`, and `payer-status-code:<txn_id>` respectively so an idempotent retry of `POST /v1/public/pay/{code}/checkout` (for example after a transient PSP timeout) returns the exact same `status_code` without storing it in plaintext.
+3. **Slot reservation and automatic reopening:** `POST /v1/public/pay/{code}/checkout` locks `payment_requests` (`FOR UPDATE`) and the meter (`AuthorizeForUpdateIn` for `PURCHASE`), increments `payments_count`, and transitions `status` from `OPEN` to `PAID` when `payments_count == max_payments` (concurrent payers past capacity receive `409 LINK_ALREADY_PAID`). Every `SetPayment(PayFailed)` path in the orchestrator (`Resume` abandoned `CREATED` expiry, `checkPayment` `PENDING` expiry, and `checkPayment` definitive PSP failure) atomically marks `transaction_payers.slot_released = true`, decrements `payments_count`, and reopens a `PAID` link to `OPEN` (or `EXPIRED` if past `expires_at`, never overriding `CANCELLED`).
+4. **Pure-stdlib QR PNG generation:** To keep zero external dependencies in the production binary, `internal/payrequests/qr.go` implements ISO/IEC 18004 QR Version 1–6 Byte-mode encoding (GF(256) Reed-Solomon ECC + penalty-minimized mask selection) rendered via `image/png`.
+5. **Feature flag:** Gated behind `FEATURE_PAY_FOR_ME` (`true` by default in `MODE=dev`, `false` outside dev until rollout).
+
+
 

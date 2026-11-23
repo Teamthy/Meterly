@@ -36,6 +36,8 @@ type Limits struct {
 	WritesPerMinute       int // per user: meter validation/registration, quotes, purchases
 	AuthFailuresPerMinute int // per client IP: failed authentications
 	WebhooksPerMinute     int // per client IP
+	PublicPayPerMinute    int // per client IP: public Pay-for-Me views, checkouts and status polls
+	PublicLinkPerMinute   int // per link code: public Pay-for-Me checkout attempts
 	// ClientIPHeader, when set (e.g. "X-Forwarded-For"), takes the client IP
 	// from the right-most value of that header, which the trusted proxy
 	// appended. Leave empty when not behind a proxy.
@@ -43,22 +45,24 @@ type Limits struct {
 }
 
 type Server struct {
-	O             *orchestrator.Orchestrator
-	Auth          auth.Authenticator
-	Payments      providers.PaymentProvider
-	Notifications *notificationservice.Service
-	Metrics       *observability.Registry
-	Tracer        *observability.Tracer
-	Log           *slog.Logger
-	Ready         func(context.Context) error
-	Limits        Limits
+	O                *orchestrator.Orchestrator
+	Auth             auth.Authenticator
+	Payments         providers.PaymentProvider
+	Notifications    *notificationservice.Service
+	Metrics          *observability.Registry
+	Tracer           *observability.Tracer
+	Log              *slog.Logger
+	Ready            func(context.Context) error
+	Limits           Limits
+	PayForMeDisabled bool
+	PublicBaseURL    string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev       bool
 	DevPay    *mock.Payments
 	DevRemote *mock.RemoteCredit
 
-	writes, authFails, hooks ratelimit.Limiter
-	patterns                 []string
+	writes, authFails, hooks, publicPay, publicLink ratelimit.Limiter
+	patterns                                        []string
 }
 
 type patternMux struct {
@@ -105,6 +109,10 @@ func (s *Server) Routes() http.Handler {
 	s.writes = ratelimit.New(orDefault(s.Limits.WritesPerMinute, 30), 10)
 	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
 	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
+	pubPayRate := orDefault(s.Limits.PublicPayPerMinute, 60)
+	pubLinkRate := orDefault(s.Limits.PublicLinkPerMinute, 10)
+	s.publicPay = ratelimit.New(pubPayRate, min(pubPayRate, max(20, pubPayRate/3)))
+	s.publicLink = ratelimit.New(pubLinkRate, min(pubLinkRate, max(5, pubLinkRate/2)))
 
 	mux := &patternMux{ServeMux: http.NewServeMux()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
@@ -132,6 +140,14 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("GET /v1/me/notification-preferences", user(s.getNotificationPreferences))
 	mux.Handle("PUT /v1/me/notification-preferences", write(s.putNotificationPreferences))
+
+	mux.Handle("POST /v1/payment-requests", write(s.createPaymentRequest))
+	mux.Handle("GET /v1/payment-requests", user(s.listPaymentRequests))
+	mux.Handle("DELETE /v1/payment-requests/{id}", write(s.cancelPaymentRequest))
+
+	mux.HandleFunc("GET /v1/public/pay/{code}", s.publicPayLimited(s.getPublicPayLink))
+	mux.HandleFunc("POST /v1/public/pay/{code}/checkout", s.publicPayLimited(s.checkoutPublicPayLink))
+	mux.HandleFunc("GET /v1/public/pay/status/{status_code}", s.publicPayLimited(s.getPublicPayStatus))
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))

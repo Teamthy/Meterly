@@ -25,6 +25,8 @@ tags:
     description: Quotes, purchases, server-side payment verification, STS token retrieval, local copy tracking and receipts.
   - name: Notifications
     description: Account notification preferences and provider inbound webhooks.
+  - name: PaymentRequests
+    description: Shareable Pay-for-Me electricity request links, guest checkout and token-free payer status.
   - name: Webhooks
     description: Signature-verified payment provider webhooks.
   - name: Admin
@@ -1058,6 +1060,164 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/payment-requests:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: createPaymentRequest
+      tags: [PaymentRequests]
+      summary: Create a shareable Pay-for-Me link and QR PNG for a meter with PURCHASE access
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentRequestBody"
+      responses:
+        "201":
+          description: "Created payment request including one-time share URL and QR PNG (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPaymentRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      operationId: listPaymentRequests
+      tags: [PaymentRequests]
+      summary: List Pay-for-Me requests created by the authenticated caller
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Requester's payment requests ordered newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentRequestListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/payment-requests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PaymentRequestIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    delete:
+      operationId: cancelPaymentRequest
+      tags: [PaymentRequests]
+      summary: Cancel an open Pay-for-Me request owned by the authenticated caller
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cancelled payment request view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentRequestView"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/public/pay/{code}:
+    parameters:
+      - $ref: "#/components/parameters/PayLinkCodePath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getPublicPayLink
+      tags: [PaymentRequests]
+      summary: Inspect masked public display metadata for a Pay-for-Me link (no auth)
+      security: []
+      responses:
+        "200":
+          description: "Masked display metadata (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`; never includes address or DisCo validation customer_name)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicPayLinkView"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/public/pay/{code}/checkout:
+    parameters:
+      - $ref: "#/components/parameters/PayLinkCodePath"
+      - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: checkoutPublicPayLink
+      tags: [PaymentRequests]
+      summary: Initiate an idempotent guest checkout for a Pay-for-Me link (no auth)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicPayCheckoutRequest"
+      responses:
+        "202":
+          description: "Guest checkout initialised (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicPayCheckoutResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /v1/public/pay/status/{status_code}:
+    parameters:
+      - $ref: "#/components/parameters/PayStatusCodePath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getPublicPayStatus
+      tags: [PaymentRequests]
+      summary: Poll token-free transaction status and receipt for a guest payer (no auth)
+      security: []
+      responses:
+        "200":
+          description: "Token-free payer status and receipt (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicPayStatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1113,6 +1273,29 @@ components:
       required: true
       schema:
         type: string
+    PaymentRequestIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PayLinkCodePath:
+      name: code
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 26
+        maxLength: 26
+    PayStatusCodePath:
+      name: status_code
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 26
+        maxLength: 26
 
   responses:
     BadRequest:
@@ -1196,6 +1379,11 @@ components:
         - INVALID_SIGNATURE
         - INVALID_WEBHOOK
         - PROVIDER_UNAVAILABLE
+        - FEATURE_DISABLED
+        - LINK_ALREADY_PAID
+        - LINK_EXPIRED
+        - LINK_CANCELLED
+        - LINK_UNUSABLE
         - INTERNAL_ERROR
 
     ErrorEnvelope:
@@ -2026,3 +2214,268 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AdminProviderStatus"
+
+    PaymentRequestAmountMode:
+      type: string
+      enum: [FIXED, RANGE]
+
+    PaymentRequestStatus:
+      type: string
+      enum: [OPEN, PAID, EXPIRED, CANCELLED]
+
+    CreatePaymentRequestBody:
+      type: object
+      required: [meter_id, amount_mode]
+      additionalProperties: false
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        amount_mode:
+          $ref: "#/components/schemas/PaymentRequestAmountMode"
+        amount_minor:
+          type: integer
+          format: int64
+          description: Exact purchase amount in kobo when `amount_mode` is `FIXED`.
+        min_amount_minor:
+          type: integer
+          format: int64
+          description: Minimum purchase amount in kobo when `amount_mode` is `RANGE`.
+        max_amount_minor:
+          type: integer
+          format: int64
+          description: Maximum purchase amount in kobo when `amount_mode` is `RANGE`.
+        note:
+          type: string
+          maxLength: 140
+          description: Optional plain-text note (at most 140 characters; URLs and domains are rejected).
+        expires_in_hours:
+          type: integer
+          minimum: 1
+          maximum: 168
+          default: 72
+        max_payments:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 1
+
+    PaymentRequestView:
+      type: object
+      required:
+        - id
+        - meter_id
+        - masked_meter_number
+        - disco
+        - amount_mode
+        - currency
+        - status
+        - max_payments
+        - payments_count
+        - expires_at
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        meter_id:
+          type: string
+          format: uuid
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        amount_mode:
+          $ref: "#/components/schemas/PaymentRequestAmountMode"
+        amount_minor:
+          type: integer
+          format: int64
+        min_amount_minor:
+          type: integer
+          format: int64
+        max_amount_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        note:
+          type: string
+        status:
+          $ref: "#/components/schemas/PaymentRequestStatus"
+        max_payments:
+          type: integer
+        payments_count:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreatedPaymentRequest:
+      allOf:
+        - $ref: "#/components/schemas/PaymentRequestView"
+        - type: object
+          required: [code, share_url, qr_png_base64]
+          properties:
+            code:
+              type: string
+              minLength: 26
+              maxLength: 26
+            share_url:
+              type: string
+              format: uri
+            qr_png_base64:
+              type: string
+              contentEncoding: base64
+              contentMediaType: image/png
+
+    PaymentRequestListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentRequestView"
+
+    PublicPayLinkView:
+      type: object
+      required:
+        - requester_display_name
+        - masked_meter_number
+        - disco
+        - amount_mode
+        - fee_minor
+        - currency
+        - status
+        - max_payments
+        - payments_count
+        - expires_at
+      additionalProperties: false
+      properties:
+        requester_display_name:
+          type: string
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        amount_mode:
+          $ref: "#/components/schemas/PaymentRequestAmountMode"
+        amount_minor:
+          type: integer
+          format: int64
+        min_amount_minor:
+          type: integer
+          format: int64
+        max_amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        note:
+          type: string
+        status:
+          $ref: "#/components/schemas/PaymentRequestStatus"
+        max_payments:
+          type: integer
+        payments_count:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+
+    PublicPayCheckoutRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        amount_minor:
+          type: integer
+          format: int64
+          description: Optional when `amount_mode` is `FIXED` (must match if set); required within bounds when `RANGE`.
+        email:
+          type: string
+          format: email
+        payer_name:
+          type: string
+          maxLength: 80
+
+    PublicPayCheckoutResponse:
+      type: object
+      required:
+        - transaction_id
+        - status
+        - payment_status
+        - amount_minor
+        - fee_minor
+        - total_minor
+        - currency
+        - checkout_url
+        - status_code
+        - status_url
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        payment_status:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        checkout_url:
+          type: string
+          format: uri
+        status_code:
+          type: string
+          minLength: 26
+          maxLength: 26
+        status_url:
+          type: string
+          format: uri
+
+    PublicPayStatusResponse:
+      type: object
+      required:
+        - status
+        - payment_status
+        - vending_status
+        - delivery_status
+        - delivery_method
+        - receipt
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+        payment_status:
+          type: string
+        vending_status:
+          type: string
+        delivery_status:
+          type: string
+        delivery_method:
+          type: string
+        receipt:
+          $ref: "#/components/schemas/Receipt"
+

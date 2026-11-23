@@ -42,6 +42,9 @@ func (o *Orchestrator) Resume(ctx context.Context, id uuid.UUID) (*tx.Transactio
 			if err := t.SetPayment(tx.PayFailed, "abandoned before checkout was created"); err != nil {
 				return err
 			}
+			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, o.Now()); err != nil {
+				return err
+			}
 			return emit(ctx, r, "payment.failed", t.ID, map[string]any{"reason": "abandoned"})
 		})
 	case tx.PayPending:

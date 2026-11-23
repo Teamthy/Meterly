@@ -129,6 +129,7 @@ func (r *repos) TokenShares() store.TokenShareRepo                       { retur
 func (r *repos) Gifts() store.GiftRepo                                   { return giftRepo{r} }
 func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
 func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
+func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

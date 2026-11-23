@@ -17,6 +17,7 @@ type RecipientKind string
 const (
 	RecipientPurchaser RecipientKind = "PURCHASER"
 	RecipientGift      RecipientKind = "GIFT_RECIPIENT"
+	RecipientPayer     RecipientKind = "PAYER"
 )
 
 type Status string
