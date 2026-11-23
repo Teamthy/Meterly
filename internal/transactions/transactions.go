@@ -17,9 +17,13 @@ type PaymentState string
 type VendingState string
 type DeliveryState string
 type DeliveryMethod string
+type FundingSource string
 type Overall string
 
 const (
+	FundingPSP FundingSource = "PSP"
+	FundingPot FundingSource = "POT"
+
 	PayCreated       PaymentState = "CREATED"
 	PayPending       PaymentState = "PENDING"
 	PayConfirmed     PaymentState = "CONFIRMED"
@@ -112,6 +116,7 @@ type Transaction struct {
 	Amount         money.Amount   `json:"amount"`
 	Fee            money.Amount   `json:"fee"`
 	Total          money.Amount   `json:"total"`
+	FundingSource  FundingSource  `json:"funding_source,omitempty"`
 	Payment        PaymentState   `json:"payment_status"`
 	Vending        VendingState   `json:"vending_status"`
 	Delivery       DeliveryState  `json:"delivery_status"`
@@ -148,15 +153,40 @@ type Transaction struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// New returns a transaction in its initial state.
+// New returns a PSP-funded transaction in its initial state.
 func New(customerID string, q *Quote, isGift bool, recipient string, now time.Time) *Transaction {
 	return &Transaction{
 		ID: uuid.New(), CustomerID: customerID, MeterID: q.MeterID, QuoteID: q.ID,
 		IsGift: isGift, RecipientName: recipient,
 		Amount: q.Amount, Fee: q.Fee, Total: q.Total,
-		Payment: PayCreated, Vending: VendNotStarted, Delivery: DelNotStarted, DeliveryMethod: q.DeliveryMethod,
+		FundingSource: FundingPSP,
+		Payment:       PayCreated, Vending: VendNotStarted, Delivery: DelNotStarted, DeliveryMethod: q.DeliveryMethod,
 		NextCheckAt: now, CreatedAt: now, UpdatedAt: now,
 	}
+}
+
+// NewPotFunded returns a POT-funded transaction whose payment is already
+// CONFIRMED inside the surrounding pot-allocation DB transaction. It carries
+// no PSP reference; any vend-failure refund returns money to POT_FUNDS_HELD.
+func NewPotFunded(customerID string, q *Quote, now time.Time) *Transaction {
+	return &Transaction{
+		ID: uuid.New(), CustomerID: customerID, MeterID: q.MeterID, QuoteID: q.ID,
+		Amount: q.Amount, Fee: q.Fee, Total: q.Total,
+		FundingSource: FundingPot,
+		Payment:       PayConfirmed, Vending: VendNotStarted, Delivery: DelNotStarted, DeliveryMethod: q.DeliveryMethod,
+		History: []Event{{
+			At: now.UTC(), Dimension: "payment", From: "", To: string(PayConfirmed), Note: "funded from pot allocation",
+		}},
+		NextCheckAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+// EffectiveFundingSource returns FundingPSP when FundingSource was left unset.
+func (t *Transaction) EffectiveFundingSource() FundingSource {
+	if t.FundingSource == "" {
+		return FundingPSP
+	}
+	return t.FundingSource
 }
 
 // Status derives the overall status from the three dimensions.

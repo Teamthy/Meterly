@@ -223,9 +223,10 @@ func (c *Client) VerifyPayment(ctx context.Context, ref string) (providers.Payme
 }
 
 type refundData struct {
-	ID     int64  `json:"id"`
-	Status string `json:"status"`
-	Amount int64  `json:"amount"`
+	ID           int64  `json:"id"`
+	Status       string `json:"status"`
+	Amount       int64  `json:"amount"`
+	MerchantNote string `json:"merchant_note"`
 }
 
 func (c *Client) RefundPayment(ctx context.Context, req providers.RefundRequest) (string, error) {
@@ -234,13 +235,23 @@ func (c *Client) RefundPayment(ctx context.Context, req providers.RefundRequest)
 		return "", err
 	}
 	// Idempotency: Paystack has no idempotency key for refunds, so look for
-	// an existing refund on this transaction before creating one.
+	// an existing non-failed refund matching our merchant_note (or amount
+	// when merchant_note was not echoed) before creating one.
 	var existing []refundData
 	if err := c.call(ctx, http.MethodGet, "/refund?transaction="+strconv.FormatInt(d.ID, 10), nil, &existing); err != nil {
 		return "", err
 	}
 	for _, r := range existing {
-		if r.Status != "failed" {
+		if r.Status == "failed" {
+			continue
+		}
+		if r.MerchantNote != "" {
+			if r.MerchantNote == req.Reference {
+				return strconv.FormatInt(r.ID, 10), nil
+			}
+			continue
+		}
+		if r.Amount == req.Amount.Minor {
 			return strconv.FormatInt(r.ID, 10), nil
 		}
 	}

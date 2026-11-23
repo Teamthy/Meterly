@@ -22,6 +22,7 @@ import (
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -55,8 +56,14 @@ type Store struct {
 	deliveryByKey     map[string]uuid.UUID
 	payReqs           map[uuid.UUID]*payrequests.PaymentRequest
 	payReqByCodeHMAC  map[string]uuid.UUID
-	payers            map[uuid.UUID]payrequests.Payer
-	payerByStatusHMAC map[string]uuid.UUID
+	payers             map[uuid.UUID]payrequests.Payer
+	payerByStatusHMAC  map[string]uuid.UUID
+	pots               map[uuid.UUID]*pots.Pot
+	potByCodeHMAC      map[string]uuid.UUID
+	contribs           map[uuid.UUID]*pots.Contribution
+	contribByPayRef    map[string]uuid.UUID
+	allocs             map[uuid.UUID]*pots.Allocation
+	allocByTxn         map[uuid.UUID]uuid.UUID
 }
 
 func New() *Store {
@@ -73,6 +80,12 @@ func New() *Store {
 		payReqByCodeHMAC:  map[string]uuid.UUID{},
 		payers:            map[uuid.UUID]payrequests.Payer{},
 		payerByStatusHMAC: map[string]uuid.UUID{},
+		pots:              map[uuid.UUID]*pots.Pot{},
+		potByCodeHMAC:     map[string]uuid.UUID{},
+		contribs:          map[uuid.UUID]*pots.Contribution{},
+		contribByPayRef:   map[string]uuid.UUID{},
+		allocs:            map[uuid.UUID]*pots.Allocation{},
+		allocByTxn:        map[uuid.UUID]uuid.UUID{},
 	}
 }
 
@@ -158,6 +171,7 @@ func (r *repos) Gifts() store.GiftRepo                                   { retur
 func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
 func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
 func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
+func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
