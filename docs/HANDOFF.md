@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-21, after M4 (auth, admin API, audit, rate limits).
+> **Last updated:** 2026-11-23, after M5 (notification delivery, verified contact capture, Africa's Talking / Resend / WhatsApp adapters, preferences & inbound STOP).
 
 ## 1. What Meterly is
 
@@ -15,9 +15,9 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M1: PostgreSQL persistence, atomic units of work | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
 | M2: api/worker split, Resume/reconciliation, config | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
 | M3: Paystack payment adapter | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
-| M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) (same branch) |
-| M5: notifications, gifting delivery, token sharing, receipts | ⏳ next | — |
-| M6: OpenAPI, metrics/tracing, Dockerfile | ⏳ | — |
+| M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3), [PR #4](https://github.com/Teamthy/Meterly/pull/4) |
+| M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
+| M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles | ⏳ next | — |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -39,13 +39,18 @@ internal/providers      Payment / Vending / RemoteCredit contracts
   mock                  deterministic mocks (behaviour keyed by meter number; see README)
   paystack (+paystacktest fake)
 internal/transactions meters ledger events idempotency money secure   domain
-internal/httpapi        /v1 REST + /v1/admin (admin.go); internal/app wiring; internal/outbox publisher
-internal/auth           DevAuth + OIDC (stdlib JWT/JWKS), roles, MFA gate
+internal/notifications  templates (i18n catalog + gift SMS), status transitions, transport contracts
+  africastalking (+africastalkingtest)   SMS adapter + HMAC inbound STOP
+  resend (+resendtest)                   email adapter + status API + Svix webhook verification
+  whatsapp (+whatsapptest)               WhatsApp Cloud API (template outside 24h window) + X-Hub-Signature-256
+internal/notificationservice   outbox sink -> notification_deliveries, claim/send/UNKNOWN engine, inbound STOP, retention purge
+internal/httpapi        /v1 REST + /v1/admin (admin.go) + /v1/me/notification-preferences + /v1/notifications/inbound/{provider}
+internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
 internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
 internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
-migrations/0001_init.sql, 0002_persistence.sql
+migrations/0001_init.sql .. 0006_notifications.sql
 ```
 
 How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
@@ -105,18 +110,23 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M5 (next session):** notification senders (SMS, email, WhatsApp; mocks first) consuming outbox events, deduped by event ID. Token delivery to gift recipients (`gift_transactions` contact encrypted). `token_shares` destination handling. Purchaser-only JSON/HTML receipts and COPY metadata are implemented; external sending remains.
-
-**M6:** `api/openapi.yaml` plus a route-coverage test, OpenTelemetry, Prometheus `/metrics`, distroless Dockerfiles.
+**M6 (next session):** `api/openapi.yaml` (OpenAPI 3.1) plus a route-coverage test against `httpapi.Server.Routes()`, Prometheus `/metrics` (internal port or admin-gated), OpenTelemetry spans with correlation IDs (zero sensitive attributes), structured JSON logging hardening, and multi-stage distroless Dockerfiles (`deploy/Dockerfile.api`, `deploy/Dockerfile.worker`, `deploy/Dockerfile.migrate`).
 
 **Blocked on the founder or partners (not code):**
-- a real **vending** partner/aggregator and its API docs (needed before any non-dev deployment)
-- an **AMI/HES remote-credit** partner and an authorised test on a real meter
-- a Paystack sandbox key plus webhook configuration for a live sandbox test
-- choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with a roles claim and MFA for staff, so OIDC can be tested end to end
-- legal review: NERC and state regulators, the CBN-licensed payment money flow, NDPA 2023
+- a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed for M7 and before any non-dev deployment)
+- an **AMI/HES remote-credit** partner and an authorised test on a real meter (M8)
+- live sandbox credentials + webhook configuration to verify Paystack, Africa's Talking, Resend and WhatsApp Cloud API against live provider sandboxes
+- legal sign-off (NDPA/NCC) before enabling `FEATURE_GIFT_SMS=true` in production
+- choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
+
+- **2026-11-23: M5 notification delivery completed.**
+  - Schema (`migrations/0006_notifications.sql`): dropped unused plaintext `users.email`/`users.phone` columns and indexes; added bound-encrypted contact columns (`email_ciphertext`, `email_hmac`, `email_masked`, `email_key_version`, `phone_ciphertext`, `phone_hmac`, `phone_masked`, `phone_key_version`, `display_name`) on `users`; created `notification_preferences`, `opt_outs`, `whatsapp_service_windows`, and `notification_deliveries` (`UNIQUE (event_id, recipient_kind, channel)`). Kept `notification_candidates` (`0005`) intact.
+  - Contact capture & preferences: `auth.OIDC` captures `email` / `phone_number` strictly when `email_verified === true` / `phone_number_verified === true`; `httpapi` seals contacts via `EncryptBound` (`"user-email:"+uid`, `"user-phone:"+uid`). Added `GET/PUT /v1/me/notification-preferences` (`sms=true, email=true, whatsapp=false` defaults).
+  - Delivery engine (`internal/notificationservice`): atomic outbox dispatch via `outbox.Publisher` (`store.WithRepos`), explicit `PENDING -> SENDING` claim before external calls, send-time opt-out/preference re-check (`-> SUPPRESSED`), `UNKNOWN` handling on timeout/5xx/lost response (status API reconciliation on Resend; zero auto-resend of token-bearing gift SMS; single retry on non-token `UNKNOWN`; `30s, 2m, 10m, 1h` backoff up to 5 attempts on retryable errors), gift-to-self phone dedupe (`DUPLICATE_DESTINATION`), and configurable 12-month `destination_hmac` retention purge.
+  - Provider adapters & fakes: `africastalking` + `africastalkingtest`, `resend` + `resendtest`, and `whatsapp` + `whatsapptest` (enforcing pre-approved templates outside the 24h customer-service window and Meta `131047`), plus `GET/POST /v1/notifications/inbound/{provider}` signature-verified `STOP`/complaint handling and audited redacted `notifications` array on `GET /v1/admin/transactions/{id}` (`ResourceType: "notification_deliveries"`).
+  - Verified: `gofmt`, `go vet ./...`, `go test -race -count=1 ./...` on memory + PostgreSQL 16.16, 3× concurrency repeats, twice-idempotent `cmd/migrate` run, and clean `meterly_*` DB check. Adapters verified against stateful fakes only (no live provider calls; Supabase untouched).
 
 - **Opt-in held-candidate worker:** `NOTIFICATION_CANDIDATES_SINCE` (nonzero RFC3339 timestamp) enables bounded collection; absent means off. Inclusive event-created-at cutoff applies independently of published status; a late commit whose creation time predates the cutoff is excluded. No sends or recipient consent. Keep cutoff stable across replicas and define rollout/backfill/retention before production; database does not enforce consistency. Worker now waits for background loops during shutdown. Boundary, delayed arrival, opt-in/default, log privacy and worker tests pass on memory/PostgreSQL. Supabase remains untouched.
 
