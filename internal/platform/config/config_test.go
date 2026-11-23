@@ -135,3 +135,22 @@ func TestNotificationProvidersAndGiftSMSFlag(t *testing.T) {
 		t.Fatalf("missing WhatsApp credentials must fail: %v", err)
 	}
 }
+
+func TestObservabilityConfig(t *testing.T) {
+	c, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MetricsAddr != ":9090" || c.MetricsRefreshInterval != time.Minute || c.OTelEndpoint != "" {
+		t.Fatalf("unexpected observability defaults: %+v", c)
+	}
+
+	offCfg, err := Load(env(map[string]string{"MODE": "dev", "METRICS_ADDR": "off", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318"}))
+	if err != nil || offCfg.MetricsAddr != "" || offCfg.OTelEndpoint != "http://127.0.0.1:4318" {
+		t.Fatalf("off metrics / otel endpoint: err=%v cfg=%+v", err, offCfg)
+	}
+
+	if _, err := Load(env(map[string]string{"MODE": "dev", "PORT": "8080", "METRICS_ADDR": ":8080"})); err == nil || !strings.Contains(err.Error(), "METRICS_ADDR") {
+		t.Fatalf("metrics sharing public HTTP port must fail: %v", err)
+	}
+}

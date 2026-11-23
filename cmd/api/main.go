@@ -1,12 +1,11 @@
-// Command api serves the Meterly HTTP API. With RUN_WORKER=true (the
-// default in MODE=dev) it also runs the resume and outbox loops in-process.
+// Command api serves the Meterly HTTP API and internal Prometheus metrics
+// endpoint. With RUN_WORKER=true (the default in MODE=dev) it also runs the
+// resume, outbox and notification loops in-process.
 package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -35,20 +34,8 @@ func main() {
 	}
 	defer a.Close()
 
-	if cfg.RunWorker {
-		go a.RunWorker(ctx)
+	if err := a.Serve(ctx); err != nil {
+		log.Error("serve failed", "err", err)
+		os.Exit(1)
 	}
-
-	hs := &http.Server{Addr: cfg.HTTPAddr, Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		log.Info("listening", "addr", cfg.HTTPAddr, "mode", cfg.Mode, "worker", cfg.RunWorker)
-		if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("server", "err", err)
-			stop()
-		}
-	}()
-	<-ctx.Done()
-	sctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	_ = hs.Shutdown(sctx)
 }

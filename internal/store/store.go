@@ -46,12 +46,21 @@ var (
 	ErrDuplicate = errors.New("store: duplicate")
 )
 
+type MetricsSnapshot struct {
+	TransactionsByStatus map[tx.Overall]int64
+	ManualReviewOpen     int64
+	OutboxLagSeconds     float64
+}
+
 type Store interface {
 	// InTx runs fn in a single database transaction. If fn returns an
 	// error, every write made through the passed Repos is rolled back.
 	InTx(ctx context.Context, fn func(Repos) error) error
 	// Repos returns auto-commit repositories for reads and single writes.
 	Repos() Repos
+	// MetricsSnapshot returns aggregate operational gauges without exposing
+	// any user, meter or transaction identifiers.
+	MetricsSnapshot(ctx context.Context, now time.Time) (MetricsSnapshot, error)
 	Close()
 }
 

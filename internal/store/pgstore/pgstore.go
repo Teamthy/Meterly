@@ -11,12 +11,14 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/store"
+	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
 // DB is satisfied by *pgxpool.Pool and pgx.Tx.
@@ -39,6 +41,59 @@ func New(pool *pgxpool.Pool, environment string) *Store {
 
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 func (s *Store) Close()              { s.pool.Close() }
+
+func (s *Store) MetricsSnapshot(ctx context.Context, now time.Time) (store.MetricsSnapshot, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			CASE
+				WHEN review_reason <> '' THEN 'MANUAL_REVIEW'
+				WHEN payment_status IN ('CREATED', 'PENDING') THEN 'PAYMENT_PENDING'
+				WHEN payment_status = 'FAILED' THEN 'FAILED'
+				WHEN payment_status = 'REFUND_PENDING' THEN 'REFUND_PENDING'
+				WHEN payment_status = 'REFUNDED' THEN 'REFUNDED'
+				WHEN vending_status IN ('NOT_STARTED', 'PENDING') THEN 'VENDING_PENDING'
+				WHEN vending_status = 'UNKNOWN' THEN 'RECONCILIATION_PENDING'
+				WHEN vending_status = 'FAILED' THEN 'MANUAL_REVIEW'
+				WHEN delivery_status = 'CONFIRMED' THEN 'COMPLETED'
+				WHEN delivery_status = 'FAILED' THEN 'MANUAL_REVIEW'
+				WHEN delivery_status = 'UNKNOWN' THEN 'RECONCILIATION_PENDING'
+				ELSE 'DELIVERY_PENDING'
+			END AS overall_status,
+			count(*)
+		FROM electricity_transactions
+		GROUP BY 1`)
+	if err != nil {
+		return store.MetricsSnapshot{}, err
+	}
+	defer rows.Close()
+
+	byStatus := make(map[tx.Overall]int64)
+	for rows.Next() {
+		var status string
+		var cnt int64
+		if err := rows.Scan(&status, &cnt); err != nil {
+			return store.MetricsSnapshot{}, err
+		}
+		byStatus[tx.Overall(status)] = cnt
+	}
+	if err := rows.Err(); err != nil {
+		return store.MetricsSnapshot{}, err
+	}
+
+	var lag float64
+	if err := s.pool.QueryRow(ctx, `
+		SELECT coalesce(GREATEST(EXTRACT(EPOCH FROM ($1::timestamptz - min(created_at))), 0), 0)::float8
+		FROM outbox_events
+		WHERE published_at IS NULL`, now.UTC()).Scan(&lag); err != nil {
+		return store.MetricsSnapshot{}, err
+	}
+
+	return store.MetricsSnapshot{
+		TransactionsByStatus: byStatus,
+		ManualReviewOpen:     byStatus[tx.OverallManualReview],
+		OutboxLagSeconds:     lag,
+	}, nil
+}
 
 func (s *Store) InTx(ctx context.Context, fn func(store.Repos) error) error {
 	return pgx.BeginFunc(ctx, s.pool, func(t pgx.Tx) error { return fn(&repos{s: s, db: t, inTx: true}) })

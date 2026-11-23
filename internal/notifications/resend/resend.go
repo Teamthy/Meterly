@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 )
 
@@ -128,6 +129,7 @@ func (c *Client) SendDelivery(ctx context.Context, req notifications.SendRequest
 	if req.IdempotencyKey != "" {
 		hreq.Header.Set("Idempotency-Key", req.IdempotencyKey)
 	}
+	observability.InjectHTTP(ctx, hreq.Header)
 
 	res, err := c.http.Do(hreq)
 	if err != nil {
@@ -176,6 +178,7 @@ func (c *Client) CheckDeliveryStatus(ctx context.Context, _ string, providerRef 
 	}
 	hreq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	hreq.Header.Set("Accept", "application/json")
+	observability.InjectHTTP(ctx, hreq.Header)
 
 	res, err := c.http.Do(hreq)
 	if err != nil {

@@ -205,6 +205,17 @@ func (t *Tracer) StartSpan(ctx context.Context, name string, kind SpanKind, attr
 	return nextCtx, sp
 }
 
+func (s *Span) SetName(name string) {
+	if s == nil || name == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.ended {
+		s.name = name
+	}
+}
+
 func (s *Span) SetAttr(a Attr) {
 	if s == nil {
 		return

@@ -29,6 +29,7 @@ import (
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
@@ -101,6 +102,7 @@ type Orchestrator struct {
 	vending        providers.VendingProvider
 	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
 	notifProviders []string
+	metrics        *observability.Registry
 	log            *slog.Logger
 	Now            func() time.Time
 }
@@ -116,6 +118,8 @@ func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
 
 func (o *Orchestrator) Store() store.Store { return o.st }
 func (o *Orchestrator) Box() *secure.Box   { return o.box }
+
+func (o *Orchestrator) SetMetrics(m *observability.Registry) { o.metrics = m }
 
 // RegisterNotificationProviders makes configured notification providers visible
 // to operator status and kill-switch endpoints.

@@ -32,14 +32,15 @@ var (
 	httpDurationBuckets     = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 	providerDurationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20}
 	knownTxnStatuses        = []string{
-		"AWAITING_PAYMENT",
-		"VENDING",
-		"DELIVERING",
-		"COMPLETED",
+		"PAYMENT_PENDING",
+		"FAILED",
+		"VENDING_PENDING",
+		"DELIVERY_PENDING",
+		"RECONCILIATION_PENDING",
+		"MANUAL_REVIEW",
 		"REFUND_PENDING",
 		"REFUNDED",
-		"FAILED",
-		"MANUAL_REVIEW",
+		"COMPLETED",
 	}
 )
 
