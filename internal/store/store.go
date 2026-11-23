@@ -21,9 +21,24 @@ import (
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/notificationintents"
+	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
+
+type reposCtxKey struct{}
+
+// WithRepos binds transaction-scoped repositories to ctx so in-transaction
+// outbox consumers can write atomically in the surrounding InTx.
+func WithRepos(ctx context.Context, r Repos) context.Context {
+	return context.WithValue(ctx, reposCtxKey{}, r)
+}
+
+// ReposFromContext retrieves transaction-scoped repositories attached via WithRepos.
+func ReposFromContext(ctx context.Context) (Repos, bool) {
+	r, ok := ctx.Value(reposCtxKey{}).(Repos)
+	return r, ok && r != nil
+}
 
 var (
 	ErrNotFound  = errors.New("store: not found")
@@ -53,6 +68,7 @@ type Repos interface {
 	TokenShares() TokenShareRepo
 	Gifts() GiftRepo
 	NotificationCandidates() NotificationCandidateRepo
+	Notifications() NotificationRepo
 }
 
 type AuditRepo interface {
@@ -83,6 +99,12 @@ type UserRepo interface {
 	// EnsureByExternalID maps an identity-provider subject to an internal
 	// user ID (UUID string), creating the user on first sight.
 	EnsureByExternalID(ctx context.Context, externalID string) (string, error)
+	// UpsertContacts updates encrypted verified contact fields on an existing
+	// user. Non-empty fields replace existing values; empty fields leave the
+	// stored value untouched.
+	UpsertContacts(ctx context.Context, c notifications.UserContacts) error
+	// Contacts returns the user's encrypted contact record, or ErrNotFound.
+	Contacts(ctx context.Context, userID string) (notifications.UserContacts, error)
 }
 
 type MeterRepo interface {
@@ -175,4 +197,23 @@ type NotificationCandidateRepo interface {
 	Claim(context.Context, time.Time, int) ([]notificationintents.Intent, error)
 	Record(context.Context, notificationintents.Intent) error
 	Get(context.Context, uuid.UUID) (notificationintents.Intent, error)
+}
+
+// NotificationRepo persists notification preferences, global opt-outs,
+// WhatsApp service windows and delivery job metadata (never message bodies or
+// plaintext destinations).
+type NotificationRepo interface {
+	GetPreferences(ctx context.Context, userID string) (notifications.Preferences, error)
+	SetPreferences(ctx context.Context, userID string, p notifications.Preferences, now time.Time) error
+	AddOptOut(ctx context.Context, o notifications.OptOut) (inserted bool, err error)
+	IsOptedOut(ctx context.Context, destinationHMAC string, ch notifications.Channel) (bool, error)
+	RecordWhatsAppInbound(ctx context.Context, destinationHMAC string, at time.Time) error
+	HasActiveWhatsAppWindow(ctx context.Context, destinationHMAC string, now time.Time) (bool, error)
+	CreateDelivery(ctx context.Context, d *notifications.Delivery) (inserted bool, err error)
+	GetDelivery(ctx context.Context, id uuid.UUID) (*notifications.Delivery, error)
+	GetDeliveryForUpdate(ctx context.Context, id uuid.UUID) (*notifications.Delivery, error)
+	UpdateDelivery(ctx context.Context, d *notifications.Delivery) error
+	ListDueDeliveries(ctx context.Context, now, staleSendingBefore time.Time, limit int) ([]uuid.UUID, error)
+	ForTransaction(ctx context.Context, txnID uuid.UUID) ([]notifications.Delivery, error)
+	PurgeOldDestinationHMACs(ctx context.Context, cutoff time.Time) (int, error)
 }

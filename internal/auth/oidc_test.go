@@ -218,15 +218,54 @@ func TestDevAuthRoles(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Header.Set("Authorization", "Bearer admin:ola")
 	p, err := auth.DevAuth{}.Authenticate(r)
-	if err != nil || !p.Has(auth.RoleAdmin) || !p.Has(auth.RoleOperator) {
+	if err != nil || !p.Has(auth.RoleAdmin) || !p.Has(auth.RoleOperator) || !p.DevMode || p.DisplayName != "ola" {
 		t.Fatalf("%+v %v", p, err)
 	}
 	r.Header.Set("Authorization", "Bearer ada")
-	if p, _ := (auth.DevAuth{}).Authenticate(r); p.Has(auth.RoleOperator) {
-		t.Fatal("plain subject must not be staff")
+	r.Header.Set("X-Dev-Verified-Email", " ADA@Example.com ")
+	r.Header.Set("X-Dev-Verified-Phone", "+2348012345678")
+	r.Header.Set("X-Dev-Display-Name", "Ada")
+	if p, _ := (auth.DevAuth{}).Authenticate(r); p.Has(auth.RoleOperator) || p.VerifiedEmail != "ada@example.com" || p.VerifiedPhone != "+2348012345678" || p.DisplayName != "Ada" {
+		t.Fatalf("unexpected dev principal: %+v", p)
 	}
 	r.Header.Del("Authorization")
 	if _, err := (auth.DevAuth{}).Authenticate(r); err == nil {
 		t.Fatal("missing token")
+	}
+}
+
+func TestOIDCVerifiedContactClaims(t *testing.T) {
+	p := newIDP(t)
+	v := p.verifier(t)
+
+	// Verified email + verified E.164 phone + display name are captured.
+	pr, err := v.Verify(ctx, p.sign("RS256", "rsa-1", claims(map[string]any{
+		"email":                 " Ada@Example.com ",
+		"email_verified":        true,
+		"phone_number":          "+2348012345678",
+		"phone_number_verified": true,
+		"name":                  "Ada Lovelace",
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.VerifiedEmail != "ada@example.com" || pr.VerifiedPhone != "+2348012345678" || pr.DisplayName != "Ada Lovelace" || pr.DevMode {
+		t.Fatalf("got %+v", pr)
+	}
+
+	// Unverified, missing, string-"true", or malformed contacts are never captured.
+	for _, tc := range []map[string]any{
+		{"email": "ada@example.com", "email_verified": false, "phone_number": "+2348012345678", "phone_number_verified": false},
+		{"email": "ada@example.com", "phone_number": "+2348012345678"},
+		{"email": "ada@example.com", "email_verified": "true", "phone_number": "+2348012345678", "phone_number_verified": "true"},
+		{"email": "not-an-email", "email_verified": true, "phone_number": "08012345678", "phone_number_verified": true},
+	} {
+		got, err := v.Verify(ctx, p.sign("RS256", "rsa-1", claims(tc)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.VerifiedEmail != "" || got.VerifiedPhone != "" {
+			t.Fatalf("unverified or invalid claim captured for %v: %+v", tc, got)
+		}
 	}
 }

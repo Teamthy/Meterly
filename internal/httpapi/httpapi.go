@@ -21,6 +21,7 @@ import (
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/meters"
+	"github.com/teamthy/meterly/internal/notificationservice"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
@@ -41,12 +42,13 @@ type Limits struct {
 }
 
 type Server struct {
-	O        *orchestrator.Orchestrator
-	Auth     auth.Authenticator
-	Payments providers.PaymentProvider
-	Log      *slog.Logger
-	Ready    func(context.Context) error
-	Limits   Limits
+	O             *orchestrator.Orchestrator
+	Auth          auth.Authenticator
+	Payments      providers.PaymentProvider
+	Notifications *notificationservice.Service
+	Log           *slog.Logger
+	Ready         func(context.Context) error
+	Limits        Limits
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev       bool
 	DevPay    *mock.Payments
@@ -103,7 +105,12 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token/shares", user(s.listTokenCopies))
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/receipt", user(s.receipt))
 
+	mux.Handle("GET /v1/me/notification-preferences", user(s.getNotificationPreferences))
+	mux.Handle("PUT /v1/me/notification-preferences", write(s.putNotificationPreferences))
+
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
+	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))
+	mux.HandleFunc("POST /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInbound))
 
 	s.adminRoutes(mux)
 
@@ -185,6 +192,10 @@ func (s *Server) authed(role auth.Role, isWrite bool) func(http.HandlerFunc) htt
 			}
 			uid, err := s.O.Store().Repos().Users().EnsureByExternalID(r.Context(), p.Subject)
 			if err != nil {
+				s.mapErr(w, r, err)
+				return
+			}
+			if err := s.captureVerifiedContacts(r.Context(), uid, p); err != nil {
 				s.mapErr(w, r, err)
 				return
 			}

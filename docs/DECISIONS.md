@@ -128,3 +128,52 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - Collection is off unless `NOTIFICATION_CANDIDATES_SINCE` is set to a nonzero RFC3339 timestamp with timezone; invalid values fail startup. Each worker records at most 100 candidates per outbox tick; no senders are invoked. Worker shutdown waits for all loops before the store is closed.
 - The cutoff is inclusive on outbox `created_at`, not commit time. Events created earlier but committed later are intentionally excluded; eligible late commits are eventually collected because there is no high-water cursor. Define a safe rollout window, clock discipline and backfill policy before using this in production.
 - All replicas must use the same stable cutoff. This is an operational requirement, not enforced in the database: moving it forward can skip uncollected events; moving it backward or running a replica with an older value can add historical candidates. Held records are not deliverable. Assess event volumes, query plans and retention before enabling; the outbox FK prevents deletion of referenced events.
+
+
+## Notification delivery, consent and provider adapters (M5)
+
+### Contact capture and encryption
+
+- **Verified OIDC claims only.** Under `AUTH_MODE=oidc`, `users` contact columns are populated exclusively when `email_verified === true` (strict boolean) or `phone_number_verified === true` (strict boolean, E.164). Unverified OIDC claims and checkout emails passed on `POST /v1/electricity/transactions` are never treated as verified notification destinations.
+- **Dev simulation.** Under `AUTH_MODE=dev` (`MODE=dev` only), callers may simulate verified OIDC claims via `X-Dev-Verified-Email`, `X-Dev-Verified-Phone` and `X-Dev-Display-Name`, and `POST /v1/electricity/transactions` seeds the user's encrypted email if none is stored yet so local mock purchases produce notification deliveries out of the box.
+- **No plaintext contacts at rest.** Migration `0006_notifications.sql` drops the unused plaintext `users.email` and `users.phone` columns and adds AES-GCM bound ciphertexts (`user-email:<user_id>`, `user-phone:<user_id>`), domain-separated HMACs (`destination:<normalised>`) for constant-time lookup and opt-out matching, and masked display strings (`a***@example.com`, `**********5678`).
+
+### Preferences, consent and global opt-outs
+
+- **Account-holder defaults:** transactional notifications default to `sms: true`, `email: true`, `whatsapp: false`. WhatsApp defaults to `false` because Meta's WhatsApp Business Policy requires explicit user opt-in before sending business-initiated templates. Preferences are stored per `(user_id, channel)` in `notification_preferences` and updated atomically with an audit event via `PUT /v1/me/notification-preferences`.
+- **Global `opt_outs` keyed by `destination_hmac`:** inbound `STOP` (and `STOPALL` / `UNSUBSCRIBE`, case-insensitive) on SMS, WhatsApp or Resend email complaints/inbound inserts `destination_hmac` into `opt_outs`. Because the key is the destination HMAC rather than a `user_id`, non-users such as gift recipients can opt out permanently.
+- **Gift-recipient SMS gate:** a `GIFT_RECIPIENT` SMS is created and sent only on `token.available` when all three hold: (1) `FEATURE_GIFT_SMS=true` (defaults to `true` in `MODE=dev`, `false` outside dev until NDPA legal sign-off), (2) `gift_transactions.notification_requested=true`, and (3) the recipient's `destination_hmac` is not in `opt_outs`. All three conditions are checked at job creation and re-verified under lock at send time.
+- **Gift to the buyer's own phone:** if a gift purchase specifies the purchaser's own verified phone number and gift SMS is eligible, the redundant generic `PURCHASER` `SMS` job for `token.available` is suppressed (`DUPLICATE_DESTINATION`) so the phone receives only the single token-bearing gift SMS (and `MockSender`'s `(event, channel, destination)` idempotency digest never sees two conflicting bodies).
+
+### Delivery state machine (`notification_deliveries`)
+
+Deduplication is enforced in PostgreSQL and `memstore` by `UNIQUE (event_id, recipient_kind, channel)`. Rendered bodies, tokens and plaintext destinations are never stored in `notification_deliveries`; destinations and tokens are decrypted in worker memory at send time and never logged.
+
+| From | To | Trigger & rules |
+|---|---|---|
+| *(new)* | `PENDING` | Outbox dispatcher consumes an allowlisted event (`payment.confirmed`, `token.available`, `electricity.delivery.confirmed`, `electricity.delivery.failed`, `electricity.delivery.unknown`, `electricity.refund.completed`) for an eligible channel. |
+| *(new)* / `PENDING` | `SUPPRESSED` | Destination is in `opt_outs`, channel preference is disabled, `FEATURE_GIFT_SMS` was turned off, verified contact was removed, or gift-to-self duplicate SMS. Checked again at send time before any provider call. |
+| `PENDING` | `FAILED` | Destination fails format validation before send (`INVALID_DESTINATION`). |
+| `PENDING` | `SENDING` | Explicit worker claim in `InTx` (`SELECT … FOR UPDATE`), incrementing `attempts` and setting a lease on `next_attempt_at`. Only the worker whose commit set `claimed=true` calls the provider. |
+| `SENDING` | `SENT` | Provider accepted the message; records `provider_ref` and `sent_at`. |
+| `SENDING` | `PENDING` | Retryable provider failure while `attempts < 5`; scheduled with backoff `30s`, `2m`, `10m`, `1h`. |
+| `SENDING` | `FAILED` | Permanent 4xx rejection from the provider, or retryable failure on attempt 5. |
+| `SENDING` | `UNKNOWN` | Timeout / network error / 5xx (`providers.ErrAmbiguous`), or recovery of a stale `SENDING` claim after a worker crash. |
+| `UNKNOWN` | `SENT` / `FAILED` | Provider status API (`StatusChecker`) confirms final delivery or failure. |
+| `UNKNOWN` | `SENDING` | Non-token messages only, when the provider has no status record (or no status API) and `attempts == 1` (at most one retry after backoff). **Token-bearing messages (`gift_token_sms`) are never auto-resent from `UNKNOWN`** unless a status API confirms the provider has no record of the send. |
+
+### Outbox dispatcher
+
+- `outbox.Dispatcher` fans each claimed outbox event out to registered `Sink`s (the notification job consumer plus `LogSink`) inside a per-event transaction carrying `store.Repos` in context. Each event's `notification_deliveries` inserts and `MarkPublished` commit atomically without nested-transaction deadlocks, while standalone/replayed calls to `ConsumeEvent` remain idempotent via `UNIQUE (event_id, recipient_kind, channel)`. `notification_candidates` remains strictly held metadata and is never read by the sender.
+
+### Provider adapters and inbound webhooks
+
+- **Africa's Talking SMS (`internal/notifications/africastalking`):** implements `POST /version1/messaging` (`apiKey` header, form-encoded) per `https://developers.africastalking.com/docs/sms/sending/bulk`. Inbound `STOP` callbacks (`POST /v1/notifications/inbound/africastalking`) require an HMAC-SHA256 signature in `X-AfricasTalking-Signature` keyed with `AT_WEBHOOK_SECRET` (supplied by the edge/API gateway proxy when connecting live Africa's Talking, since AT's raw form callback carries no built-in HMAC). Africa's Talking has no outbound lookup-by-client-key API, so lost responses stay `UNKNOWN` for token SMS.
+- **Resend Email (`internal/notifications/resend`):** implements `POST /emails` with `Idempotency-Key: notif:<delivery_id>` and `GET /emails/{id}` status queries per `https://resend.com/docs/api-reference/emails/send-email`. Inbound/suppression webhooks (`POST /v1/notifications/inbound/resend`) verify Svix HMAC-SHA256 headers (`svix-id`, `svix-timestamp`, `svix-signature` with ±5m replay tolerance) per `https://docs.svix.com/receiving/verifying-payloads/how-manual`.
+- **WhatsApp Cloud API (`internal/notifications/whatsapp`):** implements `POST /{version}/{phone_number_id}/messages` per `https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages`. Outside an active 24-hour customer-service window (tracked per `destination_hmac` from verified inbound messages), only pre-approved `"type": "template"` payloads may be sent; free-form text is restricted to active 24-hour windows. Inbound webhooks verify `X-Hub-Signature-256` (`sha256=<hex>`) with `WHATSAPP_APP_SECRET` and support the `GET` `hub.verify_token` challenge handshake.
+
+### Privacy, retention and operator audit (NDPA 2023)
+
+- **Retention:** `notification_deliveries` stores no message body or plaintext destination; a periodic worker sweep clears `destination_hmac` (`SET destination_hmac = NULL`) on settled rows older than `NOTIFICATION_HMAC_RETENTION` (default `8760h` / 365 days).
+- **Operator audit:** `GET /v1/admin/transactions/{id}` includes redacted delivery attempt metadata (`notifications` array: channel, recipient kind, template ID/version, status, attempts, error code, timestamps—never content or destination) and writes an `audit_events` record (`action: "notification_deliveries.view"`, `resource_type: "notification_deliveries"`, `resource_id: <transaction_id>`) before returning.
+

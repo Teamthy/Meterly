@@ -15,6 +15,11 @@ import (
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/notificationconsumer"
+	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/notifications/africastalking"
+	"github.com/teamthy/meterly/internal/notifications/resend"
+	"github.com/teamthy/meterly/internal/notifications/whatsapp"
+	"github.com/teamthy/meterly/internal/notificationservice"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/platform/config"
@@ -31,18 +36,22 @@ import (
 )
 
 type App struct {
-	Cfg       config.Config
-	Log       *slog.Logger
-	Store     store.Store
-	Orch      *orchestrator.Orchestrator
-	Publisher *outbox.Publisher
-	pool      *pgxpool.Pool
+	Cfg           config.Config
+	Log           *slog.Logger
+	Store         store.Store
+	Orch          *orchestrator.Orchestrator
+	Publisher     *outbox.Publisher
+	Notifications *notificationservice.Service
+	pool          *pgxpool.Pool
 
 	// Set only when the corresponding mock is in use (dev simulation).
-	mockPay    *mock.Payments
-	mockRemote *mock.RemoteCredit
-	payments   providers.PaymentProvider
-	authn      auth.Authenticator
+	mockPay      *mock.Payments
+	mockRemote   *mock.RemoteCredit
+	MockSMS      *notifications.MockSender
+	MockEmail    *notifications.MockSender
+	MockWhatsApp *notifications.MockSender
+	payments     providers.PaymentProvider
+	authn        auth.Authenticator
 }
 
 func Build(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, error) {
@@ -119,7 +128,105 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger) (*App, erro
 
 	reg := registry.New(a.Store, box, vend, remote)
 	a.Orch = orchestrator.New(cfg.Orchestrator, a.Store, reg, box, a.payments, vend, remote, log)
-	a.Publisher = outbox.NewPublisher(a.Store, outbox.LogSink(log), log)
+
+	notifProvs := map[notifications.Channel]notifications.Provider{}
+	inboundVers := map[string]notifications.InboundVerifier{}
+	var notifProvNames []string
+
+	switch cfg.SMSProvider {
+	case "africastalking":
+		at, err := africastalking.New(africastalking.Config{
+			Username:      cfg.AfricasTalkingUsername,
+			APIKey:        cfg.AfricasTalkingAPIKey,
+			SenderID:      cfg.AfricasTalkingSenderID,
+			WebhookSecret: cfg.AfricasTalkingWebhookSecret,
+			BaseURL:       cfg.AfricasTalkingBaseURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		notifProvs[notifications.SMS] = at
+		inboundVers[at.Name()] = at
+		notifProvNames = append(notifProvNames, at.Name())
+	case "mock":
+		ms, err := notifications.NewMockSender()
+		if err != nil {
+			return nil, err
+		}
+		a.MockSMS = ms
+		p := notifications.WrapSender("mocksms", notifications.SMS, a.MockSMS)
+		notifProvs[notifications.SMS] = p
+		notifProvNames = append(notifProvNames, p.Name())
+	}
+
+	switch cfg.EmailProvider {
+	case "resend":
+		re, err := resend.New(resend.Config{
+			APIKey:        cfg.ResendAPIKey,
+			From:          cfg.ResendFrom,
+			WebhookSecret: cfg.ResendWebhookSecret,
+			BaseURL:       cfg.ResendBaseURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		notifProvs[notifications.Email] = re
+		inboundVers[re.Name()] = re
+		notifProvNames = append(notifProvNames, re.Name())
+	case "mock":
+		me, err := notifications.NewMockSender()
+		if err != nil {
+			return nil, err
+		}
+		a.MockEmail = me
+		p := notifications.WrapSender("mockemail", notifications.Email, a.MockEmail)
+		notifProvs[notifications.Email] = p
+		notifProvNames = append(notifProvNames, p.Name())
+	}
+
+	switch cfg.WhatsAppProvider {
+	case "whatsapp":
+		wa, err := whatsapp.New(whatsapp.Config{
+			PhoneNumberID: cfg.WhatsAppPhoneNumberID,
+			AccessToken:   cfg.WhatsAppAccessToken,
+			AppSecret:     cfg.WhatsAppAppSecret,
+			VerifyToken:   cfg.WhatsAppVerifyToken,
+			APIVersion:    cfg.WhatsAppAPIVersion,
+			BaseURL:       cfg.WhatsAppBaseURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		notifProvs[notifications.WhatsApp] = wa
+		inboundVers[wa.Name()] = wa
+		notifProvNames = append(notifProvNames, wa.Name())
+	case "mock":
+		mw, err := notifications.NewMockSender()
+		if err != nil {
+			return nil, err
+		}
+		a.MockWhatsApp = mw
+		p := notifications.WrapSender("mockwhatsapp", notifications.WhatsApp, a.MockWhatsApp)
+		notifProvs[notifications.WhatsApp] = p
+		notifProvNames = append(notifProvNames, p.Name())
+	}
+
+	a.Orch.RegisterNotificationProviders(notifProvNames...)
+
+	ns, err := notificationservice.New(notificationservice.Config{
+		Store:            a.Store,
+		Box:              box,
+		Providers:        notifProvs,
+		InboundVerifiers: inboundVers,
+		FeatureGiftSMS:   cfg.FeatureGiftSMS,
+		HMACRetention:    cfg.NotificationHMACRetention,
+		Log:              log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	a.Notifications = ns
+	a.Publisher = outbox.NewPublisher(a.Store, outbox.Chain(outbox.LogSink(log), ns.Sink()), log)
 	return a, nil
 }
 
@@ -144,7 +251,7 @@ func (a *App) Ready(ctx context.Context) error {
 
 func (a *App) Handler() http.Handler {
 	s := &httpapi.Server{
-		O: a.Orch, Auth: a.authn, Payments: a.payments, Log: a.Log, Ready: a.Ready,
+		O: a.Orch, Auth: a.authn, Payments: a.payments, Notifications: a.Notifications, Log: a.Log, Ready: a.Ready,
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,
 			WebhooksPerMinute: a.Cfg.RateWebhooksPerMin, ClientIPHeader: a.Cfg.ClientIPHeader,
@@ -172,6 +279,28 @@ func (a *App) RunWorker(ctx context.Context) {
 			if n == 0 {
 				return
 			}
+		}
+	})
+	start("notification-deliveries", a.Cfg.NotificationInterval, func(ctx context.Context) {
+		for {
+			n, err := a.Notifications.ProcessBatch(ctx, 50)
+			if err != nil {
+				a.Log.Warn("notification delivery sweep failed", "err", err)
+				return
+			}
+			if n == 0 {
+				return
+			}
+		}
+	})
+	start("notification-retention", time.Hour, func(ctx context.Context) {
+		purged, err := a.Notifications.PurgeExpiredHMACs(ctx)
+		if err != nil {
+			a.Log.Warn("notification retention purge failed", "err", err)
+			return
+		}
+		if purged > 0 {
+			a.Log.Info("notification destination HMACs purged", "count", purged)
 		}
 	})
 	if !a.Cfg.NotificationCandidatesSince.IsZero() {

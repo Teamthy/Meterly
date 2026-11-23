@@ -93,15 +93,16 @@ var (
 var errSkip = errors.New("skip")
 
 type Orchestrator struct {
-	cfg      Config
-	st       store.Store
-	Meters   *registry.Registry
-	box      *secure.Box
-	payments providers.PaymentProvider
-	vending  providers.VendingProvider
-	remote   providers.RemoteCreditProvider // nil if no AMI/HES integration
-	log      *slog.Logger
-	Now      func() time.Time
+	cfg            Config
+	st             store.Store
+	Meters         *registry.Registry
+	box            *secure.Box
+	payments       providers.PaymentProvider
+	vending        providers.VendingProvider
+	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
+	notifProviders []string
+	log            *slog.Logger
+	Now            func() time.Time
 }
 
 func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
@@ -114,6 +115,17 @@ func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
 }
 
 func (o *Orchestrator) Store() store.Store { return o.st }
+func (o *Orchestrator) Box() *secure.Box   { return o.box }
+
+// RegisterNotificationProviders makes configured notification providers visible
+// to operator status and kill-switch endpoints.
+func (o *Orchestrator) RegisterNotificationProviders(names ...string) {
+	for _, n := range names {
+		if n != "" {
+			o.notifProviders = append(o.notifProviders, n)
+		}
+	}
+}
 
 func (o *Orchestrator) pctx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, o.cfg.ProviderTimeout)

@@ -17,6 +17,21 @@ import (
 // should be quick; a slow external broker belongs behind a local queue.
 type Sink func(ctx context.Context, e events.Event) error
 
+// Chain composes multiple sinks in order, stopping on the first error.
+func Chain(sinks ...Sink) Sink {
+	return func(ctx context.Context, e events.Event) error {
+		for _, s := range sinks {
+			if s == nil {
+				continue
+			}
+			if err := s(ctx, e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 type Publisher struct {
 	st    store.Store
 	sink  Sink
@@ -32,24 +47,43 @@ func NewPublisher(st store.Store, sink Sink, log *slog.Logger) *Publisher {
 // published. It stops at the first sink error; the rest stay pending.
 func (p *Publisher) PublishBatch(ctx context.Context) (int, error) {
 	n := 0
-	err := p.st.InTx(ctx, func(r store.Repos) error {
-		evs, err := r.Outbox().ClaimUnpublished(ctx, p.batch)
-		if err != nil {
-			return err
+	for i := 0; i < p.batch; i++ {
+		if err := ctx.Err(); err != nil {
+			return n, err
 		}
-		for _, e := range evs {
-			if err := p.sink(ctx, e); err != nil {
-				p.log.Warn("outbox sink failed; will retry", "event", e.ID, "type", e.Type, "err", err)
-				return nil // commit what was published so far
-			}
-			if err := r.Outbox().MarkPublished(ctx, e.ID, time.Now().UTC()); err != nil {
+		var (
+			claimed bool
+			sinkErr error
+		)
+		err := p.st.InTx(ctx, func(r store.Repos) error {
+			evs, err := r.Outbox().ClaimUnpublished(ctx, 1)
+			if err != nil {
 				return err
 			}
-			n++
+			if len(evs) == 0 {
+				return nil
+			}
+			claimed = true
+			e := evs[0]
+			if err := p.sink(store.WithRepos(ctx, r), e); err != nil {
+				sinkErr = err
+				return err // roll back any partial sink writes for this event
+			}
+			return r.Outbox().MarkPublished(ctx, e.ID, time.Now().UTC())
+		})
+		if sinkErr != nil {
+			p.log.Warn("outbox sink failed; will retry", "err", sinkErr)
+			return n, nil
 		}
-		return nil
-	})
-	return n, err
+		if err != nil {
+			return n, err
+		}
+		if !claimed {
+			break
+		}
+		n++
+	}
+	return n, nil
 }
 
 // LogSink logs event metadata (never payload values, which may become
