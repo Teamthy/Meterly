@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/teamthy/meterly/internal/orchestrator"
+	"github.com/teamthy/meterly/internal/pots"
 )
 
 type Mode string
@@ -84,6 +85,10 @@ type Config struct {
 	PublicBaseURL        string
 	RatePublicPayPerMin  int
 	RatePublicLinkPerMin int
+
+	// Split the Meter Funding Pots (M8).
+	FeatureSplitMeter bool
+	PotMaxHold        time.Duration
 
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
@@ -223,6 +228,23 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_PAY_FOR_ME: must be true or false"))
 	}
+
+	// FEATURE_SPLIT_METER defaults to true in MODE=dev and false outside dev
+	// until Nigerian regulatory / PSP fund-holding sign-off (docs/DECISIONS.md).
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_SPLIT_METER"))) {
+	case "":
+		c.FeatureSplitMeter = c.Mode == Dev
+	case "false", "0":
+		c.FeatureSplitMeter = false
+	case "true", "1":
+		c.FeatureSplitMeter = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_SPLIT_METER: must be true or false"))
+	}
+	c.PotMaxHold = dur("POT_MAX_HOLD", pots.DefaultMaxHold)
+	if c.PotMaxHold > pots.HardMaxHold {
+		errs = append(errs, fmt.Errorf("POT_MAX_HOLD: cannot exceed %s", pots.HardMaxHold))
+	}
 	c.PublicBaseURL = strings.TrimRight(get("PUBLIC_BASE_URL", "https://meterly.ng"), "/")
 	if c.Mode != Dev && !strings.HasPrefix(c.PublicBaseURL, "https://") {
 		errs = append(errs, errors.New("PUBLIC_BASE_URL must be https outside dev"))
@@ -264,6 +286,7 @@ func Load(getenv func(string) string) (Config, error) {
 	o.QuoteTTL = dur("QUOTE_TTL", o.QuoteTTL)
 	o.ProviderTimeout = dur("PROVIDER_TIMEOUT", o.ProviderTimeout)
 	o.PaymentExpiry = dur("PAYMENT_EXPIRY", o.PaymentExpiry)
+	o.PotMaxHold = c.PotMaxHold
 	o.ResumeStaleAfter = dur("RESUME_STALE_AFTER", o.ResumeStaleAfter)
 	o.ResumeLease = dur("RESUME_LEASE", o.ResumeLease)
 	o.ResumeBaseBackoff = dur("RESUME_BASE_BACKOFF", o.ResumeBaseBackoff)

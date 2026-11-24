@@ -27,6 +27,8 @@ tags:
     description: Account notification preferences and provider inbound webhooks.
   - name: PaymentRequests
     description: Shareable Pay-for-Me electricity request links, guest checkout and token-free payer status.
+  - name: Pots
+    description: Split-the-Meter Funding Pots, public contribution progress views and Paystack contributor checkouts.
   - name: Webhooks
     description: Signature-verified payment provider webhooks.
   - name: Admin
@@ -1218,6 +1220,154 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /v1/pots:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: createPot
+      tags: [Pots]
+      summary: Create a Split-the-Meter Funding Pot and QR PNG for a meter with PURCHASE access
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePotRequest"
+      responses:
+        "201":
+          description: "Created Funding Pot including one-time share URL and QR PNG (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/pots/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PotIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getPot
+      tags: [Pots]
+      summary: Inspect full organiser detail, masked contributions and allocations for a Funding Pot
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Organiser pot detail (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PotDetailView"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/pots/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/PotIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: cancelPot
+      tags: [Pots]
+      summary: Cancel an open Funding Pot and trigger automatic contributor refunds
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: "Cancelled/refunded Funding Pot detail (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PotDetailView"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/public/pots/{code}:
+    parameters:
+      - $ref: "#/components/parameters/PotCodePath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getPublicPot
+      tags: [Pots]
+      summary: Inspect masked public progress and contributor initials for a Funding Pot (no auth)
+      security: []
+      responses:
+        "200":
+          description: "Masked pot progress with contributor initials and amounts only (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicPotView"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/public/pots/{code}/contribute:
+    parameters:
+      - $ref: "#/components/parameters/PotCodePath"
+      - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: contributeToPot
+      tags: [Pots]
+      summary: Initiate an idempotent Paystack checkout for a Funding Pot contribution (guest or authenticated)
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContributePotRequest"
+      responses:
+        "202":
+          description: "Contribution checkout initialised (`Cache-Control: no-store`, `Referrer-Policy: no-referrer`)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContributePotResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1290,6 +1440,21 @@ components:
         maxLength: 26
     PayStatusCodePath:
       name: status_code
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 26
+        maxLength: 26
+    PotIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PotCodePath:
+      name: code
       in: path
       required: true
       schema:
@@ -1384,6 +1549,12 @@ components:
         - LINK_EXPIRED
         - LINK_CANCELLED
         - LINK_UNUSABLE
+        - POT_EXPIRED
+        - POT_CANCELLED
+        - POT_ALREADY_FUNDED
+        - POT_CLOSED
+        - POT_NOT_CANCELLABLE
+        - POT_UNUSABLE
         - INTERNAL_ERROR
 
     ErrorEnvelope:
@@ -2478,4 +2649,425 @@ components:
           type: string
         receipt:
           $ref: "#/components/schemas/Receipt"
+
+    PotKind:
+      type: string
+      enum: [SPLIT_METER, LANDLORD_BULK]
+
+    PotStatus:
+      type: string
+      enum: [OPEN, FUNDED, ALLOCATING, SETTLED, EXPIRED, CANCELLED, REFUNDING, REFUNDED]
+
+    PotContributionStatus:
+      type: string
+      enum: [PENDING, PAID, REFUND_PENDING, REFUNDED, FAILED]
+
+    PotAllocationStatus:
+      type: string
+      enum: [ACTIVE, RETURNED]
+
+    CreatePotRequest:
+      type: object
+      required: [meter_id, target_minor]
+      additionalProperties: false
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        target_minor:
+          type: integer
+          format: int64
+          description: Total pot target in minor units including the single flat convenience fee.
+        suggested_shares:
+          type: integer
+          minimum: 0
+          maximum: 50
+          description: Optional equal-share hint (0 to omit, or 2..50).
+        deadline:
+          type: string
+          format: date-time
+          description: Optional RFC 3339 deadline within `POT_MAX_HOLD` (defaults to `now + 72h` if omitted).
+        expires_in_hours:
+          type: integer
+          minimum: 1
+          maximum: 168
+        note:
+          type: string
+          maxLength: 140
+
+    PotContributionOwnerView:
+      type: object
+      required:
+        - id
+        - initials
+        - amount_minor
+        - retained_minor
+        - status
+        - created_at
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        initials:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        retained_minor:
+          type: integer
+          format: int64
+        refund_amount_minor:
+          type: integer
+          format: int64
+        refunded_minor:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/PotContributionStatus"
+        paid_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    PotAllocationView:
+      type: object
+      required:
+        - id
+        - transaction_id
+        - meter_id
+        - amount_minor
+        - status
+        - created_at
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        transaction_id:
+          type: string
+          format: uuid
+        meter_id:
+          type: string
+          format: uuid
+        amount_minor:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/PotAllocationStatus"
+        overall_status:
+          type: string
+        delivery_method:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreatedPot:
+      type: object
+      required:
+        - id
+        - kind
+        - meter_id
+        - masked_meter_number
+        - disco
+        - target_minor
+        - electricity_amount_minor
+        - fee_minor
+        - funded_minor
+        - remaining_minor
+        - refunded_minor
+        - paid_count
+        - currency
+        - status
+        - deadline
+        - created_at
+        - updated_at
+        - code
+        - share_url
+        - qr_png_base64
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/PotKind"
+        meter_id:
+          type: string
+          format: uuid
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        target_minor:
+          type: integer
+          format: int64
+        electricity_amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        funded_minor:
+          type: integer
+          format: int64
+        remaining_minor:
+          type: integer
+          format: int64
+        refunded_minor:
+          type: integer
+          format: int64
+        paid_count:
+          type: integer
+        suggested_shares:
+          type: integer
+        suggested_share_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        note:
+          type: string
+        status:
+          $ref: "#/components/schemas/PotStatus"
+        review_reason:
+          type: string
+        deadline:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        code:
+          type: string
+          minLength: 26
+          maxLength: 26
+        share_url:
+          type: string
+          format: uri
+        qr_png_base64:
+          type: string
+          format: byte
+
+    PotDetailView:
+      type: object
+      required:
+        - id
+        - kind
+        - meter_id
+        - masked_meter_number
+        - disco
+        - target_minor
+        - electricity_amount_minor
+        - fee_minor
+        - funded_minor
+        - remaining_minor
+        - refunded_minor
+        - paid_count
+        - currency
+        - status
+        - deadline
+        - created_at
+        - updated_at
+        - contributions
+        - allocations
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/PotKind"
+        meter_id:
+          type: string
+          format: uuid
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        target_minor:
+          type: integer
+          format: int64
+        electricity_amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        funded_minor:
+          type: integer
+          format: int64
+        remaining_minor:
+          type: integer
+          format: int64
+        refunded_minor:
+          type: integer
+          format: int64
+        paid_count:
+          type: integer
+        suggested_shares:
+          type: integer
+        suggested_share_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        note:
+          type: string
+        status:
+          $ref: "#/components/schemas/PotStatus"
+        review_reason:
+          type: string
+        deadline:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        contributions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PotContributionOwnerView"
+        allocations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PotAllocationView"
+
+    PublicContributorView:
+      type: object
+      required: [initials, amount_minor, retained_minor, status]
+      additionalProperties: false
+      properties:
+        initials:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        retained_minor:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/PotContributionStatus"
+        paid_at:
+          type: string
+          format: date-time
+
+    PublicPotView:
+      type: object
+      required:
+        - organiser_display_name
+        - masked_meter_number
+        - disco
+        - target_minor
+        - electricity_amount_minor
+        - fee_minor
+        - funded_minor
+        - remaining_minor
+        - paid_count
+        - currency
+        - status
+        - deadline
+        - contributors
+      additionalProperties: false
+      properties:
+        organiser_display_name:
+          type: string
+        masked_meter_number:
+          type: string
+        disco:
+          type: string
+        target_minor:
+          type: integer
+          format: int64
+        electricity_amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        funded_minor:
+          type: integer
+          format: int64
+        remaining_minor:
+          type: integer
+          format: int64
+        paid_count:
+          type: integer
+        suggested_shares:
+          type: integer
+        suggested_share_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        note:
+          type: string
+        status:
+          $ref: "#/components/schemas/PotStatus"
+        deadline:
+          type: string
+          format: date-time
+        contributors:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicContributorView"
+
+    ContributePotRequest:
+      type: object
+      required: [amount_minor]
+      additionalProperties: false
+      properties:
+        amount_minor:
+          type: integer
+          format: int64
+        email:
+          type: string
+          format: email
+          description: Required for guest contributors; optional when authenticated with a stored email.
+        name:
+          type: string
+          maxLength: 80
+        phone:
+          type: string
+          description: Required in E.164 format when `opt_in_sms` is `true` for a guest contributor.
+        opt_in_sms:
+          type: boolean
+
+    ContributePotResponse:
+      type: object
+      required:
+        - contribution_id
+        - pot_code
+        - amount_minor
+        - currency
+        - status
+        - checkout_url
+      additionalProperties: false
+      properties:
+        contribution_id:
+          type: string
+          format: uuid
+        pot_code:
+          type: string
+        amount_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          $ref: "#/components/schemas/PotContributionStatus"
+        checkout_url:
+          type: string
+          format: uri
+        provider_ref:
+          type: string
 

@@ -220,7 +220,13 @@ func (o *Orchestrator) ResumeDueWithDrain(stopCtx, drainCtx context.Context) (pr
 			o.log.Warn("schedule failed", "txn", id, "err", err)
 		}
 	}
-	return processed, progressed, nil
+	potProcessed, potProgressed, perr := o.resumeDuePots(stopCtx, drainCtx)
+	processed += potProcessed
+	progressed += potProgressed
+	if perr != nil && err == nil {
+		err = perr
+	}
+	return processed, progressed, err
 }
 
 func (o *Orchestrator) backoff(attempts int) time.Duration {

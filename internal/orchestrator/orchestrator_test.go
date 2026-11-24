@@ -73,6 +73,8 @@ func (h *hookVending) Vend(ctx context.Context, r providers.VendRequest) (provid
 type hookPayments struct {
 	providers.PaymentProvider
 	afterVerify func()
+	refundErr   error
+	afterRefund func(req providers.RefundRequest)
 }
 
 func (h *hookPayments) VerifyPayment(ctx context.Context, ref string) (providers.PaymentVerification, error) {
@@ -81,6 +83,17 @@ func (h *hookPayments) VerifyPayment(ctx context.Context, ref string) (providers
 		h.afterVerify()
 	}
 	return v, err
+}
+
+func (h *hookPayments) RefundPayment(ctx context.Context, req providers.RefundRequest) (string, error) {
+	if h.refundErr != nil {
+		return "", h.refundErr
+	}
+	ref, err := h.PaymentProvider.RefundPayment(ctx, req)
+	if err == nil && h.afterRefund != nil {
+		h.afterRefund(req)
+	}
+	return ref, err
 }
 
 type hookRemote struct {

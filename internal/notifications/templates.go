@@ -29,6 +29,7 @@ const (
 	TemplateRemoteUnknown    = "remote_delivery_unknown"
 	TemplateRefundCompleted  = "refund_completed"
 	TemplateGiftTokenSMS     = "gift_token_sms"
+	TemplatePotSettled       = "pot_settled"
 
 	CurrentTemplateVersion = "v1"
 )
@@ -73,6 +74,10 @@ var purchaserCatalog = map[string]map[string]localeEntry{
 		TemplateRefundCompleted: {
 			Subject: "Refund completed",
 			Body:    "Your refund has been confirmed by the payment provider. Check Meterly for the transaction details.",
+		},
+		TemplatePotSettled: {
+			Subject: "Shared electricity pot settled",
+			Body:    "The shared Meterly electricity pot you contributed to is funded and electricity has been delivered. Reply STOP to opt out.",
 		},
 	},
 }

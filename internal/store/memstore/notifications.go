@@ -89,8 +89,8 @@ func cloneDelivery(d *notifications.Delivery) *notifications.Delivery {
 	return &cp
 }
 
-func deliveryUniqueKey(eventID uuid.UUID, kind notifications.RecipientKind, ch notifications.Channel) string {
-	return eventID.String() + "|" + string(kind) + "|" + string(ch)
+func deliveryUniqueKey(eventID uuid.UUID, kind notifications.RecipientKind, ch notifications.Channel, slot string) string {
+	return eventID.String() + "|" + string(kind) + "|" + string(ch) + "|" + slot
 }
 
 func optOutKey(destHMAC string, ch notifications.Channel) string {
@@ -189,7 +189,7 @@ func (r notifRepo) CreateDelivery(_ context.Context, d *notifications.Delivery) 
 	if _, ok := r.s.txns[d.TransactionID]; !ok {
 		return false, store.ErrNotFound
 	}
-	uk := deliveryUniqueKey(d.EventID, d.RecipientKind, d.Channel)
+	uk := deliveryUniqueKey(d.EventID, d.RecipientKind, d.Channel, d.RecipientSlot)
 	if existingID, ok := r.s.deliveryByKey[uk]; ok {
 		*d = *cloneDelivery(r.s.deliveries[existingID])
 		return false, nil

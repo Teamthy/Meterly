@@ -82,12 +82,16 @@ var potTransitions = map[Status][]Status{
 	StatusExpired:    {StatusRefunding},
 	StatusCancelled:  {StatusRefunding},
 	StatusRefunding:  {StatusRefunded},
+	// Late payment arriving after a pot already finished refunding re-enters REFUNDING to reverse it.
+	StatusRefunded: {StatusRefunding},
 }
 
 var contribTransitions = map[ContributionStatus][]ContributionStatus{
 	ContribPending:       {ContribPaid, ContribRefundPending, ContribFailed},
 	ContribPaid:          {ContribRefundPending},
 	ContribRefundPending: {ContribPaid, ContribRefunded},
+	// Late payment arriving at PSP after a pending checkout was marked FAILED at expiry.
+	ContribFailed: {ContribRefundPending},
 }
 
 // Pot is a pooled funding container for one or more electricity purchases.
@@ -117,6 +121,58 @@ func (p *Pot) Settled() bool {
 		return true
 	}
 	return p.Status == StatusSettled || p.Status == StatusRefunded
+}
+
+func (p *Pot) ElectricityAmountMinor() int64 {
+	if p.TargetMinor <= p.FeeMinor {
+		return 0
+	}
+	return p.TargetMinor - p.FeeMinor
+}
+
+func (p *Pot) SuggestedShareMinor() int64 {
+	if p.SuggestedShares < 2 {
+		return 0
+	}
+	return (p.TargetMinor + int64(p.SuggestedShares) - 1) / int64(p.SuggestedShares)
+}
+
+func (p *Pot) FlagForReview(reason string, now time.Time) {
+	p.ReviewReason = reason
+	p.UpdatedAt = now.UTC()
+}
+
+func (s Status) Terminal() bool {
+	return s == StatusSettled || s == StatusRefunded
+}
+
+func ValidateShares(n int) error {
+	if n == 0 || (n >= 2 && n <= MaxSuggestedShares) {
+		return nil
+	}
+	return ErrInvalidShares
+}
+
+type Summary struct {
+	FundedMinor        int64
+	RefundedMinor      int64
+	PaidCount          int
+	RefundPendingCount int
+}
+
+func SummarizeContributions(cs []*Contribution) Summary {
+	var s Summary
+	for _, c := range cs {
+		s.FundedMinor += c.RetainedMinor
+		s.RefundedMinor += c.RefundedMinor
+		if c.RetainedMinor > 0 {
+			s.PaidCount++
+		}
+		if c.Status == ContribRefundPending && c.PendingRefundMinor() > 0 {
+			s.RefundPendingCount++
+		}
+	}
+	return s
 }
 
 func (p *Pot) Transition(to Status, now time.Time) error {
@@ -199,6 +255,11 @@ type Allocation struct {
 	Status        AllocationStatus `json:"status"`
 	CreatedAt     time.Time        `json:"created_at"`
 	UpdatedAt     time.Time        `json:"updated_at"`
+}
+
+func (a *Allocation) MarkReturned(now time.Time) {
+	a.Status = AllocReturned
+	a.UpdatedAt = now.UTC()
 }
 
 func GenerateCode() (string, error) {

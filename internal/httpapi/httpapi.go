@@ -53,9 +53,10 @@ type Server struct {
 	Tracer           *observability.Tracer
 	Log              *slog.Logger
 	Ready            func(context.Context) error
-	Limits           Limits
-	PayForMeDisabled bool
-	PublicBaseURL    string
+	Limits             Limits
+	PayForMeDisabled   bool
+	SplitMeterDisabled bool
+	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev       bool
 	DevPay    *mock.Payments
@@ -106,6 +107,9 @@ func orDefault(v, def int) int {
 }
 
 func (s *Server) Routes() http.Handler {
+	if s.Log == nil {
+		s.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	s.writes = ratelimit.New(orDefault(s.Limits.WritesPerMinute, 30), 10)
 	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
 	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
@@ -148,6 +152,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/public/pay/{code}", s.publicPayLimited(s.getPublicPayLink))
 	mux.HandleFunc("POST /v1/public/pay/{code}/checkout", s.publicPayLimited(s.checkoutPublicPayLink))
 	mux.HandleFunc("GET /v1/public/pay/status/{status_code}", s.publicPayLimited(s.getPublicPayStatus))
+
+	mux.Handle("POST /v1/pots", write(s.createPot))
+	mux.Handle("GET /v1/pots/{id}", user(s.getPot))
+	mux.Handle("POST /v1/pots/{id}/cancel", write(s.cancelPot))
+	mux.HandleFunc("GET /v1/public/pots/{code}", s.publicPotLimited(s.getPublicPot))
+	mux.HandleFunc("POST /v1/public/pots/{code}/contribute", s.publicPotLimited(s.contributeToPot))
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))

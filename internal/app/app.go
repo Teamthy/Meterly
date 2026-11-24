@@ -326,8 +326,9 @@ func (a *App) Handler() http.Handler {
 			WebhooksPerMinute: a.Cfg.RateWebhooksPerMin, PublicPayPerMinute: a.Cfg.RatePublicPayPerMin,
 			PublicLinkPerMinute: a.Cfg.RatePublicLinkPerMin, ClientIPHeader: a.Cfg.ClientIPHeader,
 		},
-		PayForMeDisabled: !a.Cfg.FeaturePayForMe,
-		PublicBaseURL:    a.Cfg.PublicBaseURL,
+		PayForMeDisabled:   !a.Cfg.FeaturePayForMe,
+		SplitMeterDisabled: !a.Cfg.FeatureSplitMeter,
+		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		Dev:              a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
 	}
 	h := s.Routes()
