@@ -45,14 +45,14 @@ type Limits struct {
 }
 
 type Server struct {
-	O                *orchestrator.Orchestrator
-	Auth             auth.Authenticator
-	Payments         providers.PaymentProvider
-	Notifications    *notificationservice.Service
-	Metrics          *observability.Registry
-	Tracer           *observability.Tracer
-	Log              *slog.Logger
-	Ready            func(context.Context) error
+	O                  *orchestrator.Orchestrator
+	Auth               auth.Authenticator
+	Payments           providers.PaymentProvider
+	Notifications      *notificationservice.Service
+	Metrics            *observability.Registry
+	Tracer             *observability.Tracer
+	Log                *slog.Logger
+	Ready              func(context.Context) error
 	Limits             Limits
 	PayForMeDisabled   bool
 	SplitMeterDisabled bool

@@ -201,4 +201,3 @@ func TestSplitMeterConfig(t *testing.T) {
 		t.Fatalf("invalid FEATURE_SPLIT_METER must fail: %v", err)
 	}
 }
-

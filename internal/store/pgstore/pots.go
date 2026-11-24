@@ -129,9 +129,9 @@ const potSelectSQL = `
 
 func (r potRepo) scanPot(row pgx.Row) (*pots.Pot, error) {
 	var (
-		p                  pots.Pot
-		kindS, cur, statS  string
-		meterID            *uuid.UUID
+		p                 pots.Pot
+		kindS, cur, statS string
+		meterID           *uuid.UUID
 	)
 	err := row.Scan(
 		&p.ID, &kindS, &p.OwnerID, &meterID,

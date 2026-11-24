@@ -56,14 +56,14 @@ type Store struct {
 	deliveryByKey     map[string]uuid.UUID
 	payReqs           map[uuid.UUID]*payrequests.PaymentRequest
 	payReqByCodeHMAC  map[string]uuid.UUID
-	payers             map[uuid.UUID]payrequests.Payer
-	payerByStatusHMAC  map[string]uuid.UUID
-	pots               map[uuid.UUID]*pots.Pot
-	potByCodeHMAC      map[string]uuid.UUID
-	contribs           map[uuid.UUID]*pots.Contribution
-	contribByPayRef    map[string]uuid.UUID
-	allocs             map[uuid.UUID]*pots.Allocation
-	allocByTxn         map[uuid.UUID]uuid.UUID
+	payers            map[uuid.UUID]payrequests.Payer
+	payerByStatusHMAC map[string]uuid.UUID
+	pots              map[uuid.UUID]*pots.Pot
+	potByCodeHMAC     map[string]uuid.UUID
+	contribs          map[uuid.UUID]*pots.Contribution
+	contribByPayRef   map[string]uuid.UUID
+	allocs            map[uuid.UUID]*pots.Allocation
+	allocByTxn        map[uuid.UUID]uuid.UUID
 }
 
 func New() *Store {

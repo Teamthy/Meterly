@@ -329,7 +329,7 @@ func (a *App) Handler() http.Handler {
 		PayForMeDisabled:   !a.Cfg.FeaturePayForMe,
 		SplitMeterDisabled: !a.Cfg.FeatureSplitMeter,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
-		Dev:              a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
+		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
 	}
 	h := s.Routes()
 	if a.wrapPublic != nil {
