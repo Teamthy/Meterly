@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
@@ -64,6 +65,11 @@ type Store struct {
 	contribByPayRef   map[string]uuid.UUID
 	allocs            map[uuid.UUID]*pots.Allocation
 	allocByTxn        map[uuid.UUID]uuid.UUID
+	payMethods        map[uuid.UUID]*autopower.SavedPaymentMethod
+	apRules           map[uuid.UUID]*autopower.Rule
+	apRuns            map[uuid.UUID]*autopower.Run
+	apRunBySlot       map[string]uuid.UUID
+	apRunByTxn        map[uuid.UUID]uuid.UUID
 }
 
 func New() *Store {
@@ -86,6 +92,11 @@ func New() *Store {
 		contribByPayRef:   map[string]uuid.UUID{},
 		allocs:            map[uuid.UUID]*pots.Allocation{},
 		allocByTxn:        map[uuid.UUID]uuid.UUID{},
+		payMethods:        map[uuid.UUID]*autopower.SavedPaymentMethod{},
+		apRules:           map[uuid.UUID]*autopower.Rule{},
+		apRuns:            map[uuid.UUID]*autopower.Run{},
+		apRunBySlot:       map[string]uuid.UUID{},
+		apRunByTxn:        map[uuid.UUID]uuid.UUID{},
 	}
 }
 
@@ -172,6 +183,7 @@ func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { retur
 func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
 func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
 func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
+func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -188,6 +200,16 @@ func (r *repos) EnsureByExternalID(_ context.Context, ext string) (string, error
 		delete(r.s.userIDs, id)
 	})
 	return id, nil
+}
+
+func (r *repos) LockForUpdate(_ context.Context, userID string) error {
+	if !r.inTx {
+		return errors.New("user lock requires transaction")
+	}
+	if userID == "" || !r.s.userIDs[userID] {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ---- meters -------------------------------------------------------------------
@@ -371,7 +393,9 @@ func (r txnRepo) Create(_ context.Context, t *tx.Transaction) error {
 	r.s.txns[t.ID] = cloneTxn(t)
 	r.onUndo(func() { delete(r.s.txns, t.ID) })
 	if t.PaymentProviderRef != "" {
-		r.s.txnByPayRef[t.PaymentProviderRef] = t.ID
+		ref := t.PaymentProviderRef
+		r.s.txnByPayRef[ref] = t.ID
+		r.onUndo(func() { delete(r.s.txnByPayRef, ref) })
 	}
 	return nil
 }

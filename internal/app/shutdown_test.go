@@ -406,6 +406,10 @@ func (b *blockingPayProvider) InitializePayment(_ context.Context, req providers
 	return providers.PaymentInitResult{ProviderRef: "ref-" + req.Reference, CheckoutURL: "https://pay.test/checkout"}, nil
 }
 
+func (b *blockingPayProvider) ChargeSaved(_ context.Context, req providers.ChargeRequest) (providers.PaymentVerification, error) {
+	return providers.PaymentVerification{ProviderRef: req.Reference, Status: providers.PaymentPending, Amount: req.Amount}, nil
+}
+
 func (b *blockingPayProvider) VerifyPayment(ctx context.Context, providerRef string) (providers.PaymentVerification, error) {
 	b.enterOnce.Do(func() { close(b.enteredVerify) })
 	select {

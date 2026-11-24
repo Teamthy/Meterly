@@ -28,15 +28,29 @@ import (
 
 // ---- Payment ---------------------------------------------------------------
 
+type mockSavedAuth struct {
+	auth         providers.CardAuthorization
+	chargeStatus providers.PaymentStatus // default PaymentSucceeded
+	ambiguousN   int                     // next N ChargeSaved calls apply then return ErrAmbiguous
+}
+
 type Payments struct {
-	mu       sync.Mutex
-	pays     map[string]*providers.PaymentVerification
-	byOurRef map[string]string
-	Refunds  []providers.RefundRequest
+	mu          sync.Mutex
+	pays        map[string]*providers.PaymentVerification
+	emails      map[string]string
+	byOurRef    map[string]string
+	auths       map[string]*mockSavedAuth
+	Refunds     []providers.RefundRequest
+	ChargeCalls int
 }
 
 func NewPayments() *Payments {
-	return &Payments{pays: map[string]*providers.PaymentVerification{}, byOurRef: map[string]string{}}
+	return &Payments{
+		pays:     map[string]*providers.PaymentVerification{},
+		emails:   map[string]string{},
+		byOurRef: map[string]string{},
+		auths:    map[string]*mockSavedAuth{},
+	}
 }
 
 func (p *Payments) Name() string { return "mockpay" }
@@ -49,8 +63,41 @@ func (p *Payments) InitializePayment(_ context.Context, req providers.PaymentIni
 	}
 	ref := "mp_" + uuid.NewString()[:12]
 	p.byOurRef[req.Reference] = ref
+	p.emails[ref] = strings.ToLower(strings.TrimSpace(req.Email))
 	p.pays[ref] = &providers.PaymentVerification{ProviderRef: ref, Status: providers.PaymentPending, Amount: req.Amount}
 	return providers.PaymentInitResult{ProviderRef: ref, CheckoutURL: "https://checkout.mock/" + ref}, nil
+}
+
+// SetAuthorization overrides the card authorization attached to ref before or after Complete.
+func (p *Payments) SetAuthorization(ref string, auth *providers.CardAuthorization) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if v, ok := p.pays[ref]; ok {
+		if auth == nil {
+			v.Authorization = nil
+			return
+		}
+		cp := *auth
+		if cp.CustomerEmail == "" {
+			cp.CustomerEmail = p.emails[ref]
+		}
+		v.Authorization = &cp
+		if cp.AuthorizationCode != "" {
+			p.auths[cp.AuthorizationCode] = &mockSavedAuth{auth: cp, chargeStatus: providers.PaymentSucceeded}
+		}
+	}
+}
+
+// SetSavedChargeOutcome configures future ChargeSaved calls for authCode (or "" for all known auths).
+func (p *Payments) SetSavedChargeOutcome(authCode string, status providers.PaymentStatus, ambiguousNext int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for code, a := range p.auths {
+		if authCode == "" || code == authCode {
+			a.chargeStatus = status
+			a.ambiguousN = ambiguousNext
+		}
+	}
 }
 
 // Complete simulates the customer finishing checkout. amountOverride lets
@@ -69,10 +116,73 @@ func (p *Payments) Complete(ref string, success bool, amountOverride int64) erro
 		if amountOverride > 0 {
 			v.Amount.Minor = amountOverride
 		}
+		if v.Authorization == nil {
+			code := "AUTH_mock_" + ref
+			ca := providers.CardAuthorization{
+				AuthorizationCode: code,
+				Reusable:          true,
+				CardBrand:         "visa",
+				Last4:             "4242",
+				ExpMonth:          12,
+				ExpYear:           2030,
+				Channel:           "card",
+				Signature:         "SIG_mock_" + ref,
+				CustomerEmail:     p.emails[ref],
+			}
+			v.Authorization = &ca
+			p.auths[code] = &mockSavedAuth{auth: ca, chargeStatus: providers.PaymentSucceeded}
+		}
 	} else {
 		v.Status = providers.PaymentFailed
 	}
 	return nil
+}
+
+func (p *Payments) ChargeSaved(_ context.Context, req providers.ChargeRequest) (providers.PaymentVerification, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ChargeCalls++
+	if req.Reference == "" || req.AuthorizationRef == "" || req.Email == "" {
+		return providers.PaymentVerification{}, fmt.Errorf("mockpay: invalid charge_saved request")
+	}
+	if _, dup := p.pays[req.Reference]; dup {
+		return providers.PaymentVerification{}, fmt.Errorf("mockpay: duplicate reference %s", req.Reference)
+	}
+	sa, ok := p.auths[req.AuthorizationRef]
+	if !ok || !sa.auth.Reusable {
+		return providers.PaymentVerification{}, fmt.Errorf("mockpay: invalid or non-reusable authorization")
+	}
+	if sa.auth.CustomerEmail != "" && !strings.EqualFold(sa.auth.CustomerEmail, strings.TrimSpace(req.Email)) {
+		return providers.PaymentVerification{}, fmt.Errorf("mockpay: customer email mismatch")
+	}
+	st := sa.chargeStatus
+	if st == "" {
+		st = providers.PaymentSucceeded
+	}
+	var paidAt *time.Time
+	if st == providers.PaymentSucceeded {
+		now := time.Now().UTC()
+		paidAt = &now
+	}
+	cpAuth := sa.auth
+	rec := &providers.PaymentVerification{
+		ProviderRef:   req.Reference,
+		Status:        st,
+		Amount:        req.Amount,
+		PaidAt:        paidAt,
+		Authorization: &cpAuth,
+	}
+	p.pays[req.Reference] = rec
+	if sa.ambiguousN > 0 {
+		sa.ambiguousN--
+		return providers.PaymentVerification{}, providers.ErrAmbiguous
+	}
+	out := *rec
+	if rec.Authorization != nil {
+		ac := *rec.Authorization
+		out.Authorization = &ac
+	}
+	return out, nil
 }
 
 func (p *Payments) VerifyPayment(_ context.Context, ref string) (providers.PaymentVerification, error) {
@@ -80,9 +190,14 @@ func (p *Payments) VerifyPayment(_ context.Context, ref string) (providers.Payme
 	defer p.mu.Unlock()
 	v, ok := p.pays[ref]
 	if !ok {
-		return providers.PaymentVerification{}, fmt.Errorf("mockpay: unknown ref %s", ref)
+		return providers.PaymentVerification{}, fmt.Errorf("%w: mockpay unknown ref %s", providers.ErrPaymentNotFound, ref)
 	}
-	return *v, nil
+	out := *v
+	if v.Authorization != nil {
+		ac := *v.Authorization
+		out.Authorization = &ac
+	}
+	return out, nil
 }
 
 func (p *Payments) RefundPayment(_ context.Context, req providers.RefundRequest) (string, error) {
@@ -250,6 +365,45 @@ func (r *RemoteCredit) GetCreditStatus(_ context.Context, key string) (providers
 		return res, nil
 	}
 	return providers.RemoteCreditResult{Status: providers.CreditNotFound}, nil
+}
+
+// ---- Remote meter readings -------------------------------------------------
+
+type readingEntry struct {
+	kWh float64
+	at  time.Time
+}
+
+type MeterReadings struct {
+	mu       sync.Mutex
+	readings map[string]readingEntry
+	Calls    int
+}
+
+func NewMeterReadings() *MeterReadings {
+	return &MeterReadings{readings: map[string]readingEntry{}}
+}
+
+func (m *MeterReadings) Name() string { return "mockreadings" }
+
+func (m *MeterReadings) SetReading(meterNumber string, kWh float64, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	m.readings[meterNumber] = readingEntry{kWh: kWh, at: at.UTC()}
+}
+
+func (m *MeterReadings) LatestReading(_ context.Context, meterNumber string) (float64, time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls++
+	r, ok := m.readings[meterNumber]
+	if !ok {
+		return 0, time.Time{}, providers.ErrReadingUnavailable
+	}
+	return r.kWh, r.at, nil
 }
 
 // ---- helpers ---------------------------------------------------------------

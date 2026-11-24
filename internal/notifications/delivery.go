@@ -65,6 +65,7 @@ type Delivery struct {
 	ID              uuid.UUID     `json:"id"`
 	EventID         uuid.UUID     `json:"event_id"`
 	TransactionID   uuid.UUID     `json:"transaction_id"`
+	UserID          string        `json:"-"` // set for account-level notifications without a transaction
 	RecipientKind   RecipientKind `json:"recipient_kind"`
 	RecipientSlot   string        `json:"-"`
 	Channel         Channel       `json:"channel"`

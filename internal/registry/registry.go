@@ -66,11 +66,15 @@ func (g *Registry) upsert(ctx context.Context, r store.Repos, number, disco stri
 	for attempt := 0; attempt < 2; attempt++ {
 		m, err := r.Meters().GetByHash(ctx, hash)
 		if err == nil {
-			// Keep evidence of a confirmed remote delivery across re-validation.
+			// Keep evidence of confirmed remote capabilities across re-validation.
 			confirmed := m.Capabilities.RemoteCredit.Confirmed && caps.RemoteCredit.Supported
+			readAuth := m.Capabilities.RemoteReading.Authorised && caps.RemoteReading.Supported
+			readConf := m.Capabilities.RemoteReading.Confirmed && caps.RemoteReading.Supported
 			m.MeterType, m.CustomerName, m.Address, m.ValidatedAt = res.MeterType, res.CustomerName, res.Address, now
 			m.Capabilities = caps
 			m.Capabilities.RemoteCredit.Confirmed = confirmed
+			m.Capabilities.RemoteReading.Authorised = readAuth
+			m.Capabilities.RemoteReading.Confirmed = readConf
 			return m, r.Meters().Update(ctx, m)
 		}
 		if !errors.Is(err, store.ErrNotFound) {
@@ -189,6 +193,23 @@ func MarkRemoteCreditConfirmedIn(ctx context.Context, r store.Repos, id uuid.UUI
 		return nil
 	}
 	m.Capabilities.RemoteCredit.Confirmed = true
+	return r.Meters().Update(ctx, m)
+}
+
+// MarkRemoteReadingConfirmedIn records, inside r's transaction, that remote
+// balance reading is authorised and confirmed for this meter.
+func MarkRemoteReadingConfirmedIn(ctx context.Context, r store.Repos, id uuid.UUID, at time.Time) error {
+	m, err := r.Meters().GetForUpdate(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !m.Capabilities.RemoteReading.Supported {
+		return meters.ErrInvalidMeter
+	}
+	ts := at.UTC()
+	m.Capabilities.RemoteReading.Authorised = true
+	m.Capabilities.RemoteReading.Confirmed = true
+	m.Capabilities.RemoteReading.LastVerifiedAt = &ts
 	return r.Meters().Update(ctx, m)
 }
 

@@ -45,10 +45,33 @@ type PaymentInitResult struct {
 }
 
 type PaymentVerification struct {
-	ProviderRef string
-	Status      PaymentStatus
-	Amount      money.Amount
-	PaidAt      *time.Time
+	ProviderRef   string
+	Status        PaymentStatus
+	Amount        money.Amount
+	PaidAt        *time.Time
+	Authorization *CardAuthorization // present when provider reports a card authorization
+}
+
+// CardAuthorization captures reusable card metadata returned by the payment
+// provider on VerifyPayment. AuthorizationCode is a sensitive credential and
+// must never be logged or returned in API responses.
+type CardAuthorization struct {
+	AuthorizationCode string
+	Reusable          bool
+	CardBrand         string
+	Last4             string
+	ExpMonth          int
+	ExpYear           int
+	Channel           string
+	Signature         string
+	CustomerEmail     string
+}
+
+type ChargeRequest struct {
+	AuthorizationRef string // provider authorization_code (sensitive)
+	Email            string
+	Amount           money.Amount
+	Reference        string // deterministic reference for status reconciliation
 }
 
 type RefundRequest struct {
@@ -57,9 +80,17 @@ type RefundRequest struct {
 	Reference   string
 }
 
+// ErrPaymentNotFound means the payment provider definitively confirmed it has
+// no transaction record for the queried reference.
+var ErrPaymentNotFound = errors.New("provider: payment reference not found")
+
 type PaymentProvider interface {
 	Name() string
 	InitializePayment(ctx context.Context, req PaymentInit) (PaymentInitResult, error)
+	// ChargeSaved initiates an off-session charge against a saved reusable
+	// card authorization. Callers MUST still treat the outcome as unverified
+	// until VerifyPayment confirms it (invariant 1).
+	ChargeSaved(ctx context.Context, req ChargeRequest) (PaymentVerification, error)
 	// VerifyPayment is the server-side source of truth. Webhook bodies are
 	// only a hint to call this.
 	VerifyPayment(ctx context.Context, providerRef string) (PaymentVerification, error)
@@ -164,4 +195,14 @@ type RemoteCreditProvider interface {
 	CheckEligibility(ctx context.Context, meterNumber string) (eligible bool, reachable *bool, err error)
 	InitiateCredit(ctx context.Context, req RemoteCreditRequest) (RemoteCreditResult, error)
 	GetCreditStatus(ctx context.Context, idempotencyKey string) (RemoteCreditResult, error)
+}
+
+// ---- Remote meter reading (AMI / HES) -------------------------------------
+
+// ErrReadingUnavailable means no confirmed meter balance reading is available.
+var ErrReadingUnavailable = errors.New("provider: meter reading unavailable")
+
+type MeterReadingProvider interface {
+	Name() string
+	LatestReading(ctx context.Context, meterNumber string) (kWh float64, at time.Time, err error)
 }
