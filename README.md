@@ -129,8 +129,11 @@ internal/
   store/memstore/         in-memory store (tests, dev) with rollback
   store/pgstore/          PostgreSQL store (pgx v5); pgtest = per-test databases
   transactions/ meters/ ledger/ events/ idempotency/   domain types and rules
+  autopower/              M9 AutoPower rules, runs, bound AEAD card mandates & Africa/Lagos scheduler
+  payrequests/            M7 Pay-for-Me shareable request links & QR PNG encoder
+  pots/                   M8 reusable Funding Pot engine (SPLIT_METER, LANDLORD_BULK)
   outbox/                 at-least-once outbox publisher
-  providers/              contracts for payment, vending, remote-credit providers
+  providers/              contracts for payment, vending, remote-credit & meter-reading providers
   providers/mock/         deterministic mocks for every success and failure path
   secure/                 AES-GCM token encryption, HMAC meter lookup, masking
   httpapi/                /v1 REST API (spec §7) + OpenAPI parity tests
@@ -154,4 +157,5 @@ docs/                     roadmap and decisions
 - **Crash-safe:** if the process dies between any provider call and the next commit, `Resume` continues without double-charging, double-vending or double-crediting. Fault-injection tests cover this.
 - **Stuck transactions escalate** to `MANUAL_REVIEW` after a bounded number of checks with backoff. Payment amount mismatches and late payments go to review too.
 - **Tokens are encrypted at rest**, never logged, and only the purchaser can read them. Meter numbers are encrypted, looked up by HMAC and shown masked.
-- **Access is granted per meter.** Validating a meter number grants no access. Revoking access blocks purchases even with a quote already issued.
+- **Access is granted per meter.** Validating a meter number grants no access. Revoking access blocks purchases even with a quote already issued, and automatically pauses any active AutoPower rules for that `(user, meter)` pair.
+- **AutoPower saved-card charges never double-charge (`FEATURE_AUTOPOWER`, default `false`).** Reusable card authorizations are saved only after explicit user consent (`POST /v1/me/payment-methods/{transaction_id}/save`), encrypted with AEAD bound to `(user_id, payment_method_id)`. Each scheduled or low-balance slot (`UNIQUE (rule_id, scheduled_for)`) pre-commits deterministic `apchg:<run_id>` before calling `ChargeSaved`, always verifies settlement via `VerifyPayment` (Invariant 1), enforces `Africa/Lagos` monthly rule caps and per-user daily caps under row locks, pauses after 3 consecutive failures, and atomically stops referencing rules when a saved payment method is deleted.
