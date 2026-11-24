@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/notifications"
@@ -126,18 +127,117 @@ func (s *Service) Sink() outbox.Sink {
 	return s.HandleEvent
 }
 
-// HandleEvent turns an allowlisted transaction outbox event into idempotent
+// HandleEvent turns an allowlisted outbox event into idempotent
 // notification_deliveries rows.
 func (s *Service) HandleEvent(ctx context.Context, e events.Event) error {
-	if e.AggregateType != "electricity_transaction" {
+	switch e.AggregateType {
+	case "electricity_transaction":
+		if r, ok := store.ReposFromContext(ctx); ok {
+			return s.enqueueInRepos(ctx, r, e)
+		}
+		return s.st.InTx(ctx, func(r store.Repos) error {
+			return s.enqueueInRepos(ctx, r, e)
+		})
+	case "autopower_run", "autopower_rule":
+		if r, ok := store.ReposFromContext(ctx); ok {
+			return s.enqueueAutoPowerInRepos(ctx, r, e)
+		}
+		return s.st.InTx(ctx, func(r store.Repos) error {
+			return s.enqueueAutoPowerInRepos(ctx, r, e)
+		})
+	default:
 		return nil
 	}
-	if r, ok := store.ReposFromContext(ctx); ok {
-		return s.enqueueInRepos(ctx, r, e)
+}
+
+func (s *Service) enqueueAutoPowerInRepos(ctx context.Context, r store.Repos, e events.Event) error {
+	spec, ok := notifications.AutoPowerTemplateSpecFor(e)
+	if !ok {
+		return nil
 	}
-	return s.st.InTx(ctx, func(r store.Repos) error {
-		return s.enqueueInRepos(ctx, r, e)
-	})
+	var (
+		userID string
+		txnID  uuid.UUID
+	)
+	switch e.AggregateType {
+	case "autopower_run":
+		run, err := r.AutoPower().GetRun(ctx, e.AggregateID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		userID = run.UserID
+		if run.TransactionID != nil {
+			txnID = *run.TransactionID
+		}
+	case "autopower_rule":
+		rule, err := r.AutoPower().GetRule(ctx, e.AggregateID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		userID = rule.UserID
+	}
+	if userID == "" {
+		return nil
+	}
+
+	contacts, err := r.Users().Contacts(ctx, userID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	prefs, err := r.Notifications().GetPreferences(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		prefs = notifications.DefaultPreferences()
+	} else if err != nil {
+		return err
+	}
+
+	now := s.now().UTC()
+	for _, ch := range []notifications.Channel{notifications.SMS, notifications.Email, notifications.WhatsApp} {
+		destHMAC := contactHMACForChannel(contacts, ch)
+		if destHMAC == "" || !prefs.Enabled(ch) {
+			continue
+		}
+		status := notifications.StatusPending
+		errCode := ""
+		optedOut, err := r.Notifications().IsOptedOut(ctx, destHMAC, ch)
+		if err != nil {
+			return err
+		}
+		if optedOut {
+			status = notifications.StatusSuppressed
+			errCode = "RECIPIENT_OPTED_OUT"
+		}
+		pd := &notifications.Delivery{
+			EventID:         e.ID,
+			TransactionID:   txnID,
+			UserID:          userID,
+			RecipientKind:   notifications.RecipientPurchaser,
+			Channel:         ch,
+			DestinationHMAC: destHMAC,
+			TemplateID:      spec.ID,
+			TemplateVersion: spec.Version,
+			Locale:          notifications.LocaleEN,
+			Status:          status,
+			NextAttemptAt:   now,
+			LastErrorCode:   errCode,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+		inserted, err := r.Notifications().CreateDelivery(ctx, pd)
+		if err != nil {
+			return err
+		}
+		if inserted && status == notifications.StatusSuppressed {
+			s.metrics.IncNotificationDelivery(string(ch), string(notifications.StatusSuppressed))
+		}
+	}
+	return nil
 }
 
 func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Event) error {
@@ -787,9 +887,14 @@ func (s *Service) prepareSendInTx(
 	d *notifications.Delivery,
 	now time.Time,
 ) (req notifications.SendRequest, suppressCode, failCode string, err error) {
-	t, err := r.Transactions().Get(ctx, d.TransactionID)
-	if err != nil {
-		return req, "", "", err
+	var t *tx.Transaction
+	if d.TransactionID != uuid.Nil {
+		t, err = r.Transactions().Get(ctx, d.TransactionID)
+		if err != nil {
+			return req, "", "", err
+		}
+	} else if d.RecipientKind != notifications.RecipientPurchaser || d.UserID == "" {
+		return req, "", "MISSING_CONTEXT", nil
 	}
 
 	switch d.RecipientKind {
@@ -858,7 +963,14 @@ func (s *Service) prepareSendInTx(
 		}, "", "", nil
 
 	case notifications.RecipientPurchaser:
-		prefs, err := r.Notifications().GetPreferences(ctx, t.CustomerID)
+		customerID := d.UserID
+		if customerID == "" && t != nil {
+			customerID = t.CustomerID
+		}
+		if customerID == "" {
+			return req, "USER_NOT_FOUND", "", nil
+		}
+		prefs, err := r.Notifications().GetPreferences(ctx, customerID)
 		if errors.Is(err, store.ErrNotFound) {
 			return req, "USER_NOT_FOUND", "", nil
 		}
@@ -868,7 +980,7 @@ func (s *Service) prepareSendInTx(
 		if !prefs.Enabled(d.Channel) {
 			return req, "PREFERENCE_DISABLED", "", nil
 		}
-		contacts, err := r.Users().Contacts(ctx, t.CustomerID)
+		contacts, err := r.Users().Contacts(ctx, customerID)
 		if errors.Is(err, store.ErrNotFound) {
 			return req, "CONTACT_MISSING", "", nil
 		}
@@ -881,7 +993,7 @@ func (s *Service) prepareSendInTx(
 			if len(contacts.PhoneCiphertext) == 0 {
 				return req, "CONTACT_MISSING", "", nil
 			}
-			dest, err = notifications.OpenUserPhone(s.box, t.CustomerID, contacts.PhoneCiphertext)
+			dest, err = notifications.OpenUserPhone(s.box, customerID, contacts.PhoneCiphertext)
 			if err != nil {
 				return req, "", "CONTACT_DECRYPT_FAILED", nil
 			}
@@ -889,7 +1001,7 @@ func (s *Service) prepareSendInTx(
 			if len(contacts.EmailCiphertext) == 0 {
 				return req, "CONTACT_MISSING", "", nil
 			}
-			dest, err = notifications.OpenUserEmail(s.box, t.CustomerID, contacts.EmailCiphertext)
+			dest, err = notifications.OpenUserEmail(s.box, customerID, contacts.EmailCiphertext)
 			if err != nil {
 				return req, "", "CONTACT_DECRYPT_FAILED", nil
 			}
@@ -904,7 +1016,29 @@ func (s *Service) prepareSendInTx(
 		if optedOut {
 			return req, "RECIPIENT_OPTED_OUT", "", nil
 		}
-		content, ver, err := notifications.RenderPurchaserTemplate(d.TemplateID, d.Locale)
+		var (
+			content notifications.Content
+			ver     string
+		)
+		if d.TemplateID == notifications.TemplateAutoPowerHeadsUp {
+			run, rErr := r.AutoPower().GetRun(ctx, d.EventID)
+			if rErr == nil {
+				if run.Status != autopower.RunScheduled {
+					return req, "RUN_NOT_SCHEDULED", "", nil
+				}
+				rule, rlErr := r.AutoPower().GetRule(ctx, run.RuleID)
+				if rlErr == nil {
+					if m, mErr := r.Meters().Get(ctx, rule.MeterID); mErr == nil {
+						content, ver, err = notifications.RenderAutoPowerHeadsUp(
+							d.Locale, run.AmountMinor, m.Masked, run.ScheduledFor, autopower.LagosLocation(),
+						)
+					}
+				}
+			}
+		}
+		if ver == "" && err == nil {
+			content, ver, err = notifications.RenderPurchaserTemplate(d.TemplateID, d.Locale)
+		}
 		if err != nil {
 			return req, "", "UNKNOWN_TEMPLATE", nil
 		}

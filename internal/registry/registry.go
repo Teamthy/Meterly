@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/autopower"
+	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
@@ -214,9 +216,11 @@ func MarkRemoteReadingConfirmedIn(ctx context.Context, r store.Repos, id uuid.UU
 }
 
 // RemoveSavedMeter revokes only the caller's own active access, not that of
-// household members. In-flight purchases are not cancelled. A later
-// self-service registration may restore purchase access.
+// household members. In-flight purchases are not cancelled. Active AutoPower
+// rules for (userID, id) are atomically paused and their unstarted runs
+// cancelled so revoked meters are never charged.
 func (g *Registry) RemoveSavedMeter(ctx context.Context, userID string, id uuid.UUID) error {
+	now := g.Now().UTC()
 	return g.st.InTx(ctx, func(r store.Repos) error {
 		if _, err := r.Meters().GetForUpdate(ctx, id); err != nil {
 			return notFound(err)
@@ -226,10 +230,53 @@ func (g *Registry) RemoveSavedMeter(ctx context.Context, userID string, id uuid.
 		} else if err != nil {
 			return err
 		}
-		if err := r.Meters().Revoke(ctx, id, userID, g.Now().UTC()); err != nil {
+		if err := r.Meters().Revoke(ctx, id, userID, now); err != nil {
 			return err
 		}
 		actor := audit.Actor{UserID: userID, Type: audit.ActorUser, CorrelationID: audit.CorrelationFrom(ctx)}
+		userRules, err := r.AutoPower().ListRulesForUser(ctx, userID)
+		if err != nil {
+			return err
+		}
+		for _, candidate := range userRules {
+			if candidate.MeterID != id || candidate.Status == autopower.RuleCancelled {
+				continue
+			}
+			rl, err := r.AutoPower().GetRuleForUpdate(ctx, candidate.ID)
+			if err != nil {
+				return err
+			}
+			if rl.Status == autopower.RuleCancelled {
+				continue
+			}
+			wasActive := rl.Status == autopower.RuleActive
+			rl.Status = autopower.RulePaused
+			rl.PauseReason = autopower.PauseMeterAccessRevoked
+			rl.NextScheduledAt = nil
+			rl.NextPollAt = nil
+			rl.LeaseUntil = time.Time{}
+			rl.UpdatedAt = now
+			if err := r.AutoPower().UpdateRule(ctx, rl); err != nil {
+				return err
+			}
+			if err := r.AutoPower().CancelScheduledRunsForRule(ctx, rl.ID, now); err != nil {
+				return err
+			}
+			if err := r.Audit().Add(ctx, actor.Event("autopower.rule.paused", "autopower_rule", rl.ID, map[string]any{
+				"reason": autopower.PauseMeterAccessRevoked,
+			})); err != nil {
+				return err
+			}
+			if wasActive {
+				ev := events.NewForAggregate("autopower_rule", "autopower.rule.paused", rl.ID, map[string]any{
+					"reason": autopower.PauseMeterAccessRevoked,
+				})
+				ev.CreatedAt = now
+				if err := r.Outbox().Add(ctx, ev); err != nil {
+					return err
+				}
+			}
+		}
 		return r.Audit().Add(ctx, actor.Event("meter.self_access_removed", "meter", id, nil))
 	})
 }

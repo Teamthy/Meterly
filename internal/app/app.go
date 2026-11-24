@@ -41,11 +41,12 @@ import (
 // BuildOptions allows tests to inject custom providers, stores or HTTP
 // middleware without changing production wiring.
 type BuildOptions struct {
-	Store           store.Store
-	PaymentProvider providers.PaymentProvider
-	VendingProvider providers.VendingProvider
-	RemoteProvider  providers.RemoteCreditProvider
-	WrapPublicHTTP  func(http.Handler) http.Handler
+	Store                store.Store
+	PaymentProvider      providers.PaymentProvider
+	VendingProvider      providers.VendingProvider
+	RemoteProvider       providers.RemoteCreditProvider
+	MeterReadingProvider providers.MeterReadingProvider
+	WrapPublicHTTP       func(http.Handler) http.Handler
 }
 
 type App struct {
@@ -62,6 +63,7 @@ type App struct {
 	// Set only when the corresponding mock is in use (dev simulation).
 	mockPay      *mock.Payments
 	mockRemote   *mock.RemoteCredit
+	MockReadings *mock.MeterReadings
 	MockSMS      *notifications.MockSender
 	MockEmail    *notifications.MockSender
 	MockWhatsApp *notifications.MockSender
@@ -159,6 +161,13 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	}
 	remote := observability.WrapRemoteCreditProvider(rawRemote, a.Metrics, a.Tracer)
 
+	var rawReadings providers.MeterReadingProvider = opts.MeterReadingProvider
+	if rawReadings == nil && cfg.MeterReadingProvider == "mock" {
+		a.MockReadings = mock.NewMeterReadings()
+		rawReadings = a.MockReadings
+	}
+	readings := observability.WrapMeterReadingProvider(rawReadings, a.Metrics, a.Tracer)
+
 	if cfg.AuthMode == "oidc" {
 		o, err := auth.NewOIDC(auth.OIDCConfig{
 			Issuer: cfg.OIDCIssuer, Audience: cfg.OIDCAudience, JWKSURL: cfg.OIDCJWKSURL,
@@ -176,6 +185,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	reg := registry.New(a.Store, box, vend, remote)
 	a.Orch = orchestrator.New(cfg.Orchestrator, a.Store, reg, box, a.payments, vend, remote, log)
 	a.Orch.SetMetrics(a.Metrics)
+	a.Orch.SetMeterReadingProvider(readings)
 
 	notifProvs := map[notifications.Channel]notifications.Provider{}
 	inboundVers := map[string]notifications.InboundVerifier{}
@@ -328,8 +338,9 @@ func (a *App) Handler() http.Handler {
 		},
 		PayForMeDisabled:   !a.Cfg.FeaturePayForMe,
 		SplitMeterDisabled: !a.Cfg.FeatureSplitMeter,
+		AutoPowerDisabled:  !a.Cfg.FeatureAutoPower,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
-		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote,
+		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}
 	h := s.Routes()
 	if a.wrapPublic != nil {
@@ -596,6 +607,38 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 			}
 			if n > 0 {
 				a.Log.Info("notification candidates held", "count", n)
+			}
+		})
+	}
+	if a.Cfg.FeatureAutoPower {
+		apInterval := a.Cfg.AutoPowerInterval
+		if apInterval <= 0 {
+			apInterval = 30 * time.Second
+		}
+		start("autopower-scheduler", apInterval, func(ctx context.Context) {
+			if ctx.Err() != nil {
+				return
+			}
+			n, err := a.Orch.TickAutoPower(drainCtx)
+			if err != nil {
+				a.Log.Warn("autopower scheduler tick failed", "err", err)
+				return
+			}
+			if n > 0 {
+				a.Log.Info("autopower scheduler tick", "processed", n)
+			}
+		})
+		start("autopower-low-balance", apInterval, func(ctx context.Context) {
+			if ctx.Err() != nil {
+				return
+			}
+			n, err := a.Orch.PollLowBalance(drainCtx)
+			if err != nil {
+				a.Log.Warn("autopower low-balance poll failed", "err", err)
+				return
+			}
+			if n > 0 {
+				a.Log.Info("autopower low-balance poll", "polled", n)
 			}
 		})
 	}

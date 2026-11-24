@@ -112,17 +112,19 @@ func (h *hookRemote) InitiateCredit(ctx context.Context, r providers.RemoteCredi
 // ---- environment ---------------------------------------------------------------
 
 type env struct {
-	o      *orchestrator.Orchestrator
-	st     *crashStore
-	pay    *mock.Payments
-	vend   *mock.Vending
-	remote *mock.RemoteCredit
-	hv     *hookVending
-	hp     *hookPayments
-	hr     *hookRemote
-	ctx    context.Context
-	users  map[string]string
-	clock  time.Time
+	o        *orchestrator.Orchestrator
+	st       *crashStore
+	pay      *mock.Payments
+	vend     *mock.Vending
+	remote   *mock.RemoteCredit
+	readings *mock.MeterReadings
+	hv       *hookVending
+	hp       *hookPayments
+	hr       *hookRemote
+	ctx      context.Context
+	users    map[string]string
+	clock    time.Time
+	mu       sync.RWMutex
 }
 
 type backend struct {
@@ -148,21 +150,38 @@ func newEnv(t *testing.T, base store.Store) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pay, vend, remote := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit()
-	e := &env{st: &crashStore{Store: base}, pay: pay, vend: vend, remote: remote, ctx: context.Background(), users: map[string]string{}}
+	pay, vend, remote, readings := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit(), mock.NewMeterReadings()
+	e := &env{st: &crashStore{Store: base}, pay: pay, vend: vend, remote: remote, readings: readings, ctx: context.Background(), users: map[string]string{}}
 	e.hv = &hookVending{VendingProvider: vend}
 	e.hp = &hookPayments{PaymentProvider: pay}
 	e.hr = &hookRemote{RemoteCreditProvider: remote}
 	reg := registry.New(e.st, box, e.hv, e.hr)
 	e.o = orchestrator.New(orchestrator.DefaultConfig(), e.st, reg, box, e.hp, e.hv, e.hr, nil)
+	e.o.SetMeterReadingProvider(readings)
 	e.clock = time.Now().UTC()
-	e.o.Now = func() time.Time { return e.clock }
+	nowFn := func() time.Time {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return e.clock
+	}
+	e.o.Now = nowFn
+	reg.Now = nowFn
 	return e
 }
 
 // later moves the orchestrator clock forward (transactions' own
 // timestamps stay on wall time, so they become "stale").
-func (e *env) later(d time.Duration) { e.clock = e.clock.Add(d) }
+func (e *env) later(d time.Duration) {
+	e.mu.Lock()
+	e.clock = e.clock.Add(d)
+	e.mu.Unlock()
+}
+
+func (e *env) setClock(at time.Time) {
+	e.mu.Lock()
+	e.clock = at.UTC()
+	e.mu.Unlock()
+}
 
 func (e *env) user(t *testing.T, name string) string {
 	t.Helper()

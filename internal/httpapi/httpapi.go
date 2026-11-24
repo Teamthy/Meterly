@@ -56,11 +56,13 @@ type Server struct {
 	Limits             Limits
 	PayForMeDisabled   bool
 	SplitMeterDisabled bool
+	AutoPowerDisabled  bool
 	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
-	Dev       bool
-	DevPay    *mock.Payments
-	DevRemote *mock.RemoteCredit
+	Dev         bool
+	DevPay      *mock.Payments
+	DevRemote   *mock.RemoteCredit
+	DevReadings *mock.MeterReadings
 
 	writes, authFails, hooks, publicPay, publicLink ratelimit.Limiter
 	patterns                                        []string

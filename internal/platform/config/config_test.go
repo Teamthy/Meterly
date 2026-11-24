@@ -201,3 +201,42 @@ func TestSplitMeterConfig(t *testing.T) {
 		t.Fatalf("invalid FEATURE_SPLIT_METER must fail: %v", err)
 	}
 }
+
+func TestAutoPowerConfig(t *testing.T) {
+	devCfg, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if devCfg.FeatureAutoPower {
+		t.Fatalf("FEATURE_AUTOPOWER must default to false even in dev")
+	}
+	if devCfg.MeterReadingProvider != "mock" || devCfg.AutoPowerInterval != 30*time.Second ||
+		devCfg.Orchestrator.AutoPowerDailyMaxMinor != 10000000 || devCfg.Orchestrator.AutoPowerPollInterval != 4*time.Hour {
+		t.Fatalf("unexpected dev autopower defaults: %+v", devCfg)
+	}
+
+	onCfg, err := Load(env(map[string]string{
+		"MODE":                      "dev",
+		"FEATURE_AUTOPOWER":         "true",
+		"AUTOPOWER_DAILY_MAX_MINOR": "5000000",
+		"AUTOPOWER_INTERVAL":        "10s",
+		"AUTOPOWER_POLL_INTERVAL":   "2h",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !onCfg.FeatureAutoPower || onCfg.AutoPowerInterval != 10*time.Second ||
+		onCfg.Orchestrator.AutoPowerDailyMaxMinor != 5000000 || onCfg.Orchestrator.AutoPowerPollInterval != 2*time.Hour {
+		t.Fatalf("unexpected explicit autopower config: %+v", onCfg)
+	}
+
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_AUTOPOWER": "maybe"})); err == nil || !strings.Contains(err.Error(), "FEATURE_AUTOPOWER") {
+		t.Fatalf("invalid FEATURE_AUTOPOWER must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "AUTOPOWER_DAILY_MAX_MINOR": "0"})); err == nil || !strings.Contains(err.Error(), "AUTOPOWER_DAILY_MAX_MINOR") {
+		t.Fatalf("zero AUTOPOWER_DAILY_MAX_MINOR must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "METER_READING_PROVIDER": "unknown"})); err == nil || !strings.Contains(err.Error(), "METER_READING_PROVIDER") {
+		t.Fatalf("unsupported METER_READING_PROVIDER must fail: %v", err)
+	}
+}
