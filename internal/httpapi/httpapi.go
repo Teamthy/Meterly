@@ -161,6 +161,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/public/pots/{code}", s.publicPotLimited(s.getPublicPot))
 	mux.HandleFunc("POST /v1/public/pots/{code}/contribute", s.publicPotLimited(s.contributeToPot))
 
+	mux.Handle("GET /v1/me/payment-methods", user(s.listPaymentMethods))
+	mux.Handle("DELETE /v1/me/payment-methods/{id}", write(s.deletePaymentMethod))
+	mux.Handle("POST /v1/me/payment-methods/{transaction_id}/save", write(s.savePaymentMethod))
+	mux.Handle("POST /v1/autopower/rules", write(s.createAutoPowerRule))
+	mux.Handle("GET /v1/autopower/rules", user(s.listAutoPowerRules))
+	mux.Handle("PATCH /v1/autopower/rules/{id}", write(s.updateAutoPowerRule))
+	mux.Handle("DELETE /v1/autopower/rules/{id}", write(s.deleteAutoPowerRule))
+	mux.Handle("POST /v1/autopower/runs/{id}/skip", write(s.skipAutoPowerRun))
+
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))
 	mux.HandleFunc("POST /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInbound))
