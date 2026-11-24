@@ -84,7 +84,7 @@ func (o *Orchestrator) FallbackToToken(ctx context.Context, id uuid.UUID, actor 
 	if err := checkActor(actor); err != nil {
 		return nil, err
 	}
-	return o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
+	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
 		if t.Delivery != tx.DelFailed {
 			return fmt.Errorf("%w: fallback only allowed after confirmed delivery failure", tx.ErrInvalidTransition)
 		}
@@ -100,6 +100,10 @@ func (o *Orchestrator) FallbackToToken(ctx context.Context, id uuid.UUID, actor 
 		}
 		return emit(ctx, r, "token.available", t.ID, map[string]any{"fallback": true})
 	})
+	if err == nil && t != nil && t.EffectiveFundingSource() == tx.FundingPot {
+		o.trySettleAllocatedPot(ctx, t.ID)
+	}
+	return t, err
 }
 
 // Requeue takes a transaction out of manual review and resumes automatic
@@ -153,6 +157,9 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 	}
 	if t.Vending != tx.VendNotStarted && t.Vending != tx.VendFailed {
 		return t, ErrRefundNotSafe
+	}
+	if t.EffectiveFundingSource() == tx.FundingPot {
+		return o.refundPotFunded(ctx, id, "operator refund: "+actor.Reason, &actor)
 	}
 	if t.PaymentProviderRef == "" {
 		return t, ErrNothingToRefund

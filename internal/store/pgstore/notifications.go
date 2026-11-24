@@ -220,7 +220,7 @@ func (r notifRepo) HasActiveWhatsAppWindow(ctx context.Context, destinationHMAC 
 	return age >= 0 && age < 24*time.Hour, nil
 }
 
-const deliveryCols = `id, event_id, transaction_id, recipient_kind, channel, destination_hmac,
+const deliveryCols = `id, event_id, transaction_id, recipient_kind, recipient_slot, channel, destination_hmac,
 	template_id, template_version, locale, status, attempts, next_attempt_at,
 	provider_name, provider_ref, last_error_code, created_at, updated_at, sent_at`
 
@@ -229,7 +229,7 @@ func scanDelivery(row pgx.Row) (*notifications.Delivery, error) {
 	var kind, ch, st string
 	var sentAt *time.Time
 	if err := row.Scan(
-		&d.ID, &d.EventID, &d.TransactionID, &kind, &ch, &d.DestinationHMAC,
+		&d.ID, &d.EventID, &d.TransactionID, &kind, &d.RecipientSlot, &ch, &d.DestinationHMAC,
 		&d.TemplateID, &d.TemplateVersion, &d.Locale, &st, &d.Attempts, &d.NextAttemptAt,
 		&d.ProviderName, &d.ProviderRef, &d.LastErrorCode, &d.CreatedAt, &d.UpdatedAt, &sentAt,
 	); err != nil {
@@ -274,13 +274,13 @@ func (r notifRepo) CreateDelivery(ctx context.Context, d *notifications.Delivery
 
 	insertedRow, err := scanDelivery(r.db.QueryRow(ctx, `
 		INSERT INTO notification_deliveries (
-			id, event_id, transaction_id, recipient_kind, channel, destination_hmac,
+			id, event_id, transaction_id, recipient_kind, recipient_slot, channel, destination_hmac,
 			template_id, template_version, locale, status, attempts, next_attempt_at,
 			provider_name, provider_ref, last_error_code, created_at, updated_at, sent_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-		ON CONFLICT (event_id, recipient_kind, channel) DO NOTHING
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		ON CONFLICT (event_id, recipient_kind, channel, recipient_slot) DO NOTHING
 		RETURNING `+deliveryCols,
-		d.ID, d.EventID, d.TransactionID, string(d.RecipientKind), string(d.Channel), d.DestinationHMAC,
+		d.ID, d.EventID, d.TransactionID, string(d.RecipientKind), d.RecipientSlot, string(d.Channel), d.DestinationHMAC,
 		d.TemplateID, d.TemplateVersion, d.Locale, string(d.Status), d.Attempts, d.NextAttemptAt,
 		d.ProviderName, d.ProviderRef, d.LastErrorCode, d.CreatedAt, d.UpdatedAt, d.SentAt,
 	))
@@ -296,8 +296,8 @@ func (r notifRepo) CreateDelivery(ctx context.Context, d *notifications.Delivery
 	}
 	existing, err := scanDelivery(r.db.QueryRow(ctx, `
 		SELECT `+deliveryCols+` FROM notification_deliveries
-		WHERE event_id = $1 AND recipient_kind = $2 AND channel = $3`,
-		d.EventID, string(d.RecipientKind), string(d.Channel)))
+		WHERE event_id = $1 AND recipient_kind = $2 AND channel = $3 AND recipient_slot = $4`,
+		d.EventID, string(d.RecipientKind), string(d.Channel), d.RecipientSlot))
 	if err != nil {
 		return false, err
 	}
@@ -380,7 +380,7 @@ func (r notifRepo) ForTransaction(ctx context.Context, txnID uuid.UUID) ([]notif
 		var kind, ch, st string
 		var sentAt *time.Time
 		if err := rows.Scan(
-			&d.ID, &d.EventID, &d.TransactionID, &kind, &ch, &d.DestinationHMAC,
+			&d.ID, &d.EventID, &d.TransactionID, &kind, &d.RecipientSlot, &ch, &d.DestinationHMAC,
 			&d.TemplateID, &d.TemplateVersion, &d.Locale, &st, &d.Attempts, &d.NextAttemptAt,
 			&d.ProviderName, &d.ProviderRef, &d.LastErrorCode, &d.CreatedAt, &d.UpdatedAt, &sentAt,
 		); err != nil {

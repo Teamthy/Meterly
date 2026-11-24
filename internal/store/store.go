@@ -23,6 +23,7 @@ import (
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -80,6 +81,7 @@ type Repos interface {
 	NotificationCandidates() NotificationCandidateRepo
 	Notifications() NotificationRepo
 	PayRequests() PayRequestRepo
+	Pots() PotRepo
 }
 
 type AuditRepo interface {
@@ -244,4 +246,29 @@ type PayRequestRepo interface {
 	GetPayerForUpdate(ctx context.Context, txnID uuid.UUID) (payrequests.Payer, error)
 	GetPayerByStatusHMAC(ctx context.Context, statusHMAC string) (payrequests.Payer, error)
 	MarkPayerSlotReleased(ctx context.Context, txnID uuid.UUID) error
+}
+
+// PotRepo persists Funding Pots, contributions and POT-funded allocations.
+type PotRepo interface {
+	Create(ctx context.Context, p *pots.Pot) error
+	Get(ctx context.Context, id uuid.UUID) (*pots.Pot, error)
+	GetForUpdate(ctx context.Context, id uuid.UUID) (*pots.Pot, error)
+	GetByCodeHMAC(ctx context.Context, codeHMAC string) (*pots.Pot, error)
+	GetByCodeHMACForUpdate(ctx context.Context, codeHMAC string) (*pots.Pot, error)
+	Update(ctx context.Context, p *pots.Pot) error
+	ClaimDue(ctx context.Context, now, staleBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error)
+
+	CreateContribution(ctx context.Context, c *pots.Contribution) error
+	GetContribution(ctx context.Context, id uuid.UUID) (*pots.Contribution, error)
+	GetContributionForUpdate(ctx context.Context, id uuid.UUID) (*pots.Contribution, error)
+	ContributionByPaymentRef(ctx context.Context, ref string) (*pots.Contribution, error)
+	UpdateContribution(ctx context.Context, c *pots.Contribution) error
+	ListContributions(ctx context.Context, potID uuid.UUID) ([]*pots.Contribution, error)
+	ListContributionsForUpdate(ctx context.Context, potID uuid.UUID) ([]*pots.Contribution, error)
+
+	CreateAllocation(ctx context.Context, a *pots.Allocation) error
+	GetAllocationByTxn(ctx context.Context, txnID uuid.UUID) (*pots.Allocation, error)
+	GetAllocationByTxnForUpdate(ctx context.Context, txnID uuid.UUID) (*pots.Allocation, error)
+	UpdateAllocation(ctx context.Context, a *pots.Allocation) error
+	ListAllocations(ctx context.Context, potID uuid.UUID) ([]*pots.Allocation, error)
 }

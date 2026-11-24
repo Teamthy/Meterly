@@ -130,6 +130,7 @@ func (r *repos) Gifts() store.GiftRepo                                   { retur
 func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
 func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
 func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
+func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

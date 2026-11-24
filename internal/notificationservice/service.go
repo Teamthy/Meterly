@@ -29,6 +29,7 @@ import (
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
@@ -226,6 +227,7 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 	}
 
 	var purchaserEmailActiveHMAC string
+	var purchaserSMSActiveHMAC string
 	for _, ch := range []notifications.Channel{notifications.SMS, notifications.Email, notifications.WhatsApp} {
 		destHMAC := contactHMACForChannel(contacts, ch)
 		if destHMAC == "" {
@@ -249,6 +251,8 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 				errCode = "RECIPIENT_OPTED_OUT"
 			} else if ch == notifications.Email {
 				purchaserEmailActiveHMAC = destHMAC
+			} else if ch == notifications.SMS {
+				purchaserSMSActiveHMAC = destHMAC
 			}
 		}
 		pd := &notifications.Delivery{
@@ -326,6 +330,84 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 				}
 				if inserted && status == notifications.StatusSuppressed {
 					s.metrics.IncNotificationDelivery(string(notifications.Email), string(notifications.StatusSuppressed))
+				}
+			}
+		}
+	}
+
+	// Opted-in Funding Pot contributors receive a token-free SMS confirmation once
+	// electricity delivery settles (token.available or electricity.delivery.confirmed),
+	// subject to the global M5 opt-out table and per-destination deduplication.
+	if t.EffectiveFundingSource() == tx.FundingPot &&
+		(e.Type == "token.available" || e.Type == "electricity.delivery.confirmed") {
+		alloc, aErr := r.Pots().GetAllocationByTxn(ctx, t.ID)
+		if aErr != nil && !errors.Is(aErr, store.ErrNotFound) {
+			return aErr
+		}
+		if aErr == nil {
+			contribs, cErr := r.Pots().ListContributions(ctx, alloc.PotID)
+			if cErr != nil {
+				return cErr
+			}
+			seenPhoneHMAC := map[string]bool{}
+			if purchaserSMSActiveHMAC != "" {
+				seenPhoneHMAC[purchaserSMSActiveHMAC] = true
+			}
+			if activeGiftSMSDestHMAC != "" {
+				seenPhoneHMAC[activeGiftSMSDestHMAC] = true
+			}
+			for _, c := range contribs {
+				if !c.OptInSMS || c.RetainedMinor <= 0 || len(c.PhoneCiphertext) == 0 {
+					continue
+				}
+				plainPhone, decErr := pots.OpenContributorPhone(s.box, c.ID, c.PhoneCiphertext)
+				if decErr != nil {
+					return decErr
+				}
+				normPhone, nErr := notifications.NormalizePhone(plainPhone)
+				if nErr != nil {
+					continue
+				}
+				phoneHMAC := notifications.DestinationHMAC(s.box, normPhone)
+				status := notifications.StatusPending
+				errCode := ""
+				if seenPhoneHMAC[phoneHMAC] {
+					status = notifications.StatusSuppressed
+					errCode = "DUPLICATE_DESTINATION"
+				} else {
+					optedOut, oErr := r.Notifications().IsOptedOut(ctx, phoneHMAC, notifications.SMS)
+					if oErr != nil {
+						return oErr
+					}
+					if optedOut {
+						status = notifications.StatusSuppressed
+						errCode = "RECIPIENT_OPTED_OUT"
+					} else {
+						seenPhoneHMAC[phoneHMAC] = true
+					}
+				}
+				cd := &notifications.Delivery{
+					EventID:         e.ID,
+					TransactionID:   t.ID,
+					RecipientKind:   notifications.RecipientPotContributor,
+					RecipientSlot:   c.ID.String(),
+					Channel:         notifications.SMS,
+					DestinationHMAC: phoneHMAC,
+					TemplateID:      notifications.TemplatePotSettled,
+					TemplateVersion: notifications.CurrentTemplateVersion,
+					Locale:          notifications.LocaleEN,
+					Status:          status,
+					NextAttemptAt:   now,
+					LastErrorCode:   errCode,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				}
+				inserted, err := r.Notifications().CreateDelivery(ctx, cd)
+				if err != nil {
+					return err
+				}
+				if inserted && status == notifications.StatusSuppressed {
+					s.metrics.IncNotificationDelivery(string(notifications.SMS), string(notifications.StatusSuppressed))
 				}
 			}
 		}
@@ -902,6 +984,62 @@ func (s *Service) prepareSendInTx(
 				TransactionID: d.TransactionID,
 				Channel:       notifications.Email,
 				Destination:   normEmail,
+				Subject:       content.Subject,
+				Body:          content.Body,
+			},
+		}, "", "", nil
+
+	case notifications.RecipientPotContributor:
+		if d.Channel != notifications.SMS {
+			return req, "", "UNSUPPORTED_CHANNEL", nil
+		}
+		if d.TemplateID != notifications.TemplatePotSettled {
+			return req, "TEMPLATE_NOT_PERMITTED_FOR_CONTRIBUTOR", "", nil
+		}
+		contribID, err := uuid.Parse(d.RecipientSlot)
+		if err != nil {
+			return req, "", "INVALID_RECIPIENT_SLOT", nil
+		}
+		contrib, err := r.Pots().GetContribution(ctx, contribID)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && (!contrib.OptInSMS || contrib.RetainedMinor <= 0 || len(contrib.PhoneCiphertext) == 0)) {
+			return req, "NOTIFICATION_NOT_REQUESTED", "", nil
+		}
+		if err != nil {
+			return req, "", "", err
+		}
+		plainPhone, err := pots.OpenContributorPhone(s.box, contrib.ID, contrib.PhoneCiphertext)
+		if err != nil {
+			return req, "", "CONTACT_DECRYPT_FAILED", nil
+		}
+		normPhone, err := notifications.NormalizePhone(plainPhone)
+		if err != nil {
+			return req, "", "INVALID_RECIPIENT_PHONE", nil
+		}
+		destHMAC := notifications.DestinationHMAC(s.box, normPhone)
+		optedOut, err := r.Notifications().IsOptedOut(ctx, destHMAC, notifications.SMS)
+		if err != nil {
+			return req, "", "", err
+		}
+		if optedOut {
+			return req, "RECIPIENT_OPTED_OUT", "", nil
+		}
+		content, ver, err := notifications.RenderPurchaserTemplate(d.TemplateID, d.Locale)
+		if err != nil {
+			return req, "", "UNKNOWN_TEMPLATE", nil
+		}
+		d.DestinationHMAC = destHMAC
+		d.TemplateVersion = ver
+		return notifications.SendRequest{
+			DeliveryID:      d.ID,
+			IdempotencyKey:  idempotencyKey(d.ID),
+			TemplateID:      d.TemplateID,
+			TemplateVersion: ver,
+			Locale:          d.Locale,
+			Message: notifications.Message{
+				EventID:       d.EventID,
+				TransactionID: d.TransactionID,
+				Channel:       notifications.SMS,
+				Destination:   normPhone,
 				Subject:       content.Subject,
 				Body:          content.Body,
 			},

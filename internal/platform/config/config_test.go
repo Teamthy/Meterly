@@ -157,3 +157,47 @@ func TestObservabilityConfig(t *testing.T) {
 		t.Fatalf("metrics sharing public HTTP port must fail: %v", err)
 	}
 }
+
+func TestSplitMeterConfig(t *testing.T) {
+	devCfg, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !devCfg.FeatureSplitMeter || devCfg.PotMaxHold != 72*time.Hour || devCfg.Orchestrator.PotMaxHold != 72*time.Hour {
+		t.Fatalf("unexpected dev split-meter defaults: enabled=%v hold=%s", devCfg.FeatureSplitMeter, devCfg.PotMaxHold)
+	}
+
+	prodEnv := func(extra map[string]string) map[string]string {
+		m := map[string]string{
+			"MODE":                 "production",
+			"DATABASE_URL":         "postgres://user:pass@localhost:5432/meterly",
+			"TOKEN_ENC_KEY":        strings.Repeat("ab", 32),
+			"METER_HMAC_KEY":       strings.Repeat("cd", 32),
+			"PAYMENT_PROVIDER":     "paystack",
+			"PAYSTACK_SECRET_KEY":  "sk_live_12345",
+			"PROVIDER_ENVIRONMENT": "PRODUCTION",
+			"VENDING_PROVIDER":     "mock",
+			"REMOTE_PROVIDER":      "none",
+			"OIDC_ISSUER":          "https://auth.meterly.ng",
+			"OIDC_AUDIENCE":        "meterly-api",
+			"OIDC_JWKS_URL":        "https://auth.meterly.ng/.well-known/jwks.json",
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+
+	// Staging with real non-mock check: check FeatureSplitMeter default false outside dev even when config errors on mock vending.
+	stgCfg, _ := Load(env(prodEnv(map[string]string{"MODE": "staging", "PAYSTACK_SECRET_KEY": "sk_test_123", "PROVIDER_ENVIRONMENT": "SANDBOX"})))
+	if stgCfg.FeatureSplitMeter {
+		t.Fatalf("FEATURE_SPLIT_METER must default to false outside dev")
+	}
+
+	if _, err := Load(env(map[string]string{"MODE": "dev", "POT_MAX_HOLD": "200h"})); err == nil || !strings.Contains(err.Error(), "POT_MAX_HOLD") {
+		t.Fatalf("POT_MAX_HOLD above 168h must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_SPLIT_METER": "maybe"})); err == nil || !strings.Contains(err.Error(), "FEATURE_SPLIT_METER") {
+		t.Fatalf("invalid FEATURE_SPLIT_METER must fail: %v", err)
+	}
+}

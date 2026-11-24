@@ -20,6 +20,7 @@ type AccountCode string
 // agreed with finance based on the contractual money flow.
 const (
 	PSPSettlementReceivable AccountCode = "PSP_SETTLEMENT_RECEIVABLE" // asset
+	PotFundsHeld            AccountCode = "POT_FUNDS_HELD"            // liability
 	CustomerFundsClearing   AccountCode = "CUSTOMER_FUNDS_CLEARING"   // liability
 	ProviderPayable         AccountCode = "PROVIDER_PAYABLE"          // liability
 	RefundPayable           AccountCode = "REFUND_PAYABLE"            // liability

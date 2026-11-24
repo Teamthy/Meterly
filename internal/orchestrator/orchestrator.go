@@ -48,6 +48,9 @@ type Config struct {
 	// PaymentExpiry: a payment still unpaid (per the provider) after this
 	// long is marked FAILED. A later successful payment goes to review.
 	PaymentExpiry time.Duration
+	// PotMaxHold caps how long a Funding Pot may hold contributor funds before
+	// automatic expiry and refund (default 72h, ceiling 7d).
+	PotMaxHold time.Duration
 	// Resume worker scheduling.
 	ResumeStaleAfter  time.Duration // only touch transactions idle this long
 	ResumeLease       time.Duration // claim lease so workers don't overlap
@@ -62,6 +65,7 @@ func DefaultConfig() Config {
 		FeeMinor: 10000, MinAmountMinor: 50000, MaxAmountMinor: 50000000,
 		QuoteTTL: 15 * time.Minute, ProviderTimeout: 20 * time.Second, IdempotencyTTL: 24 * time.Hour,
 		PaymentExpiry:    2 * time.Hour,
+		PotMaxHold:       72 * time.Hour,
 		ResumeStaleAfter: 2 * time.Minute, ResumeLease: 2 * time.Minute,
 		ResumeBaseBackoff: 30 * time.Second, ResumeMaxBackoff: 30 * time.Minute,
 		ResumeMaxAttempts: 12, ResumeBatch: 50,
@@ -387,6 +391,10 @@ func (o *Orchestrator) EnsurePaymentInitialised(ctx context.Context, id uuid.UUI
 func (o *Orchestrator) HandlePaymentNotification(ctx context.Context, providerRef string) (*tx.Transaction, error) {
 	t, err := o.st.Repos().Transactions().ByPaymentRef(ctx, providerRef)
 	if errors.Is(err, store.ErrNotFound) {
+		potTxn, handled, perr := o.handlePotContributionPayment(ctx, providerRef)
+		if handled || perr != nil {
+			return potTxn, perr
+		}
 		return nil, tx.ErrNotFound
 	}
 	if err != nil {
@@ -647,6 +655,9 @@ func (o *Orchestrator) deliver(ctx context.Context, id uuid.UUID) (*tx.Transacti
 		return emit(ctx, r, "token.available", t.ID, map[string]any{"gift": t.IsGift})
 	})
 	if err != nil || !claimed {
+		if err == nil && t != nil && t.Delivery == tx.DelConfirmed && t.EffectiveFundingSource() == tx.FundingPot {
+			o.trySettleAllocatedPot(ctx, t.ID)
+		}
 		return t, err
 	}
 	return o.sendRemoteCredit(ctx, t)
@@ -699,7 +710,7 @@ func (o *Orchestrator) applyCreditResult(ctx context.Context, id uuid.UUID, res 
 	default:
 		return nil, fmt.Errorf("unexpected credit status %q", res.Status)
 	}
-	return o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
+	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
 		switch t.Delivery {
 		case tx.DelPending, tx.DelAccepted, tx.DelUnknown:
 		default:
@@ -724,6 +735,10 @@ func (o *Orchestrator) applyCreditResult(ctx context.Context, id uuid.UUID, res 
 		}
 		return emit(ctx, r, evt, t.ID, map[string]any{"method": "REMOTE"})
 	})
+	if err == nil && t != nil && t.Delivery == tx.DelConfirmed && t.EffectiveFundingSource() == tx.FundingPot {
+		o.trySettleAllocatedPot(ctx, t.ID)
+	}
+	return t, err
 }
 
 // requireEnabled returns ErrProviderDisabled if an operator switched the
@@ -742,10 +757,21 @@ func (o *Orchestrator) requireEnabled(ctx context.Context, name string) error {
 // ---- Refunds -----------------------------------------------------------------------
 
 // refund is used only when vending definitively failed, so the customer
-// provably received no electricity.
+// provably received no electricity. Branches on FundingSource so POT-funded
+// transactions return funds to POT_FUNDS_HELD instead of calling the PSP.
 func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) (*tx.Transaction, error) {
+	cur, err := o.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.EffectiveFundingSource() == tx.FundingPot {
+		return o.refundPotFunded(ctx, id, reason, nil)
+	}
 	claimed := false
 	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
+		if t.EffectiveFundingSource() == tx.FundingPot {
+			return errSkip
+		}
 		if t.Payment != tx.PayConfirmed || t.Vending != tx.VendFailed || t.ReviewReason != "" {
 			return errSkip
 		}
@@ -771,6 +797,9 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 // executeRefund asks the PSP to refund (idempotent by our reference) and
 // records completion. On failure it stays REFUND_PENDING for Resume.
 func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*tx.Transaction, error) {
+	if t.EffectiveFundingSource() == tx.FundingPot {
+		return o.refundPotFunded(ctx, t.ID, t.RefundReason, nil)
+	}
 	pctx, cancel := o.pctx(ctx)
 	ref, err := o.payments.RefundPayment(pctx, providers.RefundRequest{ProviderRef: t.PaymentProviderRef, Amount: t.RefundAmount, Reference: "refund:" + t.ID.String()})
 	cancel()

@@ -26,10 +26,11 @@ type txn struct {
 }
 
 type refund struct {
-	ID          int64
-	Transaction int64
-	Amount      int64
-	Status      string
+	ID           int64
+	Transaction  int64
+	Amount       int64
+	Status       string
+	MerchantNote string
 }
 
 type Fake struct {
@@ -173,14 +174,15 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		out := []map[string]any{}
 		for _, rf := range f.refunds {
 			if rf.Transaction == id {
-				out = append(out, map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount})
+				out = append(out, map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
 			}
 		}
 		reply(200, true, "Refunds retrieved", out)
 	case r.Method == "POST" && r.URL.Path == "/refund":
 		var body struct {
-			Transaction string `json:"transaction"`
-			Amount      string `json:"amount"`
+			Transaction  string `json:"transaction"`
+			Amount       string `json:"amount"`
+			MerchantNote string `json:"merchant_note"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil {
 			reply(400, false, "Invalid request", nil)
@@ -191,17 +193,24 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			reply(400, false, "Transaction not found or not refundable", nil)
 			return
 		}
+		amt, _ := strconv.ParseInt(body.Amount, 10, 64)
+		if amt <= 0 {
+			amt = t.Amount
+		}
+		var reversed int64
 		for _, rf := range f.refunds {
 			if rf.Transaction == t.ID && rf.Status != "failed" {
-				reply(400, false, "Transaction has been fully reversed", nil)
-				return
+				reversed += rf.Amount
 			}
 		}
-		amt, _ := strconv.ParseInt(body.Amount, 10, 64)
+		if reversed+amt > t.Amount {
+			reply(400, false, "Transaction has been fully reversed", nil)
+			return
+		}
 		f.nextID++
-		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending"}
+		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending", MerchantNote: body.MerchantNote}
 		f.refunds = append(f.refunds, rf)
-		reply(200, true, "Refund has been queued for processing", map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount})
+		reply(200, true, "Refund has been queued for processing", map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
 	default:
 		write(w, 404, false, "Not found", nil)
 	}

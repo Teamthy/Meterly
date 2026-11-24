@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M7 (F1 Pay-for-Me shareable payment request links).
+> **Last updated:** 2026-11-23, after M8 (F2 Split the Meter reusable Funding Pot).
 
 ## 1. What Meterly is
 
@@ -18,7 +18,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3), [PR #4](https://github.com/Teamthy/Meterly/pull/4) |
 | M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ merged | [PR #5](https://github.com/Teamthy/Meterly/pull/5) |
 | M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ merged | [PR #6](https://github.com/Teamthy/Meterly/pull/6) |
-| M7: F1 Pay-for-Me shareable payment request links | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
+| M7: F1 Pay-for-Me shareable payment request links | ✅ merged | [PR #7](https://github.com/Teamthy/Meterly/pull/7) |
+| M8: F2 Split the Meter (reusable Funding Pot) | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -46,8 +47,9 @@ internal/notifications  templates (i18n catalog + gift SMS), status transitions,
   whatsapp (+whatsapptest)               WhatsApp Cloud API (template outside 24h window) + X-Hub-Signature-256
 internal/notificationservice   outbox sink -> notification_deliveries, claim/send/UNKNOWN engine, inbound STOP, retention purge
 internal/payrequests    Pay-for-Me domain, 128-bit base32 HMAC codes, anti-phishing validation, pure-stdlib QR PNG encoder
+internal/pots           reusable Funding Pot domain (`SPLIT_METER`, `LANDLORD_BULK`), contributions, allocations, initials & AEAD helpers
 internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/httpapi        /v1 REST + /v1/admin (admin.go) + /v1/payment-requests + /v1/public/pay/* + /v1/notifications/inbound/{provider}
+internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/notifications/inbound/{provider}
 api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
 Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
@@ -55,7 +57,7 @@ internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
 internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
-migrations/0001_init.sql .. 0008_payer_notifications.sql
+migrations/0001_init.sql .. 0010_pot_contributor_notifications.sql
 ```
 
 How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
@@ -115,18 +117,23 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M8 (next milestone):** F5 Household multi-user — verified ownership, roles (`OWNER`, `PURCHASER`, `VIEWER`), invitation links, and household purchase visibility without leaking STS tokens to non-purchasers unless explicitly allowed.
+**M9 (next milestone):** F3 AutoPower — honest burn-rate estimation from confirmed purchase/meter-reading history, low-power alert rules and opt-in scheduled/threshold auto-recharge using Paystack reusable `authorization_code` mandates behind `FEATURE_AUTOPOWER`. Followed by **M10** (F4 Landlord Power Desk / Compound Bulk Top-Up reusing `internal/pots` with `Kind = LANDLORD_BULK`) and **M11** (F5 Meterly Offline USSD + inbound SMS vending).
 
 **Blocked on the founder or partners (not code):**
-- a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed for M10 and before any non-dev deployment)
+- a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed before any non-dev deployment)
 - an **AMI/HES remote-credit** partner and an authorised test on a real meter
 - live sandbox credentials + webhook configuration to verify Paystack, Africa's Talking, Resend and WhatsApp Cloud API against live provider sandboxes
-- legal sign-off (NDPA/NCC) before enabling `FEATURE_GIFT_SMS=true` in production
+- legal sign-off (NDPA/NCC and CBN/PSP fund-holding terms) before enabling `FEATURE_GIFT_SMS=true` or `FEATURE_SPLIT_METER=true` in production
 - choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
 
-- **2026-11-23 (latest): M7 Pay-for-Me links completed (M6 merged in PR #6).**
+- **2026-11-23 (latest): M8 Split the Meter (reusable Funding Pot) completed (M7 merged in PR #7).**
+  - Legal gate & ledger (`docs/DECISIONS.md`, `internal/ledger`, `migrations/0009_funding_pots.sql`): gated behind `FEATURE_SPLIT_METER` (default `true` in `dev`, `false` outside `dev`) and `POT_MAX_HOLD` (default `72h`, cap `7d`), added liability account `POT_FUNDS_HELD`, and extended `electricity_transactions` with `funding_source` (`PSP` | `POT`).
+  - Domain & stores (`internal/pots`, `internal/store/{memstore,pgstore}`, `internal/providers/paystack`): built `Pot` (`SPLIT_METER`, `LANDLORD_BULK`), `Contribution` (`AmountMinor`, `RetainedMinor`, `RefundAmountMinor`, `RefundedMinor`, deterministic `refund:contribution:<id>` keys, privacy-preserving `FormatInitials`), and `Allocation`; updated Paystack client + `paystacktest` to match refund `merchant_note` references and support cumulative partial refunds.
+  - Orchestrator, notifications & HTTP API (`internal/orchestrator/pots.go`, `internal/httpapi/pots.go`, `internal/notificationservice`, `migrations/0010_pot_contributor_notifications.sql`, `api/openapi.yaml`): implemented `POST /v1/pots`, `GET /v1/pots/{id}`, `POST /v1/pots/{id}/cancel`, `GET /v1/public/pots/{code}`, and `POST /v1/public/pots/{code}/contribute`; branched all automated and operator refund paths on `FundingSource` (`POT` returns `CUSTOMER_FUNDS_CLEARING -> POT_FUNDS_HELD` and drives per-contributor PSP refunds while blocking refunds on `VendUnknown`); added M5 `POT_CONTRIBUTOR` consented settlement SMS; verified under `-race` on both `memstore` and PostgreSQL 16.16.
+
+- **2026-11-23 (earlier): M7 Pay-for-Me links completed (M6 merged in PR #6).**
   - Domain & QR (`internal/payrequests`): 128-bit unpadded RFC 4648 base32 link and guest status codes indexed solely by domain-separated HMAC-SHA256 (`payrequest-code:<code>`, `payer-status-code:<code>`) with constant-time comparison, AES-256-GCM bound encryption for notes, guest emails, guest names and replay status codes, anti-phishing URL/domain rejection on notes and payer names, and a pure-stdlib ISO/IEC 18004 QR Code PNG encoder (`EncodeQRPNGBase64`).
   - Schema & stores (`migrations/0007_payment_requests.sql`, `migrations/0008_payer_notifications.sql`, `internal/store/{memstore,pgstore}`): added `payment_requests`, `transaction_payers` (`slot_released` guard), and widened `notification_deliveries.recipient_kind` to include `'PAYER'` for token-free payment/refund receipt emails (with automatic `DUPLICATE_DESTINATION` suppression when payer == requester).
   - Orchestrator & HTTP API (`internal/orchestrator/payrequests.go`, `internal/httpapi/payrequests.go`, `api/openapi.yaml`): implemented `POST/GET/DELETE /v1/payment-requests`, `GET /v1/public/pay/{code}`, `POST /v1/public/pay/{code}/checkout`, and `GET /v1/public/pay/status/{status_code}` behind `FEATURE_PAY_FOR_ME` (`no-store` + `Referrer-Policy: no-referrer`, per-IP + per-link rate limits, `SELECT ... FOR UPDATE` slot concurrency returning `409 LINK_ALREADY_PAID`, `409 LINK_UNUSABLE` on revoked meter grant, automatic slot reopening across all three `PayFailed` paths, and mid-checkout link expiry honouring). Verified with `-race` on both `memstore` and PostgreSQL 16.16 + `paystacktest`.

@@ -15,9 +15,10 @@ import (
 type RecipientKind string
 
 const (
-	RecipientPurchaser RecipientKind = "PURCHASER"
-	RecipientGift      RecipientKind = "GIFT_RECIPIENT"
-	RecipientPayer     RecipientKind = "PAYER"
+	RecipientPurchaser      RecipientKind = "PURCHASER"
+	RecipientGift           RecipientKind = "GIFT_RECIPIENT"
+	RecipientPayer          RecipientKind = "PAYER"
+	RecipientPotContributor RecipientKind = "POT_CONTRIBUTOR"
 )
 
 type Status string
@@ -65,6 +66,7 @@ type Delivery struct {
 	EventID         uuid.UUID     `json:"event_id"`
 	TransactionID   uuid.UUID     `json:"transaction_id"`
 	RecipientKind   RecipientKind `json:"recipient_kind"`
+	RecipientSlot   string        `json:"-"`
 	Channel         Channel       `json:"channel"`
 	DestinationHMAC string        `json:"-"`
 	TemplateID      string        `json:"template_id"`
