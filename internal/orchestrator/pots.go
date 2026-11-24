@@ -1254,7 +1254,9 @@ func (o *Orchestrator) AdvancePot(ctx context.Context, potID uuid.UUID) (*pots.P
 			if tErr != nil {
 				return pot, tErr
 			}
-			if !t.Settled() {
+			// Only reconcile stale allocated transactions so a concurrent webhook
+			// never races the worker currently executing o.advance(allocatedTxnID).
+			if !t.Settled() && !o.Now().UTC().Before(t.UpdatedAt.Add(o.cfg.ResumeStaleAfter)) {
 				if _, rErr := o.Resume(ctx, t.ID); rErr != nil && resumeTxnErr == nil {
 					resumeTxnErr = rErr
 				}
