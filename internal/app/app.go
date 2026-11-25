@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/channels/ussd"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/notificationconsumer"
 	"github.com/teamthy/meterly/internal/notifications"
@@ -23,6 +24,7 @@ import (
 	"github.com/teamthy/meterly/internal/notifications/whatsapp"
 	"github.com/teamthy/meterly/internal/notificationservice"
 	"github.com/teamthy/meterly/internal/observability"
+	"github.com/teamthy/meterly/internal/offline"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/platform/config"
@@ -56,6 +58,7 @@ type App struct {
 	Orch          *orchestrator.Orchestrator
 	Publisher     *outbox.Publisher
 	Notifications *notificationservice.Service
+	Offline       *offline.Service
 	Metrics       *observability.Registry
 	Tracer        *observability.Tracer
 	pool          *pgxpool.Pool
@@ -242,6 +245,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		notifProvNames = append(notifProvNames, p.Name())
 	}
 
+	var waParser offline.WhatsAppInboundParser
 	switch cfg.WhatsAppProvider {
 	case "whatsapp":
 		wa, err := whatsapp.New(whatsapp.Config{
@@ -255,6 +259,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		if err != nil {
 			return fail(err)
 		}
+		waParser = wa
 		notifProvs[notifications.WhatsApp] = observability.WrapNotificationProvider(wa, a.Metrics, a.Tracer)
 		inboundVers[wa.Name()] = wa
 		notifProvNames = append(notifProvNames, wa.Name())
@@ -267,6 +272,29 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		p := notifications.WrapSender("mockwhatsapp", notifications.WhatsApp, a.MockWhatsApp)
 		notifProvs[notifications.WhatsApp] = observability.WrapNotificationProvider(p, a.Metrics, a.Tracer)
 		notifProvNames = append(notifProvNames, p.Name())
+		appSecret := cfg.WhatsAppAppSecret
+		verifyTok := cfg.WhatsAppVerifyToken
+		if cfg.Mode == config.Dev {
+			if appSecret == "" {
+				appSecret = "dev-whatsapp-app-secret"
+			}
+			if verifyTok == "" {
+				verifyTok = "dev-whatsapp-verify-token"
+			}
+		}
+		waParser = offline.HMACWhatsAppParser{AppSecret: appSecret, VerifyToken: verifyTok}
+	}
+
+	var ussdAdp *ussd.Adapter
+	if cfg.USSDSharedSecret != "" && len(cfg.USSDAllowedIPs) > 0 {
+		adp, uErr := ussd.New(ussd.Config{
+			SharedSecret: cfg.USSDSharedSecret,
+			AllowedCIDRs: cfg.USSDAllowedIPs,
+		})
+		if uErr != nil {
+			return fail(uErr)
+		}
+		ussdAdp = adp
 	}
 
 	a.Orch.RegisterNotificationProviders(notifProvNames...)
@@ -285,6 +313,27 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		return fail(err)
 	}
 	a.Notifications = ns
+
+	offSvc, err := offline.New(offline.Config{
+		Store:                   a.Store,
+		Orch:                    a.Orch,
+		Box:                     box,
+		SMSProvider:             notifProvs[notifications.SMS],
+		WhatsAppProvider:        notifProvs[notifications.WhatsApp],
+		USSDAdapter:             ussdAdp,
+		WhatsAppParser:          waParser,
+		MinAmountMinor:          cfg.Orchestrator.MinAmountMinor,
+		MaxAmountMinor:          cfg.Orchestrator.MaxAmountMinor,
+		FeeMinor:                cfg.Orchestrator.FeeMinor,
+		UnverifiedDailyCapMinor: cfg.OfflineUnverifiedDailyMaxMinor,
+		VerifiedDailyCapMinor:   cfg.OfflineVerifiedDailyMaxMinor,
+		ReverifyAfter:           cfg.OfflineReverifyAfter,
+		Log:                     log,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	a.Offline = offSvc
 	a.Publisher = outbox.NewPublisher(a.Store, outbox.Chain(outbox.LogSink(log), ns.Sink()), log)
 	a.RefreshMetrics(ctx)
 	return a, nil
@@ -329,7 +378,7 @@ func (a *App) RefreshMetrics(ctx context.Context) {
 
 func (a *App) Handler() http.Handler {
 	s := &httpapi.Server{
-		O: a.Orch, Auth: a.authn, Payments: a.payments, Notifications: a.Notifications,
+		O: a.Orch, Auth: a.authn, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
 		Metrics: a.Metrics, Tracer: a.Tracer, Log: a.Log, Ready: a.Ready,
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,
@@ -340,6 +389,8 @@ func (a *App) Handler() http.Handler {
 		SplitMeterDisabled: !a.Cfg.FeatureSplitMeter,
 		AutoPowerDisabled:  !a.Cfg.FeatureAutoPower,
 		PowerDeskDisabled:  !a.Cfg.FeaturePowerDesk,
+		USSDDisabled:       !a.Cfg.FeatureUSSD,
+		WhatsAppDisabled:   !a.Cfg.FeatureWhatsApp,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}

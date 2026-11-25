@@ -23,6 +23,7 @@ import (
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/notificationservice"
 	"github.com/teamthy/meterly/internal/observability"
+	"github.com/teamthy/meterly/internal/offline"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
@@ -49,6 +50,7 @@ type Server struct {
 	Auth               auth.Authenticator
 	Payments           providers.PaymentProvider
 	Notifications      *notificationservice.Service
+	Offline            *offline.Service
 	Metrics            *observability.Registry
 	Tracer             *observability.Tracer
 	Log                *slog.Logger
@@ -58,6 +60,8 @@ type Server struct {
 	SplitMeterDisabled bool
 	AutoPowerDisabled  bool
 	PowerDeskDisabled  bool
+	USSDDisabled       bool
+	WhatsAppDisabled   bool
 	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
@@ -172,6 +176,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/autopower/runs/{id}/skip", write(s.skipAutoPowerRun))
 
 	s.powerDeskRoutes(mux, user, write)
+	s.offlineRoutes(mux, write)
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))
