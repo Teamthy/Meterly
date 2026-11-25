@@ -67,6 +67,12 @@ func (w *paymentWrapper) InitializePayment(ctx context.Context, req providers.Pa
 	})
 }
 
+func (w *paymentWrapper) ChargeSaved(ctx context.Context, req providers.ChargeRequest) (providers.PaymentVerification, error) {
+	return observeCall(ctx, w.reg, w.tr, w.inner.Name(), "charge_saved", func(c context.Context) (providers.PaymentVerification, error) {
+		return w.inner.ChargeSaved(c, req)
+	})
+}
+
 func (w *paymentWrapper) VerifyPayment(ctx context.Context, providerRef string) (providers.PaymentVerification, error) {
 	return observeCall(ctx, w.reg, w.tr, w.inner.Name(), "verify_payment", func(c context.Context) (providers.PaymentVerification, error) {
 		return w.inner.VerifyPayment(c, providerRef)
@@ -204,10 +210,40 @@ func (w *notifStatusProviderWrapper) CheckDeliveryStatus(ctx context.Context, id
 	return out.st, out.code, err
 }
 
+// ---- MeterReadingProvider wrapper --------------------------------------------
+
+type readingWrapper struct {
+	inner providers.MeterReadingProvider
+	reg   *Registry
+	tr    *Tracer
+}
+
+func WrapMeterReadingProvider(p providers.MeterReadingProvider, reg *Registry, tr *Tracer) providers.MeterReadingProvider {
+	if p == nil || (reg == nil && !tr.Enabled()) {
+		return p
+	}
+	return &readingWrapper{inner: p, reg: reg, tr: tr}
+}
+
+func (w *readingWrapper) Name() string { return w.inner.Name() }
+
+func (w *readingWrapper) LatestReading(ctx context.Context, meterNumber string) (float64, time.Time, error) {
+	type pair struct {
+		kwh float64
+		at  time.Time
+	}
+	out, err := observeCall(ctx, w.reg, w.tr, w.inner.Name(), "latest_reading", func(c context.Context) (pair, error) {
+		kwh, at, err := w.inner.LatestReading(c, meterNumber)
+		return pair{kwh: kwh, at: at}, err
+	})
+	return out.kwh, out.at, err
+}
+
 var (
 	_ providers.PaymentProvider      = (*paymentWrapper)(nil)
 	_ providers.VendingProvider      = (*vendingWrapper)(nil)
 	_ providers.RemoteCreditProvider = (*remoteWrapper)(nil)
+	_ providers.MeterReadingProvider = (*readingWrapper)(nil)
 	_ notifications.Provider         = (*notifProviderWrapper)(nil)
 	_ notifications.StatusChecker    = (*notifStatusProviderWrapper)(nil)
 )

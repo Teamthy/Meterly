@@ -254,6 +254,27 @@ Invariants enforced and tested:
 3. **Transaction `FundingSource` (`PSP` | `POT`):**
    - `transactions.Transaction` gains `FundingSource` (default `PSP`). A `POT`-funded transaction is created inside the allocation's `InTx` with `Payment = PayConfirmed` and empty `PaymentProviderRef`. Both `Orchestrator.refund` and `Orchestrator.OperatorRefund` branch on `FundingSource`: `PSP` calls `payments.RefundPayment`, whereas `POT` posts `Dr CUSTOMER_FUNDS_CLEARING / Cr POT_FUNDS_HELD`, marks the allocation returned, queues contributor refunds on the pot, and drives the pot refund sweep.
 
+---
+
+## M9: AutoPower Scheduled & Low-Balance Auto-Recharge (`internal/autopower`, `migrations/0011_autopower.sql`)
+
+### Feature gate, consent and bound AEAD card authorization storage
+
+1. **Feature gate:** AutoPower and saved payment methods are gated behind `FEATURE_AUTOPOWER`, which defaults to **`false`** in every `MODE` (`dev`, `staging`, `production`) until explicitly enabled.
+2. **Consent-gated card saving:** `VerifyPayment` extracts reusable card metadata (`authorization_code`, `reusable`, `card_brand`, `last4`, `exp_month`, `exp_year`, `channel`, `signature`, `customer.email`), but `authorization_code` is **never** stored automatically during ordinary checkouts. Only an explicit `POST /v1/me/payment-methods/{transaction_id}/save` with `{"consent": true}` on the caller's own settled `PSP` card transaction encrypts `authorization_code` and charge email via `secure.Box.EncryptBound` bound to `autopower-auth:<user_id>:<method_id>` and `autopower-email:<user_id>:<method_id>`, persisting `consent_version`, `consent_text`, `consented_at`, and an audit event (`payment_method.saved`).
+3. **Atomic rule stop on card deletion or meter removal:** `DELETE /v1/me/payment-methods/{id}` soft-deletes the payment method, pauses every non-cancelled `autopower_rule` referencing it (`PAYMENT_METHOD_DELETED`), cancels all unstarted `SCHEDULED` runs, and writes audit events inside one database transaction. Likewise, `Registry.RemoveSavedMeter` atomically pauses active AutoPower rules for `(user_id, meter_id)` (`METER_ACCESS_REVOKED`) and cancels scheduled runs, with an execution-time `AuthorizeForUpdateIn` check as defense in depth.
+
+### Zero-double-charge `ChargeSaved` protocol and spend guards
+
+1. **Slot idempotency (`UNIQUE (rule_id, scheduled_for)`) and pre-committed deterministic reference:** Before calling `PaymentProvider.ChargeSaved` (`POST /transaction/charge_authorization`), `Orchestrator.executeRun` commits inside `InTx` the consumed `Quote`, `Transaction` (`IdempotencyKey = "autopower:<run_id>"`, `Payment = PayPending`, `PaymentProviderRef = "apchg:<run_id>"`), and `autopower_runs` transition (`SCHEDULED → CHARGING`, `charge_dispatched_at = now`). Because `apchg:<run_id>` is deterministic and persisted before the outbound network call, a dropped HTTP response (`FailAfterApply`), timeout, or `pending`/`send_otp` challenge is always reconciled via `VerifyPayment("apchg:<run_id>")` (Invariant 1) without ever calling `ChargeSaved` a second time for that run.
+2. **Canonical lock ordering and `Africa/Lagos` spend caps:** Spend checks run inside `InTx` under canonical lock order `User → Meter → PaymentMethod → Rule → Run`. Both `SumRuleSpendMinor` (rule `monthly_cap_minor` over the current `Africa/Lagos` calendar month) and `SumUserSpendMinor` (`AUTOPOWER_DAILY_MAX_MINOR` over the current `Africa/Lagos` calendar day) sum runs in `status IN ('CHARGING', 'SUCCEEDED')`. Over-cap runs transition to `SKIPPED_CAP` and emit `autopower.run.skipped_cap` without touching the PSP.
+3. **Heads-up, catch-up window, 3-strike auto-pause and capability-gated low-balance mode:**
+   - All schedules evaluate in `Africa/Lagos` (`time/tzdata` embedded, DST-safe noon-anchored iteration + short-month clamping) and store UTC instants.
+   - `TickAutoPower` dispatches a 12-hour pre-charge heads-up (`autopower.run.heads_up`, one-tap skippable via `POST /v1/autopower/runs/{id}/skip`), executes due slots within a 6-hour catch-up window, and marks slots overdue past 6 hours `MISSED` (`autopower.run.missed`).
+   - Failed/declined charges emit `autopower.run.failed` and increment `consecutive_failures`; on the 3rd consecutive failure (`CONSECUTIVE_FAILURES`) or on card expiry (`CARD_EXPIRED`), the rule pauses automatically and emits `autopower.rule.paused`.
+   - `LOW_BALANCE` / `BOTH` triggers require `MeterReadingProvider` (`LatestReading(ctx, meter) (kWh, at, err)`) and `Capabilities.RemoteReading` having `Supported && Authorised && Confirmed` (`422 METER_NOT_ELIGIBLE` otherwise), polling every `AUTOPOWER_POLL_INTERVAL` and triggering at most once per 24 hours per rule.
+
+
 
 
 

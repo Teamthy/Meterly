@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
@@ -82,6 +83,7 @@ type Repos interface {
 	Notifications() NotificationRepo
 	PayRequests() PayRequestRepo
 	Pots() PotRepo
+	AutoPower() AutoPowerRepo
 }
 
 type AuditRepo interface {
@@ -112,6 +114,9 @@ type UserRepo interface {
 	// EnsureByExternalID maps an identity-provider subject to an internal
 	// user ID (UUID string), creating the user on first sight.
 	EnsureByExternalID(ctx context.Context, externalID string) (string, error)
+	// LockForUpdate acquires a transaction-scoped row lock on the user so
+	// per-user spend caps serialize across concurrent AutoPower rules.
+	LockForUpdate(ctx context.Context, userID string) error
 	// UpsertContacts updates encrypted verified contact fields on an existing
 	// user. Non-empty fields replace existing values; empty fields leave the
 	// stored value untouched.
@@ -271,4 +276,35 @@ type PotRepo interface {
 	GetAllocationByTxnForUpdate(ctx context.Context, txnID uuid.UUID) (*pots.Allocation, error)
 	UpdateAllocation(ctx context.Context, a *pots.Allocation) error
 	ListAllocations(ctx context.Context, potID uuid.UUID) ([]*pots.Allocation, error)
+}
+
+// AutoPowerRepo persists saved payment methods, AutoPower rules and slot runs.
+type AutoPowerRepo interface {
+	CreatePaymentMethod(ctx context.Context, m *autopower.SavedPaymentMethod) error
+	GetPaymentMethod(ctx context.Context, id uuid.UUID) (*autopower.SavedPaymentMethod, error)
+	GetPaymentMethodForUpdate(ctx context.Context, id uuid.UUID) (*autopower.SavedPaymentMethod, error)
+	GetActivePaymentMethodBySourceTxn(ctx context.Context, userID string, txnID uuid.UUID) (*autopower.SavedPaymentMethod, error)
+	ListPaymentMethods(ctx context.Context, userID string) ([]*autopower.SavedPaymentMethod, error)
+	DeletePaymentMethod(ctx context.Context, id uuid.UUID, at time.Time) error
+
+	CreateRule(ctx context.Context, r *autopower.Rule) error
+	GetRule(ctx context.Context, id uuid.UUID) (*autopower.Rule, error)
+	GetRuleForUpdate(ctx context.Context, id uuid.UUID) (*autopower.Rule, error)
+	UpdateRule(ctx context.Context, r *autopower.Rule) error
+	ListRulesForUser(ctx context.Context, userID string) ([]*autopower.Rule, error)
+	ListRulesByPaymentMethodForUpdate(ctx context.Context, paymentMethodID uuid.UUID) ([]*autopower.Rule, error)
+	ClaimDueRulesForMaterialize(ctx context.Context, horizon, now time.Time, lease time.Duration, limit int) ([]uuid.UUID, error)
+	ClaimDueLowBalanceRules(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]uuid.UUID, error)
+
+	CreateRun(ctx context.Context, run *autopower.Run) error
+	GetRun(ctx context.Context, id uuid.UUID) (*autopower.Run, error)
+	GetRunForUpdate(ctx context.Context, id uuid.UUID) (*autopower.Run, error)
+	GetRunBySlot(ctx context.Context, ruleID uuid.UUID, scheduledFor time.Time) (*autopower.Run, error)
+	GetRunByTxn(ctx context.Context, txnID uuid.UUID) (*autopower.Run, error)
+	UpdateRun(ctx context.Context, run *autopower.Run) error
+	ListRunsForRule(ctx context.Context, ruleID uuid.UUID, limit int) ([]*autopower.Run, error)
+	CancelScheduledRunsForRule(ctx context.Context, ruleID uuid.UUID, now time.Time) error
+	ClaimDueRuns(ctx context.Context, headsUpHorizon, now, staleChargingBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error)
+	SumRuleSpendMinor(ctx context.Context, ruleID uuid.UUID, startUTC, endUTC time.Time) (int64, error)
+	SumUserSpendMinor(ctx context.Context, userID string, startUTC, endUTC time.Time) (int64, error)
 }

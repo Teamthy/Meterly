@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M8 (F2 Split the Meter reusable Funding Pot).
+> **Last updated:** 2026-11-23, after M9 (F3 AutoPower scheduled & low-balance auto-recharge with spend guard).
 
 ## 1. What Meterly is
 
@@ -19,7 +19,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ merged | [PR #5](https://github.com/Teamthy/Meterly/pull/5) |
 | M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ merged | [PR #6](https://github.com/Teamthy/Meterly/pull/6) |
 | M7: F1 Pay-for-Me shareable payment request links | ✅ merged | [PR #7](https://github.com/Teamthy/Meterly/pull/7) |
-| M8: F2 Split the Meter (reusable Funding Pot) | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
+| M8: F2 Split the Meter (reusable Funding Pot) | ✅ merged | [PR #8](https://github.com/Teamthy/Meterly/pull/8) |
+| M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -48,8 +49,9 @@ internal/notifications  templates (i18n catalog + gift SMS), status transitions,
 internal/notificationservice   outbox sink -> notification_deliveries, claim/send/UNKNOWN engine, inbound STOP, retention purge
 internal/payrequests    Pay-for-Me domain, 128-bit base32 HMAC codes, anti-phishing validation, pure-stdlib QR PNG encoder
 internal/pots           reusable Funding Pot domain (`SPLIT_METER`, `LANDLORD_BULK`), contributions, allocations, initials & AEAD helpers
+internal/autopower      AutoPower domain, bound AEAD card mandate encryption, card expiry & Africa/Lagos schedule engine
 internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/notifications/inbound/{provider}
+internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/notifications/inbound/{provider}
 api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
 Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
@@ -57,7 +59,7 @@ internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
 internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
-migrations/0001_init.sql .. 0010_pot_contributor_notifications.sql
+migrations/0001_init.sql .. 0011_autopower.sql
 ```
 
 How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
@@ -117,7 +119,7 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M9 (next milestone):** F3 AutoPower — honest burn-rate estimation from confirmed purchase/meter-reading history, low-power alert rules and opt-in scheduled/threshold auto-recharge using Paystack reusable `authorization_code` mandates behind `FEATURE_AUTOPOWER`. Followed by **M10** (F4 Landlord Power Desk / Compound Bulk Top-Up reusing `internal/pots` with `Kind = LANDLORD_BULK`) and **M11** (F5 Meterly Offline USSD + inbound SMS vending).
+**M10 (next milestone):** F4 Landlord Power Desk — organisations (`OWNER`, `MANAGER`, `VIEWER`), properties → units → meters with verified ownership (`account_name` match review or operator-approved evidence reference), one-payment compound bulk top-up reusing `internal/pots` with `Kind = LANDLORD_BULK` (independent per-unit electricity transactions + automatic pot refund of failed units), monthly per-property / per-unit CSV statements, and optional `MANAGER` spend-threshold `OWNER` approval rules. Followed by **M11** (F5 Meterly Offline USSD + inbound SMS vending).
 
 **Blocked on the founder or partners (not code):**
 - a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed before any non-dev deployment)

@@ -56,11 +56,13 @@ type Server struct {
 	Limits             Limits
 	PayForMeDisabled   bool
 	SplitMeterDisabled bool
+	AutoPowerDisabled  bool
 	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
-	Dev       bool
-	DevPay    *mock.Payments
-	DevRemote *mock.RemoteCredit
+	Dev         bool
+	DevPay      *mock.Payments
+	DevRemote   *mock.RemoteCredit
+	DevReadings *mock.MeterReadings
 
 	writes, authFails, hooks, publicPay, publicLink ratelimit.Limiter
 	patterns                                        []string
@@ -158,6 +160,15 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/pots/{id}/cancel", write(s.cancelPot))
 	mux.HandleFunc("GET /v1/public/pots/{code}", s.publicPotLimited(s.getPublicPot))
 	mux.HandleFunc("POST /v1/public/pots/{code}/contribute", s.publicPotLimited(s.contributeToPot))
+
+	mux.Handle("GET /v1/me/payment-methods", user(s.listPaymentMethods))
+	mux.Handle("DELETE /v1/me/payment-methods/{id}", write(s.deletePaymentMethod))
+	mux.Handle("POST /v1/me/payment-methods/{transaction_id}/save", write(s.savePaymentMethod))
+	mux.Handle("POST /v1/autopower/rules", write(s.createAutoPowerRule))
+	mux.Handle("GET /v1/autopower/rules", user(s.listAutoPowerRules))
+	mux.Handle("PATCH /v1/autopower/rules/{id}", write(s.updateAutoPowerRule))
+	mux.Handle("DELETE /v1/autopower/rules/{id}", write(s.deleteAutoPowerRule))
+	mux.Handle("POST /v1/autopower/runs/{id}/skip", write(s.skipAutoPowerRun))
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))

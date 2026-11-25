@@ -38,11 +38,12 @@ type Config struct {
 	PaymentProvider string // mock | paystack
 	VendingProvider string // mock
 
-	PaystackSecretKey   string
-	PaystackBaseURL     string
-	PaystackCallbackURL string
-	RemoteProvider      string // mock | none
-	ProviderEnvironment string // SANDBOX | PRODUCTION
+	PaystackSecretKey    string
+	PaystackBaseURL      string
+	PaystackCallbackURL  string
+	RemoteProvider       string // mock | none
+	MeterReadingProvider string // mock | none
+	ProviderEnvironment  string // SANDBOX | PRODUCTION
 
 	// Notification providers and gates (M5).
 	SMSProvider                 string // mock | africastalking | none
@@ -90,6 +91,10 @@ type Config struct {
 	FeatureSplitMeter bool
 	PotMaxHold        time.Duration
 
+	// AutoPower scheduled auto-recharge with spend guard (M9).
+	FeatureAutoPower  bool
+	AutoPowerInterval time.Duration
+
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
 	RateAuthFailuresPerMin int
@@ -109,6 +114,7 @@ func (c Config) UsesMocks() bool {
 	return c.PaymentProvider == "mock" ||
 		c.VendingProvider == "mock" ||
 		c.RemoteProvider == "mock" ||
+		c.MeterReadingProvider == "mock" ||
 		c.SMSProvider == "mock" ||
 		c.EmailProvider == "mock" ||
 		c.WhatsAppProvider == "mock"
@@ -186,6 +192,7 @@ func Load(getenv func(string) string) (Config, error) {
 	if c.Mode == Dev {
 		notifDefault = "mock"
 	}
+	c.MeterReadingProvider = get("METER_READING_PROVIDER", notifDefault)
 	c.SMSProvider = get("SMS_PROVIDER", notifDefault)
 	c.EmailProvider = get("EMAIL_PROVIDER", notifDefault)
 	c.WhatsAppProvider = get("WHATSAPP_PROVIDER", notifDefault)
@@ -245,6 +252,17 @@ func Load(getenv func(string) string) (Config, error) {
 	if c.PotMaxHold > pots.HardMaxHold {
 		errs = append(errs, fmt.Errorf("POT_MAX_HOLD: cannot exceed %s", pots.HardMaxHold))
 	}
+
+	// FEATURE_AUTOPOWER defaults to false everywhere until explicitly enabled.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_AUTOPOWER"))) {
+	case "", "false", "0":
+		c.FeatureAutoPower = false
+	case "true", "1":
+		c.FeatureAutoPower = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_AUTOPOWER: must be true or false"))
+	}
+	c.AutoPowerInterval = dur("AUTOPOWER_INTERVAL", 30*time.Second)
 	c.PublicBaseURL = strings.TrimRight(get("PUBLIC_BASE_URL", "https://meterly.ng"), "/")
 	if c.Mode != Dev && !strings.HasPrefix(c.PublicBaseURL, "https://") {
 		errs = append(errs, errors.New("PUBLIC_BASE_URL must be https outside dev"))
@@ -287,6 +305,8 @@ func Load(getenv func(string) string) (Config, error) {
 	o.ProviderTimeout = dur("PROVIDER_TIMEOUT", o.ProviderTimeout)
 	o.PaymentExpiry = dur("PAYMENT_EXPIRY", o.PaymentExpiry)
 	o.PotMaxHold = c.PotMaxHold
+	o.AutoPowerDailyMaxMinor = integer("AUTOPOWER_DAILY_MAX_MINOR", o.AutoPowerDailyMaxMinor)
+	o.AutoPowerPollInterval = dur("AUTOPOWER_POLL_INTERVAL", o.AutoPowerPollInterval)
 	o.ResumeStaleAfter = dur("RESUME_STALE_AFTER", o.ResumeStaleAfter)
 	o.ResumeLease = dur("RESUME_LEASE", o.ResumeLease)
 	o.ResumeBaseBackoff = dur("RESUME_BASE_BACKOFF", o.ResumeBaseBackoff)
@@ -335,6 +355,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.RemoteProvider != "mock" && c.RemoteProvider != "none" {
 		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none)", c.RemoteProvider))
+	}
+	if c.MeterReadingProvider != "mock" && c.MeterReadingProvider != "none" {
+		errs = append(errs, fmt.Errorf("METER_READING_PROVIDER: unsupported value %q (available: mock, none)", c.MeterReadingProvider))
+	}
+	if o.AutoPowerDailyMaxMinor <= 0 {
+		errs = append(errs, errors.New("AUTOPOWER_DAILY_MAX_MINOR must be positive"))
 	}
 	if c.ProviderEnvironment != "SANDBOX" && c.ProviderEnvironment != "PRODUCTION" {
 		errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT: must be SANDBOX or PRODUCTION"))

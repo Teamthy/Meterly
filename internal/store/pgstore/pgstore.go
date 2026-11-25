@@ -131,6 +131,7 @@ func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { retur
 func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
 func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
 func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
+func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -190,4 +191,16 @@ func (r userRepo) EnsureByExternalID(ctx context.Context, ext string) (string, e
 		ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id
 		RETURNING id::text`, ext).Scan(&id)
 	return id, mapErr(err)
+}
+
+func (r userRepo) LockForUpdate(ctx context.Context, userID string) error {
+	if !r.inTx {
+		return errors.New("user lock requires transaction")
+	}
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return store.ErrNotFound
+	}
+	var locked uuid.UUID
+	return mapErr(r.db.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, uid).Scan(&locked))
 }

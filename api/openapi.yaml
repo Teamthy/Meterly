@@ -29,6 +29,8 @@ tags:
     description: Shareable Pay-for-Me electricity request links, guest checkout and token-free payer status.
   - name: Pots
     description: Split-the-Meter Funding Pots, public contribution progress views and Paystack contributor checkouts.
+  - name: AutoPower
+    description: Saved payment methods (with explicit user consent), scheduled and capability-gated low-balance AutoPower rules, spend guards and one-tap run skip.
   - name: Webhooks
     description: Signature-verified payment provider webhooks.
   - name: Admin
@@ -1368,6 +1370,219 @@ paths:
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
 
+  /v1/me/payment-methods:
+    get:
+      operationId: listPaymentMethods
+      tags: [AutoPower]
+      summary: List caller's saved payment methods (gated by FEATURE_AUTOPOWER)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Active saved card authorizations (never raw authorization codes).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentMethodListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/me/payment-methods/{id}:
+    delete:
+      operationId: deletePaymentMethod
+      tags: [AutoPower]
+      summary: Delete a saved payment method and atomically stop all AutoPower rules using it
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/AutoPowerIDPath"
+      responses:
+        "204":
+          description: Saved payment method deleted and referencing rules paused.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/me/payment-methods/{transaction_id}/save:
+    post:
+      operationId: savePaymentMethod
+      tags: [AutoPower]
+      summary: Save reusable card authorization from a settled transaction with explicit consent
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/TransactionIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavePaymentMethodRequest"
+      responses:
+        "201":
+          description: Card authorization encrypted and saved with consent metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedPaymentMethod"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/ProviderUnavailable"
+
+  /v1/autopower/rules:
+    get:
+      operationId: listAutoPowerRules
+      tags: [AutoPower]
+      summary: List caller's AutoPower rules and upcoming/recent runs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Active and paused AutoPower rules for the authenticated caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoPowerRuleListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createAutoPowerRule
+      tags: [AutoPower]
+      summary: Create a scheduled or low-balance AutoPower rule with spend cap
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAutoPowerRuleRequest"
+      responses:
+        "201":
+          description: AutoPower rule created and next scheduled run materialised.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoPowerRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/autopower/rules/{id}:
+    patch:
+      operationId: updateAutoPowerRule
+      tags: [AutoPower]
+      summary: Update, pause or resume an AutoPower rule
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/AutoPowerIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAutoPowerRuleRequest"
+      responses:
+        "200":
+          description: Updated AutoPower rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoPowerRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    delete:
+      operationId: deleteAutoPowerRule
+      tags: [AutoPower]
+      summary: Cancel an AutoPower rule and all future unstarted runs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/AutoPowerIDPath"
+      responses:
+        "204":
+          description: AutoPower rule cancelled.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/autopower/runs/{id}/skip:
+    post:
+      operationId: skipAutoPowerRun
+      tags: [AutoPower]
+      summary: Skip a scheduled future AutoPower run
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/AutoPowerIDPath"
+      responses:
+        "200":
+          description: Run marked SKIPPED_USER and next cycle materialised.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoPowerRun"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1461,6 +1676,13 @@ components:
         type: string
         minLength: 26
         maxLength: 26
+    AutoPowerIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
 
   responses:
     BadRequest:
@@ -1555,6 +1777,11 @@ components:
         - POT_CLOSED
         - POT_NOT_CANCELLABLE
         - POT_UNUSABLE
+        - CONSENT_REQUIRED
+        - PAYMENT_METHOD_NOT_REUSABLE
+        - CARD_EXPIRED
+        - PAYMENT_METHOD_NOT_FOUND
+        - RUN_NOT_SKIPPABLE
         - INTERNAL_ERROR
 
     ErrorEnvelope:
@@ -3070,4 +3297,355 @@ components:
           format: uri
         provider_ref:
           type: string
+
+    SavePaymentMethodRequest:
+      type: object
+      required: [consent]
+      additionalProperties: false
+      properties:
+        consent:
+          type: boolean
+          description: Must be `true` to confirm explicit consent for recurring AutoPower card charges.
+        consent_text:
+          type: string
+          description: Optional UI consent copy snapshot; defaults to canonical v1 consent text.
+
+    SavedPaymentMethod:
+      type: object
+      required:
+        - payment_method_id
+        - provider
+        - source_transaction_id
+        - card_brand
+        - last4
+        - exp_month
+        - exp_year
+        - consent_version
+        - consent_text
+        - consented_at
+        - created_at
+      additionalProperties: false
+      properties:
+        payment_method_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        source_transaction_id:
+          type: string
+          format: uuid
+        card_brand:
+          type: string
+        last4:
+          type: string
+          minLength: 4
+          maxLength: 4
+        exp_month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        exp_year:
+          type: integer
+        consent_version:
+          type: string
+        consent_text:
+          type: string
+        consented_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+
+    PaymentMethodListResponse:
+      type: object
+      required: [payment_methods]
+      additionalProperties: false
+      properties:
+        payment_methods:
+          type: array
+          items:
+            $ref: "#/components/schemas/SavedPaymentMethod"
+
+    AutoPowerTriggerType:
+      type: string
+      enum: [SCHEDULE, LOW_BALANCE, BOTH]
+
+    AutoPowerFrequency:
+      type: string
+      enum: [WEEKLY, MONTHLY]
+
+    AutoPowerRuleStatus:
+      type: string
+      enum: [ACTIVE, PAUSED, CANCELLED, COMPLETED]
+
+    AutoPowerRunStatus:
+      type: string
+      enum:
+        - SCHEDULED
+        - CHARGING
+        - SUCCEEDED
+        - FAILED
+        - REFUNDED
+        - SKIPPED_USER
+        - SKIPPED_CAP
+        - MISSED
+        - CANCELLED
+
+    CreateAutoPowerRuleRequest:
+      type: object
+      required: [meter_id, payment_method_id, amount_minor, monthly_cap_minor]
+      additionalProperties: false
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        payment_method_id:
+          type: string
+          format: uuid
+        trigger_type:
+          $ref: "#/components/schemas/AutoPowerTriggerType"
+        amount_minor:
+          type: integer
+          format: int64
+        monthly_cap_minor:
+          type: integer
+          format: int64
+        delivery_preference:
+          type: string
+          enum: [AUTO, REMOTE, TOKEN]
+        frequency:
+          $ref: "#/components/schemas/AutoPowerFrequency"
+        days_of_week:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+        days_of_month:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 31
+        time_of_day:
+          type: string
+          description: 24-hour `HH:MM` wall time in `Africa/Lagos`.
+        timezone:
+          type: string
+          default: Africa/Lagos
+        ends_at:
+          type: string
+          format: date-time
+        low_balance_threshold_kwh:
+          type: number
+          description: Permitted only when meter `remote_reading` capability is `supported`, `authorised` and `confirmed`.
+
+    UpdateAutoPowerRuleRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        payment_method_id:
+          type: string
+          format: uuid
+        trigger_type:
+          $ref: "#/components/schemas/AutoPowerTriggerType"
+        amount_minor:
+          type: integer
+          format: int64
+        monthly_cap_minor:
+          type: integer
+          format: int64
+        delivery_preference:
+          type: string
+          enum: [AUTO, REMOTE, TOKEN]
+        frequency:
+          $ref: "#/components/schemas/AutoPowerFrequency"
+        days_of_week:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 7
+        days_of_month:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 31
+        time_of_day:
+          type: string
+        ends_at:
+          type: [string, "null"]
+          format: date-time
+        low_balance_threshold_kwh:
+          type: number
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED]
+
+    AutoPowerRun:
+      type: object
+      required:
+        - run_id
+        - rule_id
+        - meter_id
+        - trigger_source
+        - scheduled_for
+        - amount_minor
+        - currency
+        - status
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+          format: uuid
+        meter_id:
+          type: string
+          format: uuid
+        trigger_source:
+          type: string
+          enum: [SCHEDULE, LOW_BALANCE]
+        scheduled_for:
+          type: string
+          format: date-time
+        executed_at:
+          type: string
+          format: date-time
+        amount_minor:
+          type: integer
+          format: int64
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          $ref: "#/components/schemas/AutoPowerRunStatus"
+        heads_up_sent_at:
+          type: string
+          format: date-time
+        transaction_id:
+          type: string
+          format: uuid
+        failure_reason:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AutoPowerRule:
+      type: object
+      required:
+        - rule_id
+        - meter_id
+        - payment_method_id
+        - trigger_type
+        - amount_minor
+        - monthly_cap_minor
+        - currency
+        - delivery_preference
+        - timezone
+        - status
+        - consecutive_failures
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        rule_id:
+          type: string
+          format: uuid
+        meter_id:
+          type: string
+          format: uuid
+        masked_meter_number:
+          type: string
+        payment_method_id:
+          type: string
+          format: uuid
+        trigger_type:
+          $ref: "#/components/schemas/AutoPowerTriggerType"
+        amount_minor:
+          type: integer
+          format: int64
+        monthly_cap_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        delivery_preference:
+          type: string
+        frequency:
+          $ref: "#/components/schemas/AutoPowerFrequency"
+        days_of_week:
+          type: array
+          items:
+            type: integer
+        days_of_month:
+          type: array
+          items:
+            type: integer
+        time_of_day:
+          type: string
+        timezone:
+          type: string
+        ends_at:
+          type: string
+          format: date-time
+        low_balance_threshold_kwh:
+          type: number
+        status:
+          $ref: "#/components/schemas/AutoPowerRuleStatus"
+        pause_reason:
+          type: string
+        consecutive_failures:
+          type: integer
+        next_scheduled_at:
+          type: string
+          format: date-time
+        last_low_balance_triggered_at:
+          type: string
+          format: date-time
+        last_reading_kwh:
+          type: number
+        last_reading_at:
+          type: string
+          format: date-time
+        upcoming_run:
+          $ref: "#/components/schemas/AutoPowerRun"
+        recent_runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/AutoPowerRun"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AutoPowerRuleListResponse:
+      type: object
+      required: [rules]
+      additionalProperties: false
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/AutoPowerRule"
+
 

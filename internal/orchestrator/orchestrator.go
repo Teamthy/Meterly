@@ -51,6 +51,10 @@ type Config struct {
 	// PotMaxHold caps how long a Funding Pot may hold contributor funds before
 	// automatic expiry and refund (default 72h, ceiling 7d).
 	PotMaxHold time.Duration
+	// AutoPowerDailyMaxMinor caps per-user daily AutoPower spend in Africa/Lagos.
+	AutoPowerDailyMaxMinor int64
+	// AutoPowerPollInterval sets the cadence for low-balance meter readings.
+	AutoPowerPollInterval time.Duration
 	// Resume worker scheduling.
 	ResumeStaleAfter  time.Duration // only touch transactions idle this long
 	ResumeLease       time.Duration // claim lease so workers don't overlap
@@ -64,9 +68,11 @@ func DefaultConfig() Config {
 	return Config{
 		FeeMinor: 10000, MinAmountMinor: 50000, MaxAmountMinor: 50000000,
 		QuoteTTL: 15 * time.Minute, ProviderTimeout: 20 * time.Second, IdempotencyTTL: 24 * time.Hour,
-		PaymentExpiry:    2 * time.Hour,
-		PotMaxHold:       72 * time.Hour,
-		ResumeStaleAfter: 2 * time.Minute, ResumeLease: 2 * time.Minute,
+		PaymentExpiry:          2 * time.Hour,
+		PotMaxHold:             72 * time.Hour,
+		AutoPowerDailyMaxMinor: 10000000, // ₦100,000.00/day default guard
+		AutoPowerPollInterval:  4 * time.Hour,
+		ResumeStaleAfter:       2 * time.Minute, ResumeLease: 2 * time.Minute,
 		ResumeBaseBackoff: 30 * time.Second, ResumeMaxBackoff: 30 * time.Minute,
 		ResumeMaxAttempts: 12, ResumeBatch: 50,
 	}
@@ -105,6 +111,7 @@ type Orchestrator struct {
 	payments       providers.PaymentProvider
 	vending        providers.VendingProvider
 	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
+	readings       providers.MeterReadingProvider // nil if no remote balance reading
 	notifProviders []string
 	metrics        *observability.Registry
 	log            *slog.Logger
@@ -124,6 +131,10 @@ func (o *Orchestrator) Store() store.Store { return o.st }
 func (o *Orchestrator) Box() *secure.Box   { return o.box }
 
 func (o *Orchestrator) SetMetrics(m *observability.Registry) { o.metrics = m }
+
+// SetMeterReadingProvider attaches an optional remote meter reading provider
+// used by AutoPower low-balance mode.
+func (o *Orchestrator) SetMeterReadingProvider(r providers.MeterReadingProvider) { o.readings = r }
 
 // RegisterNotificationProviders makes configured notification providers visible
 // to operator status and kill-switch endpoints.
@@ -413,6 +424,10 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 	pctx, cancel := o.pctx(ctx)
 	v, err := o.payments.VerifyPayment(pctx, t.PaymentProviderRef)
 	cancel()
+	if errors.Is(err, providers.ErrPaymentNotFound) {
+		v = providers.PaymentVerification{ProviderRef: t.PaymentProviderRef, Status: providers.PaymentPending}
+		err = nil
+	}
 	if err != nil {
 		return t, fmt.Errorf("verify payment: %w", err) // unchanged; retried later
 	}
@@ -475,6 +490,9 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 	if mismatch {
 		o.log.Warn("payment amount mismatch; flagged for review", "txn", t.ID)
 		return t, ErrPaymentMismatch
+	}
+	if t != nil && t.Payment == tx.PayFailed {
+		o.trySyncAutoPowerTxn(ctx, t.ID)
 	}
 	return o.advance(ctx, t.ID)
 }
@@ -596,6 +614,7 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 		if err != nil {
 			return t, err
 		}
+		o.trySyncAutoPowerTxn(ctx, id)
 		return o.deliver(ctx, id)
 	case providers.VendFailed:
 		t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
@@ -791,6 +810,7 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 	if err != nil || !claimed {
 		return t, err // a concurrent worker owns the refund call (or Resume retries it)
 	}
+	o.trySyncAutoPowerTxn(ctx, id)
 	return o.executeRefund(ctx, t)
 }
 
@@ -807,7 +827,7 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		o.log.Warn("refund call failed; stays REFUND_PENDING", "txn", t.ID, "err", err)
 		return t, nil
 	}
-	return o.mutate(ctx, t.ID, func(t *tx.Transaction, r store.Repos) error {
+	t, err = o.mutate(ctx, t.ID, func(t *tx.Transaction, r store.Repos) error {
 		if t.Payment != tx.PayRefundPending {
 			return errSkip
 		}
@@ -823,6 +843,10 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		}
 		return emit(ctx, r, "electricity.refund.completed", t.ID, nil)
 	})
+	if err == nil && t != nil && t.Payment == tx.PayRefunded {
+		o.trySyncAutoPowerTxn(ctx, t.ID)
+	}
+	return t, err
 }
 
 // HashGiftRequest protects low-entropy recipient contact in idempotency records.

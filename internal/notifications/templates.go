@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/events"
@@ -22,14 +23,19 @@ const (
 )
 
 const (
-	TemplatePaymentConfirmed = "payment_confirmed"
-	TemplateTokenAvailable   = "token_available"
-	TemplateRemoteConfirmed  = "remote_delivery_confirmed"
-	TemplateRemoteFailed     = "remote_delivery_failed"
-	TemplateRemoteUnknown    = "remote_delivery_unknown"
-	TemplateRefundCompleted  = "refund_completed"
-	TemplateGiftTokenSMS     = "gift_token_sms"
-	TemplatePotSettled       = "pot_settled"
+	TemplatePaymentConfirmed    = "payment_confirmed"
+	TemplateTokenAvailable      = "token_available"
+	TemplateRemoteConfirmed     = "remote_delivery_confirmed"
+	TemplateRemoteFailed        = "remote_delivery_failed"
+	TemplateRemoteUnknown       = "remote_delivery_unknown"
+	TemplateRefundCompleted     = "refund_completed"
+	TemplateGiftTokenSMS        = "gift_token_sms"
+	TemplatePotSettled          = "pot_settled"
+	TemplateAutoPowerHeadsUp    = "autopower_heads_up"
+	TemplateAutoPowerFailed     = "autopower_charge_failed"
+	TemplateAutoPowerPaused     = "autopower_rule_paused"
+	TemplateAutoPowerSkippedCap = "autopower_skipped_cap"
+	TemplateAutoPowerMissed     = "autopower_run_missed"
 
 	CurrentTemplateVersion = "v1"
 )
@@ -79,16 +85,41 @@ var purchaserCatalog = map[string]map[string]localeEntry{
 			Subject: "Shared electricity pot settled",
 			Body:    "The shared Meterly electricity pot you contributed to is funded and electricity has been delivered. Reply STOP to opt out.",
 		},
+		TemplateAutoPowerHeadsUp: {
+			Subject: "Upcoming AutoPower recharge",
+			Body:    "An AutoPower electricity recharge is scheduled in 12 hours. Open Meterly if you want to skip this run.",
+		},
+		TemplateAutoPowerFailed: {
+			Subject: "AutoPower charge failed",
+			Body:    "Your scheduled AutoPower card charge could not be completed. Check your saved card and AutoPower settings in Meterly.",
+		},
+		TemplateAutoPowerPaused: {
+			Subject: "AutoPower rule paused",
+			Body:    "Your AutoPower rule has been paused automatically to protect your account. Review your meter access and saved card in Meterly to resume.",
+		},
+		TemplateAutoPowerSkippedCap: {
+			Subject: "AutoPower recharge skipped (spend cap)",
+			Body:    "Your AutoPower recharge was skipped because it would exceed your configured spend limit. No charge was made.",
+		},
+		TemplateAutoPowerMissed: {
+			Subject: "AutoPower scheduled window missed",
+			Body:    "A scheduled AutoPower window passed without charging and was skipped so you are never charged unexpectedly.",
+		},
 	},
 }
 
 var whatsAppTemplateNames = map[string]string{
-	TemplatePaymentConfirmed: "meterly_payment_confirmed_v1",
-	TemplateTokenAvailable:   "meterly_token_available_v1",
-	TemplateRemoteConfirmed:  "meterly_remote_confirmed_v1",
-	TemplateRemoteFailed:     "meterly_remote_failed_v1",
-	TemplateRemoteUnknown:    "meterly_remote_unknown_v1",
-	TemplateRefundCompleted:  "meterly_refund_completed_v1",
+	TemplatePaymentConfirmed:    "meterly_payment_confirmed_v1",
+	TemplateTokenAvailable:      "meterly_token_available_v1",
+	TemplateRemoteConfirmed:     "meterly_remote_confirmed_v1",
+	TemplateRemoteFailed:        "meterly_remote_failed_v1",
+	TemplateRemoteUnknown:       "meterly_remote_unknown_v1",
+	TemplateRefundCompleted:     "meterly_refund_completed_v1",
+	TemplateAutoPowerHeadsUp:    "meterly_autopower_heads_up_v1",
+	TemplateAutoPowerFailed:     "meterly_autopower_failed_v1",
+	TemplateAutoPowerPaused:     "meterly_autopower_paused_v1",
+	TemplateAutoPowerSkippedCap: "meterly_autopower_skipped_cap_v1",
+	TemplateAutoPowerMissed:     "meterly_autopower_missed_v1",
 }
 
 // NormalizeLocale returns a supported locale tag, defaulting to LocaleEN.
@@ -265,4 +296,56 @@ func RenderGiftTokenSMS(locale string, amountMinor int64, maskedMeter, rawToken,
 		FormatNairaMinor(amountMinor), meter, tok, sender,
 	)
 	return Content{Body: body}, CurrentTemplateVersion, nil
+}
+
+// AutoPowerTemplateSpecFor maps an allowlisted AutoPower outbox event to its
+// notification template specification.
+func AutoPowerTemplateSpecFor(e events.Event) (spec TemplateSpec, ok bool) {
+	if e.ID == uuid.Nil || e.AggregateID == uuid.Nil {
+		return TemplateSpec{}, false
+	}
+	var id string
+	switch e.AggregateType {
+	case "autopower_run":
+		switch e.Type {
+		case "autopower.run.heads_up":
+			id = TemplateAutoPowerHeadsUp
+		case "autopower.run.failed":
+			id = TemplateAutoPowerFailed
+		case "autopower.run.skipped_cap":
+			id = TemplateAutoPowerSkippedCap
+		case "autopower.run.missed":
+			id = TemplateAutoPowerMissed
+		}
+	case "autopower_rule":
+		if e.Type == "autopower.rule.paused" {
+			id = TemplateAutoPowerPaused
+		}
+	}
+	if id == "" {
+		return TemplateSpec{}, false
+	}
+	return TemplateSpec{
+		ID:                   id,
+		Version:              CurrentTemplateVersion,
+		WhatsAppTemplateName: whatsAppTemplateNames[id],
+	}, true
+}
+
+// RenderAutoPowerHeadsUp formats the 12-hour pre-charge heads-up in Africa/Lagos.
+func RenderAutoPowerHeadsUp(locale string, amountMinor int64, maskedMeter string, scheduledFor time.Time, loc *time.Location) (Content, string, error) {
+	if amountMinor <= 0 {
+		return Content{}, "", errors.New("notifications: autopower amount must be positive")
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	_ = NormalizeLocale(locale)
+	meter := ShortMaskedMeter(maskedMeter)
+	when := scheduledFor.In(loc).Format("02 Jan 15:04 MST")
+	body := fmt.Sprintf(
+		"Meterly AutoPower: We'll recharge %s for meter %s on %s. Open Meterly before then to skip.",
+		FormatNairaMinor(amountMinor), meter, when,
+	)
+	return Content{Subject: "Upcoming AutoPower recharge", Body: body}, CurrentTemplateVersion, nil
 }

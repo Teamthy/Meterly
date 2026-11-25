@@ -233,7 +233,7 @@ func (o *Orchestrator) SetProviderEnabled(ctx context.Context, name string, enab
 	case o.vending.Name():
 		typ = "VENDING"
 	default:
-		if o.remote != nil && name == o.remote.Name() {
+		if (o.remote != nil && name == o.remote.Name()) || (o.readings != nil && name == o.readings.Name()) {
 			typ = "AMI"
 		} else {
 			for _, np := range o.notifProviders {
@@ -269,6 +269,9 @@ func (o *Orchestrator) ProviderStatus(ctx context.Context) (map[string]bool, err
 	names := []string{o.payments.Name(), o.vending.Name()}
 	if o.remote != nil {
 		names = append(names, o.remote.Name())
+	}
+	if o.readings != nil {
+		names = append(names, o.readings.Name())
 	}
 	names = append(names, o.notifProviders...)
 	out := map[string]bool{}

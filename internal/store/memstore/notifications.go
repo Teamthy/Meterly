@@ -186,8 +186,18 @@ func (r notifRepo) HasActiveWhatsAppWindow(_ context.Context, destinationHMAC st
 
 func (r notifRepo) CreateDelivery(_ context.Context, d *notifications.Delivery) (bool, error) {
 	defer r.lock()()
-	if _, ok := r.s.txns[d.TransactionID]; !ok {
+	if d.TransactionID == uuid.Nil && d.UserID == "" {
 		return false, store.ErrNotFound
+	}
+	if d.TransactionID != uuid.Nil {
+		if _, ok := r.s.txns[d.TransactionID]; !ok {
+			return false, store.ErrNotFound
+		}
+	}
+	if d.UserID != "" {
+		if !r.s.userIDs[d.UserID] {
+			return false, store.ErrNotFound
+		}
 	}
 	uk := deliveryUniqueKey(d.EventID, d.RecipientKind, d.Channel, d.RecipientSlot)
 	if existingID, ok := r.s.deliveryByKey[uk]; ok {
