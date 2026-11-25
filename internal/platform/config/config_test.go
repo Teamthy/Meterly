@@ -240,3 +240,25 @@ func TestAutoPowerConfig(t *testing.T) {
 		t.Fatalf("unsupported METER_READING_PROVIDER must fail: %v", err)
 	}
 }
+
+func TestPowerDeskConfig(t *testing.T) {
+	devCfg, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if devCfg.FeaturePowerDesk {
+		t.Fatalf("FEATURE_POWER_DESK must default to false even in dev")
+	}
+
+	onCfg, err := Load(env(map[string]string{
+		"MODE":               "dev",
+		"FEATURE_POWER_DESK": "true",
+	}))
+	if err != nil || !onCfg.FeaturePowerDesk {
+		t.Fatalf("expected FEATURE_POWER_DESK=true to enable PowerDesk: %v %+v", err, onCfg)
+	}
+
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_POWER_DESK": "invalid"})); err == nil || !strings.Contains(err.Error(), "FEATURE_POWER_DESK") {
+		t.Fatalf("invalid FEATURE_POWER_DESK must fail: %v", err)
+	}
+}

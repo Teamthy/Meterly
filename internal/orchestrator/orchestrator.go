@@ -198,8 +198,15 @@ func emit(ctx context.Context, r store.Repos, typ string, id uuid.UUID, payload 
 	return r.Outbox().Add(ctx, events.New(typ, id, payload))
 }
 
-func post(ctx context.Context, r store.Repos, ref string, id uuid.UUID, desc string, entries ...ledger.Entry) error {
-	_, err := r.Ledger().Post(ctx, ledger.Transaction{Reference: ref, SourceType: "electricity_transaction", SourceID: id, Description: desc, Entries: entries})
+func (o *Orchestrator) post(ctx context.Context, r store.Repos, ref string, id uuid.UUID, desc string, entries ...ledger.Entry) error {
+	_, err := r.Ledger().Post(ctx, ledger.Transaction{
+		Reference:   ref,
+		SourceType:  "electricity_transaction",
+		SourceID:    id,
+		Description: desc,
+		PostedAt:    o.Now().UTC(),
+		Entries:     entries,
+	})
 	return err
 }
 
@@ -474,7 +481,7 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := t.SetPayment(tx.PayConfirmed, "verified with "+o.payments.Name()); err != nil {
 				return err
 			}
-			if err := post(ctx, r, "pay:"+t.ID.String(), t.ID, "Customer payment confirmed",
+			if err := o.post(ctx, r, "pay:"+t.ID.String(), t.ID, "Customer payment confirmed",
 				ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Debit, Amount: t.Total},
 				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: t.Total},
 			); err != nil {
@@ -606,7 +613,7 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 			if t.Fee.Minor > 0 {
 				entries = append(entries, ledger.Entry{Account: ledger.PlatformFeeRevenue, Direction: ledger.Credit, Amount: t.Fee})
 			}
-			if err := post(ctx, r, "vend:"+t.ID.String(), t.ID, "Electricity vended", entries...); err != nil {
+			if err := o.post(ctx, r, "vend:"+t.ID.String(), t.ID, "Electricity vended", entries...); err != nil {
 				return err
 			}
 			return emit(ctx, r, "electricity.vending.completed", t.ID, map[string]any{"units_kwh": res.UnitsKWh})
@@ -798,7 +805,7 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 		if err := t.SetPayment(tx.PayRefundPending, reason); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
+		if err := o.post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
 			ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Debit, Amount: t.Total},
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: t.Total},
 		); err != nil {
@@ -835,7 +842,7 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		if err := t.SetPayment(tx.PayRefunded, "refund "+ref); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-paid:"+t.ID.String(), t.ID, "Refund paid",
+		if err := o.post(ctx, r, "refund-paid:"+t.ID.String(), t.ID, "Refund paid",
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Debit, Amount: t.RefundAmount},
 			ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Credit, Amount: t.RefundAmount},
 		); err != nil {

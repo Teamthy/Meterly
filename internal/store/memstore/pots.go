@@ -127,7 +127,7 @@ func (r potRepo) ClaimDue(_ context.Context, now, staleBefore time.Time, lease t
 	}
 	var cands []cand
 	for _, p := range r.s.pots {
-		if p.ReviewReason != "" || p.Status == pots.StatusSettled || p.Status == pots.StatusRefunded {
+		if p.ReviewReason != "" || p.Status == pots.StatusPendingApproval || p.Status == pots.StatusSettled || p.Status == pots.StatusRefunded {
 			continue
 		}
 		if p.NextCheckAt.After(now) {

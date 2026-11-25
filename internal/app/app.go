@@ -339,6 +339,7 @@ func (a *App) Handler() http.Handler {
 		PayForMeDisabled:   !a.Cfg.FeaturePayForMe,
 		SplitMeterDisabled: !a.Cfg.FeatureSplitMeter,
 		AutoPowerDisabled:  !a.Cfg.FeatureAutoPower,
+		PowerDeskDisabled:  !a.Cfg.FeaturePowerDesk,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}

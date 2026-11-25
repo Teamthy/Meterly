@@ -95,6 +95,9 @@ type Config struct {
 	FeatureAutoPower  bool
 	AutoPowerInterval time.Duration
 
+	// Landlord Power Desk organisations, unit meters & bulk top-ups (M10).
+	FeaturePowerDesk bool
+
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
 	RateAuthFailuresPerMin int
@@ -263,6 +266,16 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("FEATURE_AUTOPOWER: must be true or false"))
 	}
 	c.AutoPowerInterval = dur("AUTOPOWER_INTERVAL", 30*time.Second)
+
+	// FEATURE_POWER_DESK defaults to false everywhere until explicitly enabled.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_POWER_DESK"))) {
+	case "", "false", "0":
+		c.FeaturePowerDesk = false
+	case "true", "1":
+		c.FeaturePowerDesk = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_POWER_DESK: must be true or false"))
+	}
 	c.PublicBaseURL = strings.TrimRight(get("PUBLIC_BASE_URL", "https://meterly.ng"), "/")
 	if c.Mode != Dev && !strings.HasPrefix(c.PublicBaseURL, "https://") {
 		errs = append(errs, errors.New("PUBLIC_BASE_URL must be https outside dev"))

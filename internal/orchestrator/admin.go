@@ -181,7 +181,7 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 		switch t.Payment {
 		case tx.PayPending, tx.PayFailed:
 			// Money arrived but was never accepted: record its receipt first.
-			if err := post(ctx, r, "pay-received:"+t.ID.String(), t.ID, "Payment received but not accepted",
+			if err := o.post(ctx, r, "pay-received:"+t.ID.String(), t.ID, "Payment received but not accepted",
 				ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Debit, Amount: v.Amount},
 				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: v.Amount},
 			); err != nil {
@@ -199,7 +199,7 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 		if err := t.SetPayment(tx.PayRefundPending, reason); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
+		if err := o.post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
 			ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Debit, Amount: v.Amount},
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: v.Amount},
 		); err != nil {

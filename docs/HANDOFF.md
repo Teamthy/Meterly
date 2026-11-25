@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M9 (F3 AutoPower scheduled & low-balance auto-recharge with spend guard).
+> **Last updated:** 2026-11-23, after M10 (F4 Landlord Power Desk & Compound Bulk Top-Up).
 
 ## 1. What Meterly is
 
@@ -20,7 +20,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ merged | [PR #6](https://github.com/Teamthy/Meterly/pull/6) |
 | M7: F1 Pay-for-Me shareable payment request links | ✅ merged | [PR #7](https://github.com/Teamthy/Meterly/pull/7) |
 | M8: F2 Split the Meter (reusable Funding Pot) | ✅ merged | [PR #8](https://github.com/Teamthy/Meterly/pull/8) |
-| M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ complete on `arena/7cc28241-meterly` | PR open to `main` |
+| M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ merged | [PR #9](https://github.com/Teamthy/Meterly/pull/9) |
+| M10: F4 Landlord Power Desk (orgs, unit meters, `LANDLORD_BULK` pots, statements) | ✅ complete on `arena/7cc28241-meterly` | PR #10 open to `main` |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -50,8 +51,10 @@ internal/notificationservice   outbox sink -> notification_deliveries, claim/sen
 internal/payrequests    Pay-for-Me domain, 128-bit base32 HMAC codes, anti-phishing validation, pure-stdlib QR PNG encoder
 internal/pots           reusable Funding Pot domain (`SPLIT_METER`, `LANDLORD_BULK`), contributions, allocations, initials & AEAD helpers
 internal/autopower      AutoPower domain, bound AEAD card mandate encryption, card expiry & Africa/Lagos schedule engine
+internal/authz          centralised organisation RBAC & zero-IDOR guard (`authz.Require`)
+internal/powerdesk      Landlord Power Desk domain, Africa/Lagos monthly statement bounds & CSV formula-safe exporter
 internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/notifications/inbound/{provider}
+internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/orgs/* + /v1/properties/* + /v1/units/* + /v1/notifications/inbound/{provider}
 api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
 Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
@@ -59,7 +62,7 @@ internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
 internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
-migrations/0001_init.sql .. 0011_autopower.sql
+migrations/0001_init.sql .. 0012_power_desk.sql
 ```
 
 How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
@@ -119,16 +122,25 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M10 (next milestone):** F4 Landlord Power Desk — organisations (`OWNER`, `MANAGER`, `VIEWER`), properties → units → meters with verified ownership (`account_name` match review or operator-approved evidence reference), one-payment compound bulk top-up reusing `internal/pots` with `Kind = LANDLORD_BULK` (independent per-unit electricity transactions + automatic pot refund of failed units), monthly per-property / per-unit CSV statements, and optional `MANAGER` spend-threshold `OWNER` approval rules. Followed by **M11** (F5 Meterly Offline USSD + inbound SMS vending).
+**M11 (next milestone):** F5 Meterly Offline — inbound USSD (`POST /v1/channels/ussd/inbound`) and WhatsApp Cloud API (`POST /v1/channels/whatsapp/inbound`) purchase channels reusing M5 transport verification, M7 Pay-for-Me payment links, and M9 saved-card mandates with 4-digit PBKDF2/scrypt channel PINs, 3-minute USSD session TTLs, and `FEATURE_OFFLINE_CHANNELS` (default `false`).
 
 **Blocked on the founder or partners (not code):**
 - a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed before any non-dev deployment)
 - an **AMI/HES remote-credit** partner and an authorised test on a real meter
 - live sandbox credentials + webhook configuration to verify Paystack, Africa's Talking, Resend and WhatsApp Cloud API against live provider sandboxes
-- legal sign-off (NDPA/NCC and CBN/PSP fund-holding terms) before enabling `FEATURE_GIFT_SMS=true` or `FEATURE_SPLIT_METER=true` in production
+- legal sign-off (NDPA/NCC and CBN/PSP fund-holding terms) before enabling `FEATURE_GIFT_SMS=true`, `FEATURE_SPLIT_METER=true`, `FEATURE_AUTOPOWER=true`, or `FEATURE_POWER_DESK=true` in production
 - choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
+
+- **2026-11-23 (latest): M10 Landlord Power Desk completed (M9 merged in PR #9).**
+  - RBAC, domain & decisions (`internal/authz`, `internal/powerdesk`, `docs/DECISIONS.md`): implemented `authz.Require(ctx, orgID, role)` (`OWNER > MANAGER > VIEWER`) returning `404` on non-member/cross-org access (zero IDOR), unit-meter verification states (`ACCOUNT_NAME_MATCH`, `EVIDENCE_APPROVED`), honest partial-success bulk summary formatting, and `Africa/Lagos` monthly statement bounds + CSV formula-injection sanitizer labelling vending `"electricity purchased"`.
+  - Schema & dual stores (`migrations/0012_power_desk.sql`, `internal/store/{memstore,pgstore}/powerdesk.go`): reused `organisations`, `roles`, `organisation_members`, `properties`, `buildings`, `units`; added `unit_meters`, `bulk_topups`, `bulk_topup_items`, `organisations.manager_approval_threshold_minor`, and `PENDING_APPROVAL` on `funding_pots`; verified with `TestPowerDeskRepoParity` across both stores.
+  - Orchestrator, `LANDLORD_BULK` pots & HTTP/OpenAPI (`internal/orchestrator/{powerdesk,pots}.go`, `internal/httpapi/powerdesk.go`, `api/openapi.yaml`): implemented 16 Power Desk + admin endpoints gated behind `FEATURE_POWER_DESK` (default `false`); `LANDLORD_BULK` Funding Pots create 1 landlord contribution and N POT-funded unit allocations (₦100 fee per unit), support `MANAGER` over-threshold `OWNER` approval before checkout, execute automatic partial pot refunds for failed units while never refunding `UNKNOWN` vends, and compute monthly statements strictly from double-entry ledger postings. Verified under `-race` on `memstore` and PostgreSQL 16.16.
+
+- **2026-11-23 (earlier): M9 AutoPower scheduled & low-balance auto-recharge completed (M8 merged in PR #8).**
+  - Saved mandates & Paystack (`internal/autopower`, `migrations/0011_autopower.sql`, `internal/providers/paystack`): explicit consent-gated `POST /v1/me/payment-methods/{transaction_id}/save` sealing card authorization codes with AEAD bound to `(user_id, pm_id)`; `ChargeSaved` via `POST /transaction/charge_authorization` always verified via `VerifyPayment`; deleting a saved card or revoking meter access atomically pauses active rules.
+  - Scheduler, spend guards & low-balance poller (`internal/orchestrator/autopower.go`, `internal/httpapi/autopower.go`, `api/openapi.yaml`): `Africa/Lagos` weekly/monthly scheduler with 12h heads-up notifications, one-tap `POST /v1/autopower/runs/{id}/skip`, 6h catch-up window, row-locked monthly rule cap + `AUTOPOWER_DAILY_MAX_MINOR` per-user cap, 3-strike failure auto-pause, and capability-gated `MeterReadingProvider` low-balance poller with 24h cooldown; gated behind `FEATURE_AUTOPOWER` (default `false`).
 
 - **2026-11-23 (latest): M8 Split the Meter (reusable Funding Pot) completed (M7 merged in PR #7).**
   - Legal gate & ledger (`docs/DECISIONS.md`, `internal/ledger`, `migrations/0009_funding_pots.sql`): gated behind `FEATURE_SPLIT_METER` (default `true` in `dev`, `false` outside `dev`) and `POT_MAX_HOLD` (default `72h`, cap `7d`), added liability account `POT_FUNDS_HELD`, and extended `electricity_transactions` with `funding_source` (`PSP` | `POT`).

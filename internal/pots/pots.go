@@ -35,14 +35,15 @@ const (
 type Status string
 
 const (
-	StatusOpen       Status = "OPEN"
-	StatusFunded     Status = "FUNDED"
-	StatusAllocating Status = "ALLOCATING"
-	StatusSettled    Status = "SETTLED"
-	StatusExpired    Status = "EXPIRED"
-	StatusCancelled  Status = "CANCELLED"
-	StatusRefunding  Status = "REFUNDING"
-	StatusRefunded   Status = "REFUNDED"
+	StatusPendingApproval Status = "PENDING_APPROVAL"
+	StatusOpen            Status = "OPEN"
+	StatusFunded          Status = "FUNDED"
+	StatusAllocating      Status = "ALLOCATING"
+	StatusSettled         Status = "SETTLED"
+	StatusExpired         Status = "EXPIRED"
+	StatusCancelled       Status = "CANCELLED"
+	StatusRefunding       Status = "REFUNDING"
+	StatusRefunded        Status = "REFUNDED"
 )
 
 type ContributionStatus string
@@ -76,12 +77,13 @@ var (
 )
 
 var potTransitions = map[Status][]Status{
-	StatusOpen:       {StatusFunded, StatusExpired, StatusCancelled},
-	StatusFunded:     {StatusAllocating, StatusRefunding},
-	StatusAllocating: {StatusSettled, StatusRefunding},
-	StatusExpired:    {StatusRefunding},
-	StatusCancelled:  {StatusRefunding},
-	StatusRefunding:  {StatusRefunded},
+	StatusPendingApproval: {StatusOpen, StatusCancelled, StatusExpired},
+	StatusOpen:            {StatusFunded, StatusExpired, StatusCancelled},
+	StatusFunded:          {StatusAllocating, StatusRefunding},
+	StatusAllocating:      {StatusSettled, StatusRefunding},
+	StatusExpired:         {StatusRefunding},
+	StatusCancelled:       {StatusRefunding},
+	StatusRefunding:       {StatusRefunded},
 	// Late payment arriving after a pot already finished refunding re-enters REFUNDING to reverse it.
 	StatusRefunded: {StatusRefunding},
 }
@@ -272,6 +274,16 @@ func CodeHMAC(box *secure.Box, rawCode string) (string, bool) {
 		return "", false
 	}
 	return box.Hash("pot-code:" + norm), true
+}
+
+// BulkCodeHMAC computes a domain-separated code HMAC for non-public
+// LANDLORD_BULK pots so public Split-the-Meter lookups never match them.
+func BulkCodeHMAC(box *secure.Box, rawCode string) (string, bool) {
+	norm, ok := payrequests.NormalizeCode(rawCode)
+	if !ok || box == nil {
+		return "", false
+	}
+	return box.Hash("pot-bulk:" + norm), true
 }
 
 func ConstantTimeEqualHMAC(a, b string) bool {

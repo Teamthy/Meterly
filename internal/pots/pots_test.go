@@ -33,6 +33,14 @@ func TestPotAndContributionTransitions(t *testing.T) {
 		}
 	}
 
+	pApproval := &pots.Pot{Status: pots.StatusPendingApproval, Kind: pots.KindLandlordBulk}
+	if err := pApproval.Transition(pots.StatusFunded, now); err == nil {
+		t.Fatal("PENDING_APPROVAL -> FUNDED without OPEN must fail")
+	}
+	if err := pApproval.Transition(pots.StatusOpen, now); err != nil {
+		t.Fatalf("PENDING_APPROVAL -> OPEN should succeed: %v", err)
+	}
+
 	cid := uuid.New()
 	c := &pots.Contribution{ID: cid, Status: pots.ContribPending, RefundStep: 1}
 	if got := c.RefundReference(); got != "refund:contribution:"+cid.String() {
@@ -89,5 +97,9 @@ func TestFormatInitialsAndCodeDomainSeparation(t *testing.T) {
 	payReqHMAC, _ := payrequests.LinkCodeHMAC(box, code)
 	if potHMAC == payReqHMAC {
 		t.Fatal("pot code HMAC must be domain-separated from payrequest code HMAC")
+	}
+	bulkHMAC, ok := pots.BulkCodeHMAC(box, code)
+	if !ok || bulkHMAC == potHMAC || bulkHMAC == payReqHMAC {
+		t.Fatal("bulk pot code HMAC must be domain-separated from public pot and payrequest HMACs")
 	}
 }
