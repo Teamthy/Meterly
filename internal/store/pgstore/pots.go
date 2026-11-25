@@ -79,9 +79,10 @@ func (r potRepo) Update(ctx context.Context, p *pots.Pot) error {
 			review_reason  = $3,
 			check_attempts = $4,
 			next_check_at  = $5,
-			updated_at     = $6
+			updated_at     = $6,
+			deadline       = $7
 		WHERE id = $1`,
-		p.ID, string(p.Status), p.ReviewReason, p.CheckAttempts, p.NextCheckAt.UTC(), p.UpdatedAt.UTC(),
+		p.ID, string(p.Status), p.ReviewReason, p.CheckAttempts, p.NextCheckAt.UTC(), p.UpdatedAt.UTC(), p.Deadline.UTC(),
 	)
 	if err != nil {
 		return mapErr(err)
@@ -101,7 +102,7 @@ func (r potRepo) ClaimDue(ctx context.Context, now, staleBefore time.Time, lease
 		WHERE id IN (
 			SELECT id FROM pots
 			WHERE review_reason = ''
-			  AND status NOT IN ('SETTLED', 'REFUNDED')
+			  AND status NOT IN ('PENDING_APPROVAL', 'SETTLED', 'REFUNDED')
 			  AND next_check_at <= $1
 			  AND (
 			      (status = 'OPEN' AND deadline <= $1)

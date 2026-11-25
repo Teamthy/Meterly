@@ -25,6 +25,7 @@ import (
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/pots"
+	"github.com/teamthy/meterly/internal/powerdesk"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -84,6 +85,7 @@ type Repos interface {
 	PayRequests() PayRequestRepo
 	Pots() PotRepo
 	AutoPower() AutoPowerRepo
+	PowerDesk() PowerDeskRepo
 }
 
 type AuditRepo interface {
@@ -307,4 +309,48 @@ type AutoPowerRepo interface {
 	ClaimDueRuns(ctx context.Context, headsUpHorizon, now, staleChargingBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error)
 	SumRuleSpendMinor(ctx context.Context, ruleID uuid.UUID, startUTC, endUTC time.Time) (int64, error)
 	SumUserSpendMinor(ctx context.Context, userID string, startUTC, endUTC time.Time) (int64, error)
+}
+
+// PowerDeskRepo persists M10 Landlord Power Desk organisations, memberships,
+// properties, buildings, units, unit-meter attachments and LANDLORD_BULK metadata.
+type PowerDeskRepo interface {
+	CreateOrg(ctx context.Context, org *powerdesk.Organisation) error
+	GetOrg(ctx context.Context, id uuid.UUID) (*powerdesk.Organisation, error)
+	GetOrgForUpdate(ctx context.Context, id uuid.UUID) (*powerdesk.Organisation, error)
+	UpdateOrg(ctx context.Context, org *powerdesk.Organisation) error
+
+	UpsertMember(ctx context.Context, m *powerdesk.Member) error
+	GetActiveMemberRole(ctx context.Context, orgID uuid.UUID, userID string) (powerdesk.Role, error)
+	GetMemberForUpdate(ctx context.Context, orgID uuid.UUID, userID string) (*powerdesk.Member, error)
+	ListActiveMembers(ctx context.Context, orgID uuid.UUID) ([]*powerdesk.Member, error)
+	CountActiveOwners(ctx context.Context, orgID uuid.UUID) (int, error)
+	RemoveMember(ctx context.Context, orgID uuid.UUID, userID string) error
+
+	CreateProperty(ctx context.Context, p *powerdesk.Property) error
+	GetProperty(ctx context.Context, id uuid.UUID) (*powerdesk.Property, error)
+	ListPropertiesForOrg(ctx context.Context, orgID uuid.UUID) ([]*powerdesk.Property, error)
+
+	EnsureDefaultBuilding(ctx context.Context, propertyID uuid.UUID, name string, now time.Time) (*powerdesk.Building, error)
+	GetBuilding(ctx context.Context, id uuid.UUID) (*powerdesk.Building, error)
+
+	CreateUnit(ctx context.Context, u *powerdesk.Unit) error
+	GetUnit(ctx context.Context, id uuid.UUID) (*powerdesk.Unit, error)
+	ListUnitsForProperty(ctx context.Context, propertyID uuid.UUID) ([]*powerdesk.Unit, error)
+	ListUnitsForOrg(ctx context.Context, orgID uuid.UUID) ([]*powerdesk.Unit, error)
+
+	AttachUnitMeter(ctx context.Context, um *powerdesk.UnitMeter) error
+	GetUnitMeter(ctx context.Context, id uuid.UUID) (*powerdesk.UnitMeter, error)
+	GetUnitMeterForUpdate(ctx context.Context, id uuid.UUID) (*powerdesk.UnitMeter, error)
+	GetActiveUnitMeterByUnit(ctx context.Context, unitID uuid.UUID) (*powerdesk.UnitMeter, error)
+	ListUnitMetersForOrg(ctx context.Context, orgID uuid.UUID) ([]*powerdesk.UnitMeter, error)
+	UpdateUnitMeter(ctx context.Context, um *powerdesk.UnitMeter) error
+
+	CreateBulkTopup(ctx context.Context, bt *powerdesk.BulkTopup, items []*powerdesk.BulkTopupItem) error
+	GetBulkTopup(ctx context.Context, potID uuid.UUID) (*powerdesk.BulkTopup, error)
+	GetBulkTopupForUpdate(ctx context.Context, potID uuid.UUID) (*powerdesk.BulkTopup, error)
+	GetBulkTopupByIdempotency(ctx context.Context, orgID uuid.UUID, key string) (*powerdesk.BulkTopup, error)
+	UpdateBulkTopup(ctx context.Context, bt *powerdesk.BulkTopup) error
+	ListBulkTopupItems(ctx context.Context, potID uuid.UUID) ([]*powerdesk.BulkTopupItem, error)
+	UpdateBulkTopupItem(ctx context.Context, item *powerdesk.BulkTopupItem) error
+	ListBulkTopupItemsForOrg(ctx context.Context, orgID uuid.UUID, propertyID *uuid.UUID) ([]*powerdesk.BulkTopupItem, error)
 }

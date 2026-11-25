@@ -24,6 +24,7 @@ import (
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/pots"
+	"github.com/teamthy/meterly/internal/powerdesk"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -70,6 +71,15 @@ type Store struct {
 	apRuns            map[uuid.UUID]*autopower.Run
 	apRunBySlot       map[string]uuid.UUID
 	apRunByTxn        map[uuid.UUID]uuid.UUID
+	orgs              map[uuid.UUID]*powerdesk.Organisation
+	orgMembers        map[string]*powerdesk.Member // "<org_id>:<user_id>"
+	properties        map[uuid.UUID]*powerdesk.Property
+	buildings         map[uuid.UUID]*powerdesk.Building
+	units             map[uuid.UUID]*powerdesk.Unit
+	unitMeters        map[uuid.UUID]*powerdesk.UnitMeter
+	bulkTopups        map[uuid.UUID]*powerdesk.BulkTopup
+	bulkTopupByIdem   map[string]uuid.UUID // "<org_id>:<key>"
+	bulkItems         map[uuid.UUID]*powerdesk.BulkTopupItem
 }
 
 func New() *Store {
@@ -97,6 +107,15 @@ func New() *Store {
 		apRuns:            map[uuid.UUID]*autopower.Run{},
 		apRunBySlot:       map[string]uuid.UUID{},
 		apRunByTxn:        map[uuid.UUID]uuid.UUID{},
+		orgs:              map[uuid.UUID]*powerdesk.Organisation{},
+		orgMembers:        map[string]*powerdesk.Member{},
+		properties:        map[uuid.UUID]*powerdesk.Property{},
+		buildings:         map[uuid.UUID]*powerdesk.Building{},
+		units:             map[uuid.UUID]*powerdesk.Unit{},
+		unitMeters:        map[uuid.UUID]*powerdesk.UnitMeter{},
+		bulkTopups:        map[uuid.UUID]*powerdesk.BulkTopup{},
+		bulkTopupByIdem:   map[string]uuid.UUID{},
+		bulkItems:         map[uuid.UUID]*powerdesk.BulkTopupItem{},
 	}
 }
 
@@ -184,6 +203,7 @@ func (r *repos) Notifications() store.NotificationRepo                   { retur
 func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
 func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
 func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
+func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
