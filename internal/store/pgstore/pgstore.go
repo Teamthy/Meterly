@@ -133,6 +133,7 @@ func (r *repos) PayRequests() store.PayRequestRepo                       { retur
 func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
 func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
 func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
+func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
