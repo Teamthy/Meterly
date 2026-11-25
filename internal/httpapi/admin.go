@@ -28,6 +28,7 @@ func (s *Server) adminRoutes(mux *patternMux) {
 	mux.Handle("GET /v1/admin/providers", op(s.adminProviders))
 	mux.Handle("POST /v1/admin/providers/{name}/enable", admin(s.adminSetProvider(true)))
 	mux.Handle("POST /v1/admin/providers/{name}/disable", admin(s.adminSetProvider(false)))
+	mux.Handle("POST /v1/admin/unit-meters/{id}/verify", op(s.adminVerifyUnitMeter))
 }
 
 // actor builds the audit actor from the caller and a {"reason": "..."} body.

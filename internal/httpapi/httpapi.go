@@ -57,6 +57,7 @@ type Server struct {
 	PayForMeDisabled   bool
 	SplitMeterDisabled bool
 	AutoPowerDisabled  bool
+	PowerDeskDisabled  bool
 	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
@@ -169,6 +170,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PATCH /v1/autopower/rules/{id}", write(s.updateAutoPowerRule))
 	mux.Handle("DELETE /v1/autopower/rules/{id}", write(s.deleteAutoPowerRule))
 	mux.Handle("POST /v1/autopower/runs/{id}/skip", write(s.skipAutoPowerRun))
+
+	s.powerDeskRoutes(mux, user, write)
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))
