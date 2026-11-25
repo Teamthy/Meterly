@@ -1050,6 +1050,16 @@ func (o *Orchestrator) CreateBulkTopup(ctx context.Context, orgID uuid.UUID, req
 				replayed = true
 				return nil
 			}
+			// Even if the ephemeral idempotency_keys row expired, bulk_topups retains
+			// (organisation_id, idempotency_key) permanently.
+			if btPrev, bErr := r.PowerDesk().GetBulkTopupByIdempotency(ctx, orgID, req.IdempotencyKey); bErr == nil {
+				potID = btPrev.PotID
+				contribID = btPrev.ContributionID
+				replayed = true
+				return nil
+			} else if !errors.Is(bErr, store.ErrNotFound) {
+				return bErr
+			}
 		}
 
 		org, err := r.PowerDesk().GetOrgForUpdate(ctx, orgID)

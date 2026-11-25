@@ -130,8 +130,10 @@ internal/
   store/pgstore/          PostgreSQL store (pgx v5); pgtest = per-test databases
   transactions/ meters/ ledger/ events/ idempotency/   domain types and rules
   autopower/              M9 AutoPower rules, runs, bound AEAD card mandates & Africa/Lagos scheduler
+  authz/                  M10 centralised organisation RBAC & zero-IDOR guard (authz.Require)
   payrequests/            M7 Pay-for-Me shareable request links & QR PNG encoder
-  pots/                   M8 reusable Funding Pot engine (SPLIT_METER, LANDLORD_BULK)
+  pots/                   M8/M10 reusable Funding Pot engine (SPLIT_METER, LANDLORD_BULK)
+  powerdesk/              M10 Landlord Power Desk domain, Africa/Lagos statements & CSV exporter
   outbox/                 at-least-once outbox publisher
   providers/              contracts for payment, vending, remote-credit & meter-reading providers
   providers/mock/         deterministic mocks for every success and failure path
@@ -159,3 +161,4 @@ docs/                     roadmap and decisions
 - **Tokens are encrypted at rest**, never logged, and only the purchaser can read them. Meter numbers are encrypted, looked up by HMAC and shown masked.
 - **Access is granted per meter.** Validating a meter number grants no access. Revoking access blocks purchases even with a quote already issued, and automatically pauses any active AutoPower rules for that `(user, meter)` pair.
 - **AutoPower saved-card charges never double-charge (`FEATURE_AUTOPOWER`, default `false`).** Reusable card authorizations are saved only after explicit user consent (`POST /v1/me/payment-methods/{transaction_id}/save`), encrypted with AEAD bound to `(user_id, payment_method_id)`. Each scheduled or low-balance slot (`UNIQUE (rule_id, scheduled_for)`) pre-commits deterministic `apchg:<run_id>` before calling `ChargeSaved`, always verifies settlement via `VerifyPayment` (Invariant 1), enforces `Africa/Lagos` monthly rule caps and per-user daily caps under row locks, pauses after 3 consecutive failures, and atomically stops referencing rules when a saved payment method is deleted.
+- **Landlord Power Desk enforces zero-IDOR RBAC, verified unit-meter delegation, and ledger-derived statements (`FEATURE_POWER_DESK`, default `false`).** Every organisation-scoped endpoint checks `authz.Require(ctx, orgID, role)` (`OWNER`, `MANAGER`, `VIEWER`) and returns `404` on cross-organisation or non-member access. Unverified `unit_meters` allow bulk electricity purchases (`PURCHASE`) but block meter history and tenant delegation until an operator verifies ownership via `POST /v1/admin/unit-meters/{id}/verify` (`ACCOUNT_NAME_MATCH` or `EVIDENCE_APPROVED`, mandatory reason, audited). Compound bulk top-ups run on M8 Funding Pots (`Kind = LANDLORD_BULK`, 1 landlord contribution + N POT-funded unit allocations at ₦100 fee per unit, optional `MANAGER` spend-threshold `OWNER` approval, automatic partial pot refunds for failed units, zero refunds while `UNKNOWN`), and monthly statements (`JSON` / formula-sanitized `CSV`) derive `"electricity purchased"` totals strictly from double-entry ledger postings in `Africa/Lagos`.
