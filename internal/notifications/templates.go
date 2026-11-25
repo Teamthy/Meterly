@@ -36,12 +36,13 @@ const (
 	TemplateAutoPowerPaused     = "autopower_rule_paused"
 	TemplateAutoPowerSkippedCap = "autopower_skipped_cap"
 	TemplateAutoPowerMissed     = "autopower_run_missed"
+	TemplateOfflineToken        = "offline_token_delivery"
 
 	CurrentTemplateVersion = "v1"
 )
 
 func IsTokenBearing(templateID string) bool {
-	return templateID == TemplateGiftTokenSMS
+	return templateID == TemplateGiftTokenSMS || templateID == TemplateOfflineToken
 }
 
 type TemplateSpec struct {
@@ -118,6 +119,7 @@ var whatsAppTemplateNames = map[string]string{
 	TemplateAutoPowerHeadsUp:    "meterly_autopower_heads_up_v1",
 	TemplateAutoPowerFailed:     "meterly_autopower_failed_v1",
 	TemplateAutoPowerPaused:     "meterly_autopower_paused_v1",
+	TemplateOfflineToken:        "meterly_offline_token_v1",
 	TemplateAutoPowerSkippedCap: "meterly_autopower_skipped_cap_v1",
 	TemplateAutoPowerMissed:     "meterly_autopower_missed_v1",
 }
@@ -348,4 +350,21 @@ func RenderAutoPowerHeadsUp(locale string, amountMinor int64, maskedMeter string
 		FormatNairaMinor(amountMinor), meter, when,
 	)
 	return Content{Subject: "Upcoming AutoPower recharge", Body: body}, CurrentTemplateVersion, nil
+}
+
+// RenderOfflineToken formats the STS token message and WhatsApp template
+// parameters for USSD (SMS) and WhatsApp purchase channels.
+func RenderOfflineToken(locale string, amountMinor int64, maskedMeter, rawToken string) (content Content, params []string, ver string, err error) {
+	if amountMinor <= 0 {
+		return Content{}, nil, "", errors.New("notifications: offline token amount must be positive")
+	}
+	tok, err := FormatSTSToken(rawToken)
+	if err != nil {
+		return Content{}, nil, "", err
+	}
+	meter := ShortMaskedMeter(maskedMeter)
+	amt := FormatNairaMinor(amountMinor)
+	_ = NormalizeLocale(locale)
+	body := fmt.Sprintf("Meterly: %s electricity for meter %s. Token: %s. Reply STOP to opt out.", amt, meter, tok)
+	return Content{Subject: "Your Meterly electricity token", Body: body}, []string{amt, meter, tok}, CurrentTemplateVersion, nil
 }

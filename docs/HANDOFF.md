@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M10 (F4 Landlord Power Desk & Compound Bulk Top-Up).
+> **Last updated:** 2026-11-23, after M11 (F5 Meterly Offline — USSD & WhatsApp purchase channels).
 
 ## 1. What Meterly is
 
@@ -21,7 +21,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M7: F1 Pay-for-Me shareable payment request links | ✅ merged | [PR #7](https://github.com/Teamthy/Meterly/pull/7) |
 | M8: F2 Split the Meter (reusable Funding Pot) | ✅ merged | [PR #8](https://github.com/Teamthy/Meterly/pull/8) |
 | M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ merged | [PR #9](https://github.com/Teamthy/Meterly/pull/9) |
-| M10: F4 Landlord Power Desk (orgs, unit meters, `LANDLORD_BULK` pots, statements) | ✅ complete on `arena/7cc28241-meterly` | PR #10 open to `main` |
+| M10: F4 Landlord Power Desk (orgs, unit meters, `LANDLORD_BULK` pots, statements) | ✅ merged | [PR #10](https://github.com/Teamthy/Meterly/pull/10) |
+| M11: F5 Meterly Offline (USSD & WhatsApp purchase channels) | ✅ complete on `arena/7cc28241-meterly` | PR #11 open to `main` |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -53,8 +54,11 @@ internal/pots           reusable Funding Pot domain (`SPLIT_METER`, `LANDLORD_BU
 internal/autopower      AutoPower domain, bound AEAD card mandate encryption, card expiry & Africa/Lagos schedule engine
 internal/authz          centralised organisation RBAC & zero-IDOR guard (`authz.Require`)
 internal/powerdesk      Landlord Power Desk domain, Africa/Lagos monthly statement bounds & CSV formula-safe exporter
+internal/conversation   channel-agnostic USSD & WhatsApp purchase state machine, OTP & Africa/Lagos daily caps
+internal/channels/ussd  Africa's Talking USSD HTTP adapter (+ussdtest simulator; IP allowlist + HMAC, <= 182 chars)
+internal/offline        USSD & WhatsApp store-to-orchestrator wiring, phone OTP linking & audited token resends
 internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/orgs/* + /v1/properties/* + /v1/units/* + /v1/notifications/inbound/{provider}
+internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/orgs/* + /v1/properties/* + /v1/units/* + /v1/channels/* + /v1/notifications/inbound/{provider}
 api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
 Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
@@ -62,7 +66,7 @@ internal/audit          audit events + actor; correlation ID in context
 internal/ratelimit      in-memory token buckets
 internal/orchestrator/admin.go   operator actions (all audited, reason required)
 internal/platform/{config,migrate}
-migrations/0001_init.sql .. 0012_power_desk.sql
+migrations/0001_init.sql .. 0013_offline_channels.sql
 ```
 
 How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
@@ -122,18 +126,24 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**M11 (next milestone):** F5 Meterly Offline — inbound USSD (`POST /v1/channels/ussd/inbound`) and WhatsApp Cloud API (`POST /v1/channels/whatsapp/inbound`) purchase channels reusing M5 transport verification, M7 Pay-for-Me payment links, and M9 saved-card mandates with 4-digit PBKDF2/scrypt channel PINs, 3-minute USSD session TTLs, and `FEATURE_OFFLINE_CHANNELS` (default `false`).
+**All M1–M11 core platform & flagship product milestones (F1–F5) are implemented and verified.** Next engineering focus: first real Nigerian DisCo/aggregator vending adapter, AMI/HES remote-credit adapter, and live provider sandbox verification.
 
 **Blocked on the founder or partners (not code):**
+- **M11 USSD founder blocker — NCC/aggregator USSD shortcode:** provisioning a dedicated or shared Nigerian USSD shortcode (e.g. `*xxx#` via Africa's Talking + NCC/telco approval), configuring aggregator source CIDR ranges (`USSD_ALLOWED_IPS`) and `USSD_SHARED_SECRET`, and setting `FEATURE_USSD=true`
+- **M11 WhatsApp founder blocker — WhatsApp Business Account (WABA) with approved templates:** registering a verified Meta WhatsApp Business Account + phone number ID, obtaining Meta approval for out-of-window utility templates (including `meterly_offline_token_v1` alongside M5 templates), configuring `WHATSAPP_APP_SECRET` + `WHATSAPP_VERIFY_TOKEN` + `WHATSAPP_ACCESS_TOKEN`, and setting `FEATURE_WHATSAPP=true`
 - a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed before any non-dev deployment)
 - an **AMI/HES remote-credit** partner and an authorised test on a real meter
 - live sandbox credentials + webhook configuration to verify Paystack, Africa's Talking, Resend and WhatsApp Cloud API against live provider sandboxes
-- legal sign-off (NDPA/NCC and CBN/PSP fund-holding terms) before enabling `FEATURE_GIFT_SMS=true`, `FEATURE_SPLIT_METER=true`, `FEATURE_AUTOPOWER=true`, or `FEATURE_POWER_DESK=true` in production
+- legal sign-off (NDPA/NCC and CBN/PSP fund-holding terms) before enabling `FEATURE_GIFT_SMS=true`, `FEATURE_SPLIT_METER=true`, `FEATURE_AUTOPOWER=true`, `FEATURE_POWER_DESK=true`, `FEATURE_USSD=true`, or `FEATURE_WHATSAPP=true` in production
 - choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
 
-- **2026-11-23 (latest): M10 Landlord Power Desk completed (M9 merged in PR #9).**
+- **2026-11-23 (latest): M11 Meterly Offline (USSD & WhatsApp purchase channels) completed (M10 merged in PR #10).**
+  - Engine, USSD & WhatsApp adapters (`internal/conversation`, `internal/channels/ussd`, `internal/offline`, `internal/notifications/whatsapp`, `docs/DECISIONS.md`): built channel-agnostic conversational state machine persisted in `conversation_sessions` (`0013_offline_channels.sql` across `memstore` and `pgstore`), Africa's Talking USSD HTTP adapter + `ussdtest.Simulator` enforcing CIDR allowlist + HMAC-SHA256 (`401` on failure), `<= 182`-character `CON`/`END` responses, and ~180s session TTL (creating zero transactions on mid-flow timeout), and Meta WhatsApp Cloud API inbound `hub.verify_token` + `X-Hub-Signature-256` verification (`401` on failure), duplicate `wamid` + out-of-order timestamp protection, free-form in-chat token delivery inside the 24h customer-service window with automatic fallback to `meterly_offline_token_v1` outside 24h, and `STOP` integration with M5 `opt_outs`.
+  - Phone identity, SIM-swap defense, orchestrator wiring & HTTP/OpenAPI (`internal/httpapi/offline.go`, `api/openapi.yaml`): mapped authenticated inbound phones via HMAC (`phone_channel_links`), auto-linked OIDC-verified phones, added `POST /v1/channels/phone/link/{start,verify}` + conversational 6-digit SMS OTP linking (`channel_otps`), enforced SIM-swap inactivity reverification (`OFFLINE_REVERIFY_AFTER`, default `30d`) and unverified vs verified `Africa/Lagos` daily purchase caps, routed all purchases through `orchestrator.Quote` + `CreateTransaction` (`Idempotency-Key = ussd:<sessionId>:<step>` / `whatsapp:<sessionId>:<step>`), added caller-scoped audited `<= 3/day` `"Last token"` resends, hashed session turn inputs so zero raw phones/meters/OTPs/tokens persist in logs or PostgreSQL tables, and gated behind `FEATURE_USSD` and `FEATURE_WHATSAPP` (both default `false`).
+
+- **2026-11-23 (earlier): M10 Landlord Power Desk completed (M9 merged in PR #9).**
   - RBAC, domain & decisions (`internal/authz`, `internal/powerdesk`, `docs/DECISIONS.md`): implemented `authz.Require(ctx, orgID, role)` (`OWNER > MANAGER > VIEWER`) returning `404` on non-member/cross-org access (zero IDOR), unit-meter verification states (`ACCOUNT_NAME_MATCH`, `EVIDENCE_APPROVED`), honest partial-success bulk summary formatting, and `Africa/Lagos` monthly statement bounds + CSV formula-injection sanitizer labelling vending `"electricity purchased"`.
   - Schema & dual stores (`migrations/0012_power_desk.sql`, `internal/store/{memstore,pgstore}/powerdesk.go`): reused `organisations`, `roles`, `organisation_members`, `properties`, `buildings`, `units`; added `unit_meters`, `bulk_topups`, `bulk_topup_items`, `organisations.manager_approval_threshold_minor`, and `PENDING_APPROVAL` on `funding_pots`; verified with `TestPowerDeskRepoParity` across both stores.
   - Orchestrator, `LANDLORD_BULK` pots & HTTP/OpenAPI (`internal/orchestrator/{powerdesk,pots}.go`, `internal/httpapi/powerdesk.go`, `api/openapi.yaml`): implemented 16 Power Desk + admin endpoints gated behind `FEATURE_POWER_DESK` (default `false`); `LANDLORD_BULK` Funding Pots create 1 landlord contribution and N POT-funded unit allocations (₦100 fee per unit), support `MANAGER` over-threshold `OWNER` approval before checkout, execute automatic partial pot refunds for failed units while never refunding `UNKNOWN` vends, and compute monthly statements strictly from double-entry ledger postings. Verified under `-race` on `memstore` and PostgreSQL 16.16.

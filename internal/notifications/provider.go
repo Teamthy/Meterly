@@ -70,6 +70,7 @@ type SendRequest struct {
 	WhatsAppTemplateName        string
 	TemplateParams              []string
 	WithinCustomerServiceWindow bool
+	PreferTextInWindow          bool
 }
 
 type SendResult struct {

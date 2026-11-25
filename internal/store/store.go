@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
+	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
@@ -86,6 +87,7 @@ type Repos interface {
 	Pots() PotRepo
 	AutoPower() AutoPowerRepo
 	PowerDesk() PowerDeskRepo
+	Offline() OfflineRepo
 }
 
 type AuditRepo interface {
@@ -353,4 +355,34 @@ type PowerDeskRepo interface {
 	ListBulkTopupItems(ctx context.Context, potID uuid.UUID) ([]*powerdesk.BulkTopupItem, error)
 	UpdateBulkTopupItem(ctx context.Context, item *powerdesk.BulkTopupItem) error
 	ListBulkTopupItemsForOrg(ctx context.Context, orgID uuid.UUID, propertyID *uuid.UUID) ([]*powerdesk.BulkTopupItem, error)
+}
+
+// OfflineRepo persists M11 USSD and WhatsApp conversation sessions, phone-link
+// verification state, SMS OTP challenges, webhook message dedupe, channel
+// purchase records and audited daily token-resend counters.
+type OfflineRepo interface {
+	FindUserIDByPhoneHMAC(ctx context.Context, phoneHMAC string) (string, error)
+
+	GetPhoneLink(ctx context.Context, phoneHMAC string) (*conversation.PhoneLink, error)
+	GetPhoneLinkForUpdate(ctx context.Context, phoneHMAC string) (*conversation.PhoneLink, error)
+	UpsertPhoneLink(ctx context.Context, link *conversation.PhoneLink) error
+
+	CreateOTP(ctx context.Context, otp *conversation.ChannelOTP) error
+	GetLatestOTPForUpdate(ctx context.Context, phoneHMAC string) (*conversation.ChannelOTP, error)
+	UpdateOTP(ctx context.Context, otp *conversation.ChannelOTP) error
+
+	CreateSession(ctx context.Context, s *conversation.Session) error
+	GetSessionByProviderIDForUpdate(ctx context.Context, ch conversation.Channel, providerSessionID string) (*conversation.Session, error)
+	GetActiveSessionForPhoneForUpdate(ctx context.Context, ch conversation.Channel, phoneHMAC string, now time.Time) (*conversation.Session, error)
+	UpdateSession(ctx context.Context, s *conversation.Session) error
+
+	// RecordProcessedMessage returns inserted=false when (ch, messageID) was already seen.
+	RecordProcessedMessage(ctx context.Context, ch conversation.Channel, messageID, phoneHMAC string, at time.Time) (inserted bool, err error)
+
+	RecordPurchase(ctx context.Context, p *conversation.OfflinePurchase) error
+	GetPurchase(ctx context.Context, txnID uuid.UUID) (*conversation.OfflinePurchase, error)
+	SumPhoneSpendMinor(ctx context.Context, phoneHMAC string, startUTC, endUTC time.Time) (int64, error)
+
+	RecordTokenResend(ctx context.Context, r *conversation.TokenResend) error
+	CountTokenResends(ctx context.Context, userID string, startUTC, endUTC time.Time) (int, error)
 }

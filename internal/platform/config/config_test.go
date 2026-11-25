@@ -262,3 +262,33 @@ func TestPowerDeskConfig(t *testing.T) {
 		t.Fatalf("invalid FEATURE_POWER_DESK must fail: %v", err)
 	}
 }
+
+func TestOfflineChannelsConfig(t *testing.T) {
+	devCfg, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if devCfg.FeatureUSSD || devCfg.FeatureWhatsApp {
+		t.Fatalf("FEATURE_USSD and FEATURE_WHATSAPP must default to false: %+v", devCfg)
+	}
+
+	onCfg, err := Load(env(map[string]string{
+		"MODE":             "dev",
+		"FEATURE_USSD":     "true",
+		"FEATURE_WHATSAPP": "true",
+		"USSD_ALLOWED_IPS": "127.0.0.1/32,196.201.214.0/24",
+	}))
+	if err != nil || !onCfg.FeatureUSSD || !onCfg.FeatureWhatsApp || len(onCfg.USSDAllowedIPs) != 2 {
+		t.Fatalf("expected offline channels enabled: %v %+v", err, onCfg)
+	}
+
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_USSD": "bad"})); err == nil || !strings.Contains(err.Error(), "FEATURE_USSD") {
+		t.Fatalf("invalid FEATURE_USSD must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_WHATSAPP": "bad"})); err == nil || !strings.Contains(err.Error(), "FEATURE_WHATSAPP") {
+		t.Fatalf("invalid FEATURE_WHATSAPP must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "USSD_ALLOWED_IPS": "not-an-ip"})); err == nil || !strings.Contains(err.Error(), "USSD_ALLOWED_IPS") {
+		t.Fatalf("invalid USSD_ALLOWED_IPS must fail: %v", err)
+	}
+}

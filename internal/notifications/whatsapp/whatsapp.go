@@ -106,7 +106,7 @@ func (c *Client) SendDelivery(ctx context.Context, req notifications.SendRequest
 	}
 
 	tplName := strings.TrimSpace(req.WhatsAppTemplateName)
-	if tplName == "" && req.TemplateID != "" {
+	if tplName == "" && req.TemplateID != "" && !(req.PreferTextInWindow && req.WithinCustomerServiceWindow) {
 		tplName = notifications.WhatsAppTemplateName(req.TemplateID)
 	}
 	if !req.WithinCustomerServiceWindow && tplName == "" {
@@ -236,22 +236,118 @@ func Sign(appSecret string, body []byte) string {
 	return "sha256=" + hex.EncodeToString(m.Sum(nil))
 }
 
-func (c *Client) ParseInbound(h http.Header, body []byte) (notifications.InboundResult, error) {
+// InboundMessage is a verified user message from a Meta WhatsApp Cloud API webhook.
+type InboundMessage struct {
+	ID        string    // Meta wamid...
+	From      string    // Normalized E.164 phone (e.g. "+2348012345678")
+	Text      string    // Trimmed text, button payload or interactive button title
+	Timestamp time.Time // Message creation timestamp (UTC), or zero if absent
+}
+
+// ParseInboundMessages verifies X-Hub-Signature-256 and extracts structured
+// inbound user messages for the M11 WhatsApp purchase bot.
+func (c *Client) ParseInboundMessages(h http.Header, body []byte) ([]InboundMessage, error) {
+	if err := c.verifyWebhookSignature(h, body); err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Object string `json:"object"`
+		Entry  []struct {
+			Changes []struct {
+				Field string `json:"field"`
+				Value struct {
+					Messages []struct {
+						ID        string `json:"id"`
+						From      string `json:"from"`
+						Timestamp string `json:"timestamp"`
+						Type      string `json:"type"`
+						Text      struct {
+							Body string `json:"body"`
+						} `json:"text"`
+						Button struct {
+							Text string `json:"text"`
+						} `json:"button"`
+						Interactive struct {
+							ButtonReply struct {
+								ID    string `json:"id"`
+								Title string `json:"title"`
+							} `json:"button_reply"`
+							ListReply struct {
+								ID    string `json:"id"`
+								Title string `json:"title"`
+							} `json:"list_reply"`
+						} `json:"interactive"`
+					} `json:"messages"`
+				} `json:"value"`
+			} `json:"changes"`
+		} `json:"entry"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, errors.New("whatsapp: malformed webhook JSON")
+	}
+
+	var out []InboundMessage
+	for _, ent := range payload.Entry {
+		for _, chg := range ent.Changes {
+			for _, msg := range chg.Value.Messages {
+				rawFrom := strings.TrimSpace(msg.From)
+				if rawFrom != "" && !strings.HasPrefix(rawFrom, "+") {
+					rawFrom = "+" + rawFrom
+				}
+				norm, err := notifications.NormalizePhone(rawFrom)
+				if err != nil {
+					continue
+				}
+				txt := strings.TrimSpace(msg.Text.Body)
+				if txt == "" {
+					txt = strings.TrimSpace(msg.Button.Text)
+				}
+				if txt == "" {
+					if msg.Interactive.ButtonReply.Title != "" {
+						txt = strings.TrimSpace(msg.Interactive.ButtonReply.Title)
+					} else if msg.Interactive.ListReply.Title != "" {
+						txt = strings.TrimSpace(msg.Interactive.ListReply.Title)
+					}
+				}
+				var ts time.Time
+				if sec, pErr := strconv.ParseInt(strings.TrimSpace(msg.Timestamp), 10, 64); pErr == nil && sec > 0 {
+					ts = time.Unix(sec, 0).UTC()
+				}
+				out = append(out, InboundMessage{
+					ID:        strings.TrimSpace(msg.ID),
+					From:      norm,
+					Text:      txt,
+					Timestamp: ts,
+				})
+			}
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) verifyWebhookSignature(h http.Header, body []byte) error {
 	if c.appSecret == "" {
-		return notifications.InboundResult{}, providers.ErrBadSignature
+		return providers.ErrBadSignature
 	}
 	sigHdr := strings.TrimSpace(h.Get("X-Hub-Signature-256"))
 	if !strings.HasPrefix(sigHdr, "sha256=") {
-		return notifications.InboundResult{}, providers.ErrBadSignature
+		return providers.ErrBadSignature
 	}
 	got, err := hex.DecodeString(strings.TrimPrefix(sigHdr, "sha256="))
 	if err != nil || len(got) == 0 {
-		return notifications.InboundResult{}, providers.ErrBadSignature
+		return providers.ErrBadSignature
 	}
 	m := hmac.New(sha256.New, []byte(c.appSecret))
 	m.Write(body)
 	if !hmac.Equal(got, m.Sum(nil)) {
-		return notifications.InboundResult{}, providers.ErrBadSignature
+		return providers.ErrBadSignature
+	}
+	return nil
+}
+
+func (c *Client) ParseInbound(h http.Header, body []byte) (notifications.InboundResult, error) {
+	if err := c.verifyWebhookSignature(h, body); err != nil {
+		return notifications.InboundResult{}, err
 	}
 
 	var payload struct {

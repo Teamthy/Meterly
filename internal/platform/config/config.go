@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/teamthy/meterly/internal/channels/ussd"
+	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/pots"
 )
@@ -97,6 +99,15 @@ type Config struct {
 
 	// Landlord Power Desk organisations, unit meters & bulk top-ups (M10).
 	FeaturePowerDesk bool
+
+	// Meterly Offline USSD & WhatsApp purchase channels (M11).
+	FeatureUSSD                    bool
+	FeatureWhatsApp                bool
+	USSDSharedSecret               string
+	USSDAllowedIPs                 []string
+	OfflineReverifyAfter           time.Duration
+	OfflineUnverifiedDailyMaxMinor int64
+	OfflineVerifiedDailyMaxMinor   int64
 
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
@@ -275,6 +286,60 @@ func Load(getenv func(string) string) (Config, error) {
 		c.FeaturePowerDesk = true
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_POWER_DESK: must be true or false"))
+	}
+
+	// FEATURE_USSD and FEATURE_WHATSAPP default to false everywhere until explicitly enabled.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_USSD"))) {
+	case "", "false", "0":
+		c.FeatureUSSD = false
+	case "true", "1":
+		c.FeatureUSSD = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_USSD: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_WHATSAPP"))) {
+	case "", "false", "0":
+		c.FeatureWhatsApp = false
+	case "true", "1":
+		c.FeatureWhatsApp = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_WHATSAPP: must be true or false"))
+	}
+	defUSSDSecret := ""
+	defUSSDIPs := ""
+	if c.Mode == Dev {
+		defUSSDSecret = "dev-ussd-secret"
+		defUSSDIPs = "127.0.0.1/32,::1/128"
+	}
+	c.USSDSharedSecret = get("USSD_SHARED_SECRET", defUSSDSecret)
+	if rawIPs := get("USSD_ALLOWED_IPS", defUSSDIPs); rawIPs != "" {
+		for _, item := range strings.Split(rawIPs, ",") {
+			if s := strings.TrimSpace(item); s != "" {
+				c.USSDAllowedIPs = append(c.USSDAllowedIPs, s)
+			}
+		}
+		if _, err := ussd.ParseAllowlist(c.USSDAllowedIPs); err != nil {
+			errs = append(errs, fmt.Errorf("USSD_ALLOWED_IPS: %w", err))
+		}
+	}
+	if c.FeatureUSSD && c.Mode != Dev {
+		if c.USSDSharedSecret == "" {
+			errs = append(errs, errors.New("USSD_SHARED_SECRET is required when FEATURE_USSD=true outside dev"))
+		}
+		if len(c.USSDAllowedIPs) == 0 {
+			errs = append(errs, errors.New("USSD_ALLOWED_IPS is required when FEATURE_USSD=true outside dev"))
+		}
+	}
+	if c.FeatureWhatsApp && c.Mode != Dev {
+		if strings.TrimSpace(c.WhatsAppAppSecret) == "" || strings.TrimSpace(c.WhatsAppVerifyToken) == "" {
+			errs = append(errs, errors.New("WHATSAPP_APP_SECRET and WHATSAPP_VERIFY_TOKEN are required when FEATURE_WHATSAPP=true outside dev"))
+		}
+	}
+	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)
+	c.OfflineUnverifiedDailyMaxMinor = integer("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR", conversation.DefaultUnverifiedDailyCapMinor)
+	c.OfflineVerifiedDailyMaxMinor = integer("OFFLINE_VERIFIED_DAILY_MAX_MINOR", conversation.DefaultVerifiedDailyCapMinor)
+	if c.OfflineUnverifiedDailyMaxMinor <= 0 || c.OfflineVerifiedDailyMaxMinor < c.OfflineUnverifiedDailyMaxMinor {
+		errs = append(errs, errors.New("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR must be positive and not exceed OFFLINE_VERIFIED_DAILY_MAX_MINOR"))
 	}
 	c.PublicBaseURL = strings.TrimRight(get("PUBLIC_BASE_URL", "https://meterly.ng"), "/")
 	if c.Mode != Dev && !strings.HasPrefix(c.PublicBaseURL, "https://") {

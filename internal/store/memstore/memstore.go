@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
+	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
@@ -80,6 +81,13 @@ type Store struct {
 	bulkTopups        map[uuid.UUID]*powerdesk.BulkTopup
 	bulkTopupByIdem   map[string]uuid.UUID // "<org_id>:<key>"
 	bulkItems         map[uuid.UUID]*powerdesk.BulkTopupItem
+	phoneLinks        map[string]*conversation.PhoneLink
+	channelOTPs       map[uuid.UUID]*conversation.ChannelOTP
+	convSessions      map[uuid.UUID]*conversation.Session
+	convSessionByProv map[string]uuid.UUID // "<channel>:<provider_session_id>"
+	processedMsgs     map[string]time.Time // "<channel>:<message_id>"
+	offlinePurchases  map[uuid.UUID]*conversation.OfflinePurchase
+	tokenResends      []*conversation.TokenResend
 }
 
 func New() *Store {
@@ -116,6 +124,12 @@ func New() *Store {
 		bulkTopups:        map[uuid.UUID]*powerdesk.BulkTopup{},
 		bulkTopupByIdem:   map[string]uuid.UUID{},
 		bulkItems:         map[uuid.UUID]*powerdesk.BulkTopupItem{},
+		phoneLinks:        map[string]*conversation.PhoneLink{},
+		channelOTPs:       map[uuid.UUID]*conversation.ChannelOTP{},
+		convSessions:      map[uuid.UUID]*conversation.Session{},
+		convSessionByProv: map[string]uuid.UUID{},
+		processedMsgs:     map[string]time.Time{},
+		offlinePurchases:  map[uuid.UUID]*conversation.OfflinePurchase{},
 	}
 }
 
@@ -204,6 +218,7 @@ func (r *repos) PayRequests() store.PayRequestRepo                       { retur
 func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
 func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
 func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
+func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
