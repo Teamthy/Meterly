@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
+	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/notifications"
@@ -326,9 +327,68 @@ func (s *Service) enqueueInRepos(ctx context.Context, r store.Repos, e events.Ev
 		return err
 	}
 
+	// M11 Meterly Offline: when a purchase was initiated via USSD or WhatsApp,
+	// enqueue the STS token directly on the originating channel (SMS for USSD,
+	// WhatsApp in-window text or out-of-window template for WhatsApp).
+	var offlineTokenChannel notifications.Channel
+	if e.Type == "token.available" && t.DeliveryMethod == tx.MethodToken {
+		if offPurch, oErr := r.Offline().GetPurchase(ctx, t.ID); oErr == nil {
+			switch offPurch.Channel {
+			case conversation.ChannelUSSD:
+				offlineTokenChannel = notifications.SMS
+			case conversation.ChannelWhatsApp:
+				offlineTokenChannel = notifications.WhatsApp
+			}
+			if offlineTokenChannel != "" && offPurch.PhoneHMAC != "" {
+				status := notifications.StatusPending
+				errCode := ""
+				if offlineTokenChannel == notifications.SMS && activeGiftSMSDestHMAC != "" && offPurch.PhoneHMAC == activeGiftSMSDestHMAC {
+					status = notifications.StatusSuppressed
+					errCode = "DUPLICATE_DESTINATION"
+				} else {
+					optedOut, optErr := r.Notifications().IsOptedOut(ctx, offPurch.PhoneHMAC, offlineTokenChannel)
+					if optErr != nil {
+						return optErr
+					}
+					if optedOut {
+						status = notifications.StatusSuppressed
+						errCode = "RECIPIENT_OPTED_OUT"
+					}
+				}
+				od := &notifications.Delivery{
+					EventID:         e.ID,
+					TransactionID:   t.ID,
+					RecipientKind:   notifications.RecipientPurchaser,
+					Channel:         offlineTokenChannel,
+					DestinationHMAC: offPurch.PhoneHMAC,
+					TemplateID:      notifications.TemplateOfflineToken,
+					TemplateVersion: notifications.CurrentTemplateVersion,
+					Locale:          notifications.LocaleEN,
+					Status:          status,
+					NextAttemptAt:   now,
+					LastErrorCode:   errCode,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				}
+				inserted, cErr := r.Notifications().CreateDelivery(ctx, od)
+				if cErr != nil {
+					return cErr
+				}
+				if inserted && status == notifications.StatusSuppressed {
+					s.metrics.IncNotificationDelivery(string(offlineTokenChannel), string(notifications.StatusSuppressed))
+				}
+			}
+		} else if !errors.Is(oErr, store.ErrNotFound) {
+			return oErr
+		}
+	}
+
 	var purchaserEmailActiveHMAC string
 	var purchaserSMSActiveHMAC string
 	for _, ch := range []notifications.Channel{notifications.SMS, notifications.Email, notifications.WhatsApp} {
+		if offlineTokenChannel != "" && ch == offlineTokenChannel {
+			continue // already enqueued token-bearing offline channel delivery
+		}
 		destHMAC := contactHMACForChannel(contacts, ch)
 		if destHMAC == "" {
 			continue // no verified contact for this channel
@@ -970,15 +1030,16 @@ func (s *Service) prepareSendInTx(
 		if customerID == "" {
 			return req, "USER_NOT_FOUND", "", nil
 		}
-		prefs, err := r.Notifications().GetPreferences(ctx, customerID)
-		if errors.Is(err, store.ErrNotFound) {
-			return req, "USER_NOT_FOUND", "", nil
-		}
-		if err != nil {
-			return req, "", "", err
-		}
-		if !prefs.Enabled(d.Channel) {
-			return req, "PREFERENCE_DISABLED", "", nil
+		if d.TemplateID != notifications.TemplateOfflineToken {
+			prefs, err := r.Notifications().GetPreferences(ctx, customerID)
+			if errors.Is(err, store.ErrNotFound) {
+				prefs = notifications.DefaultPreferences()
+			} else if err != nil {
+				return req, "", "", err
+			}
+			if !prefs.Enabled(d.Channel) {
+				return req, "PREFERENCE_DISABLED", "", nil
+			}
 		}
 		contacts, err := r.Users().Contacts(ctx, customerID)
 		if errors.Is(err, store.ErrNotFound) {
@@ -1017,10 +1078,29 @@ func (s *Service) prepareSendInTx(
 			return req, "RECIPIENT_OPTED_OUT", "", nil
 		}
 		var (
-			content notifications.Content
-			ver     string
+			content        notifications.Content
+			ver            string
+			tplParams      []string
+			preferChatText bool
 		)
-		if d.TemplateID == notifications.TemplateAutoPowerHeadsUp {
+		if d.TemplateID == notifications.TemplateOfflineToken {
+			if t == nil || t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 {
+				return req, "", "TOKEN_UNAVAILABLE", nil
+			}
+			rawToken, decErr := s.box.Decrypt(t.TokenCiphertext)
+			if decErr != nil {
+				return req, "", "TOKEN_DECRYPT_FAILED", nil
+			}
+			m, mErr := r.Meters().Get(ctx, t.MeterID)
+			if mErr != nil {
+				return req, "", "", mErr
+			}
+			content, tplParams, ver, err = notifications.RenderOfflineToken(d.Locale, t.Amount.Minor, m.Masked, rawToken)
+			if err != nil {
+				return req, "", "INVALID_TOKEN_FORMAT", nil
+			}
+			preferChatText = true
+		} else if d.TemplateID == notifications.TemplateAutoPowerHeadsUp {
 			run, rErr := r.AutoPower().GetRun(ctx, d.EventID)
 			if rErr == nil {
 				if run.Status != autopower.RunScheduled {
@@ -1049,7 +1129,9 @@ func (s *Service) prepareSendInTx(
 			if err != nil {
 				return req, "", "", err
 			}
-			waTpl = notifications.WhatsAppTemplateName(d.TemplateID)
+			if !(preferChatText && inWindow) {
+				waTpl = notifications.WhatsAppTemplateName(d.TemplateID)
+			}
 		}
 		d.DestinationHMAC = destHMAC
 		d.TemplateVersion = ver
@@ -1060,7 +1142,9 @@ func (s *Service) prepareSendInTx(
 			TemplateVersion:             ver,
 			Locale:                      d.Locale,
 			WhatsAppTemplateName:        waTpl,
+			TemplateParams:              tplParams,
 			WithinCustomerServiceWindow: inWindow,
+			PreferTextInWindow:          preferChatText,
 			Message: notifications.Message{
 				EventID:       d.EventID,
 				TransactionID: d.TransactionID,

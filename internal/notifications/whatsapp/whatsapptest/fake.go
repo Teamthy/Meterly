@@ -57,6 +57,14 @@ func (f *Fake) OpenCustomerServiceWindow(e164Phone string, d time.Duration) {
 	f.openWindows[digits] = f.now().Add(d)
 }
 
+func (f *Fake) SetClock(fn func() time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if fn != nil {
+		f.now = fn
+	}
+}
+
 func (f *Fake) FailAfterApply(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
