@@ -2,6 +2,8 @@ package conversation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -11,6 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/notifications"
 )
+
+func hashTurnInput(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
 
 var ErrNoSavedToken = errors.New("conversation: no completed token purchase found")
 
@@ -175,7 +182,8 @@ func (e *Engine) HandleUSSD(ctx context.Context, in USSDTurnInput) (string, erro
 	}
 
 	// Duplicate aggregator callback: return exact cached reply without re-running step.
-	if !created && sess.HasCachedTurn && sess.LastRawInput == in.RawText {
+	turnDigest := hashTurnInput(in.RawText)
+	if !created && sess.HasCachedTurn && sess.LastRawInput == turnDigest {
 		return sess.LastReply, nil
 	}
 
@@ -206,7 +214,7 @@ func (e *Engine) HandleUSSD(ctx context.Context, in USSDTurnInput) (string, erro
 	}
 
 	reply := FormatUSSDResponse(cont, body)
-	sess.LastRawInput = in.RawText
+	sess.LastRawInput = turnDigest
 	sess.LastReply = reply
 	sess.HasCachedTurn = true
 	sess.UpdatedAt = now
@@ -316,7 +324,7 @@ func (e *Engine) HandleWhatsApp(ctx context.Context, in WhatsAppTurnInput) (What
 	if err != nil {
 		return WhatsAppTurnOutput{}, err
 	}
-	sess.LastRawInput = trimmed
+	sess.LastRawInput = hashTurnInput(trimmed)
 	sess.LastReply = body
 	sess.HasCachedTurn = true
 	sess.UpdatedAt = now
