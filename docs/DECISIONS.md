@@ -274,6 +274,49 @@ Invariants enforced and tested:
    - Failed/declined charges emit `autopower.run.failed` and increment `consecutive_failures`; on the 3rd consecutive failure (`CONSECUTIVE_FAILURES`) or on card expiry (`CARD_EXPIRED`), the rule pauses automatically and emits `autopower.rule.paused`.
    - `LOW_BALANCE` / `BOTH` triggers require `MeterReadingProvider` (`LatestReading(ctx, meter) (kWh, at, err)`) and `Capabilities.RemoteReading` having `Supported && Authorised && Confirmed` (`422 METER_NOT_ELIGIBLE` otherwise), polling every `AUTOPOWER_POLL_INTERVAL` and triggering at most once per 24 hours per rule.
 
+---
+
+## M10: Landlord Power Desk (`internal/powerdesk`, `internal/authz`, `migrations/0012_power_desk.sql`)
+
+### Feature gate, organisation-scoped RBAC and zero-IDOR enforcement
+
+1. **Feature gate:** Landlord Power Desk endpoints are gated behind `FEATURE_POWER_DESK`, defaulting to **`false`** in every `MODE` (`dev`, `staging`, `production`) until explicitly enabled.
+2. **Centralised `authz.Require(ctx, orgID, minRole)`:** Every organisation, property, unit, unit-meter, bulk-top-up, and statement operation authenticates membership through a single helper `authz.Require(ctx, orgID, minRole)` backed by `organisation_members` (`OWNER > MANAGER > VIEWER`).
+   - Callers who are **not** active members of `orgID` (or pass a `property_id`, `unit_id`, `unit_meter_id`, or `pot_id` belonging to another organisation) receive **`404 NOT_FOUND`**, never `403`, eliminating cross-organisation existence leaks (IDOR).
+   - Active members with insufficient rank (for example, `VIEWER` creating properties/bulk top-ups, or `MANAGER` managing members or approving over-threshold bulk top-ups) receive **`403 FORBIDDEN`**.
+   - Demoting or removing the last active `OWNER` of an organisation is rejected (`409 LAST_OWNER`) so an organisation can never become ownerless.
+
+### Unit-meter attachment and operator ownership verification
+
+1. **Unverified attachment (`PURCHASE`-only):** Reusing `organisations`, `roles`, `organisation_members`, `properties`, `buildings`, and `units` from `0001_init.sql`, `unit_meters` links an active meter to a unit with `verified = false`. While unverified, the organisation can include the unit in bulk electricity top-ups (`PURCHASE`), but **cannot** view meter-wide history (`GET /v1/units/{id}/meters/{unit_meter_id}/history` -> `403 UNIT_METER_UNVERIFIED`) or delegate access to tenants (`POST /v1/units/{id}/meters/{unit_meter_id}/delegate` -> `403 UNIT_METER_UNVERIFIED`).
+2. **Audited operator verification (`POST /v1/admin/unit-meters/{id}/verify`):** Requires an MFA-authenticated operator/admin and a mandatory 5–500 character `reason`, recording an immutable `unit_meter.verified` audit event under one of two methods:
+   - `ACCOUNT_NAME_MATCH`: verifies that the DisCo validation `customer_name` matches the organisation's `legal_name` / `name` (`422 VERIFICATION_MISMATCH` otherwise).
+   - `EVIDENCE_APPROVED`: records an operator-reviewed external evidence reference (v1 stores the reference string only; document storage is out of scope).
+
+### Multi-allocation `LANDLORD_BULK` Funding Pot, partial refunds and approval rule
+
+1. **Reusable Funding Pot (`Kind = LANDLORD_BULK`):** Bulk top-ups reuse the M8 Funding Pot engine (`pots`, `pot_contributions`, `pot_allocations`) with **1 contribution** (the landlord's single Paystack checkout for `Σ (amount_i + fee_i)`, where `fee_i = ₦100` per electricity transaction) and **N POT-funded allocations** (one `transactions` row per unit, locked in canonical ascending `meter_id` order). Public `/v1/public/pots/*` routes reject `LANDLORD_BULK` pots and use domain-separated HMACs (`pot-bulk:<code>`).
+2. **Optional `MANAGER` approval state machine (`PENDING_APPROVAL → OPEN`):** When an organisation configures `manager_approval_threshold_minor` (`₦X`), a `MANAGER` bulk top-up with `total_minor > threshold` is created in `PENDING_APPROVAL` with **no** PSP checkout initiated. Only an `OWNER` calling `POST /v1/orgs/{id}/bulk-topups/{pot_id}/approve` transitions the pot `PENDING_APPROVAL → OPEN`, writes `bulk_topup.approved` to the audit log, and initializes the single Paystack checkout.
+3. **Double-entry ledger postings and partial-failure settlement:**
+
+| Event | Debit | Credit | Idempotent Reference |
+|---|---|---|---|
+| Landlord single payment verified (`Total = Σ Total_i`) | `PSP_SETTLEMENT_RECEIVABLE` | `POT_FUNDS_HELD` | `pot-contrib:<contrib_id>` |
+| Per-unit allocation `i` (`Total_i = Amount_i + Fee_i`) | `POT_FUNDS_HELD` | `CUSTOMER_FUNDS_CLEARING` | `pot-alloc:<alloc_i>` |
+| Unit `i` electricity vended | `CUSTOMER_FUNDS_CLEARING` (`Total_i`) | `PROVIDER_PAYABLE` (`Amount_i`) + `PLATFORM_FEE_REVENUE` (`Fee_i`) | `vend:<txn_i>` |
+| Unit `i` definitive vend failure (`VendFailed`) return | `CUSTOMER_FUNDS_CLEARING` (`Total_i`) | `POT_FUNDS_HELD` (`Total_i`) | `refund-pot:<txn_i>` |
+| Unit `i` partial refund queued on landlord contribution | `POT_FUNDS_HELD` (`Total_i`) | `REFUND_PAYABLE` (`Total_i`) | `pot-item-refund-due:<alloc_i>:<contrib_id>` |
+| Unallocated unit `i` refund queued (meter detached pre-alloc) | `POT_FUNDS_HELD` (`Total_i`) | `REFUND_PAYABLE` (`Total_i`) | `pot-unalloc-refund-due:<item_i>:<contrib_id>` |
+| Partial / full contributor refund paid at PSP (`step`) | `REFUND_PAYABLE` | `PSP_SETTLEMENT_RECEIVABLE` | `pot-refund-paid:<contrib_id>:<step>` |
+
+   - **Never refund on `UNKNOWN`:** An allocated unit whose vending is `VendUnknown` keeps its `Total_i` in `CUSTOMER_FUNDS_CLEARING` while sibling failed units (`VendFailed`) immediately refund their `Total_i` back to the landlord's contribution (`ContribPaid → ContribRefundPending → ContribPaid` while `retained_minor > 0`).
+   - **Honest partial-success settlement:** Status views report exact per-item counts (`"<D> delivered, <F> failed and refunded, <P> pending"`). Once all N items are terminal (`DelConfirmed` or `AllocReturned`) and all queued contributor refunds have settled, the pot transitions `ALLOCATING → SETTLED` when `D >= 1` or `ALLOCATING → REFUNDING → REFUNDED` when `D == 0`, leaving `POT_FUNDS_HELD = 0`, `CUSTOMER_FUNDS_CLEARING = 0`, `REFUND_PAYABLE = 0`, and global trial balance `= 0`.
+
+### Ledger-derived monthly statements and CSV export
+
+`GET /v1/orgs/{id}/statements?property_id=&month=YYYY-MM&format=csv` evaluates `[monthStart, nextMonthStart)` in `Africa/Lagos` and derives per-unit, per-property, and organisation totals directly from double-entry `ledger` postings (`vend:<txn_id>`, `refund-pot:<txn_id>`, `pot-unalloc-refund-due:<item_id>:<contrib_id>`), never from request payloads or UI arithmetic. All JSON fields and CSV headers label principal `"electricity purchased"` (never `"used"` or `"consumed"`), and CSV cells sanitize spreadsheet-formula prefixes (`=`, `+`, `-`, `@`, `\t`, `\r`).
+
+
 
 
 
