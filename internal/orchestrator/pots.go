@@ -272,7 +272,7 @@ func (o *Orchestrator) CreatePot(ctx context.Context, p CreatePotParams) (*Creat
 	}, nil
 }
 
-// GetPotForOwner returns the full organiser view of a Funding Pot.
+// GetPotForOwner returns the full organiser view of a Split-the-Meter Funding Pot.
 func (o *Orchestrator) GetPotForOwner(ctx context.Context, ownerID string, potID uuid.UUID) (*PotDetailView, error) {
 	pot, err := o.st.Repos().Pots().Get(ctx, potID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -281,13 +281,13 @@ func (o *Orchestrator) GetPotForOwner(ctx context.Context, ownerID string, potID
 	if err != nil {
 		return nil, err
 	}
-	if pot.OwnerID != ownerID {
+	if pot.Kind != pots.KindSplitMeter || pot.OwnerID != ownerID {
 		return nil, ErrPotNotFound
 	}
 	return o.loadPotDetailView(ctx, pot)
 }
 
-// CancelPot cancels an OPEN pot on the organiser's request and initiates
+// CancelPot cancels an OPEN Split-the-Meter pot on the organiser's request and initiates
 // automatic refunds for all paid contributions. Refused once funded/allocating/settled.
 func (o *Orchestrator) CancelPot(ctx context.Context, ownerID string, potID uuid.UUID) (*PotDetailView, error) {
 	now := o.Now().UTC()
@@ -300,7 +300,7 @@ func (o *Orchestrator) CancelPot(ctx context.Context, ownerID string, potID uuid
 		if err != nil {
 			return err
 		}
-		if pot.OwnerID != ownerID {
+		if pot.Kind != pots.KindSplitMeter || pot.OwnerID != ownerID {
 			return ErrPotNotFound
 		}
 		switch pot.Status {
@@ -365,6 +365,9 @@ func (o *Orchestrator) GetPublicPot(ctx context.Context, rawCode string) (*Publi
 	}
 	if err != nil {
 		return nil, err
+	}
+	if pot.Kind != pots.KindSplitMeter {
+		return nil, ErrPotNotFound
 	}
 	m, err := o.st.Repos().Meters().Get(ctx, pot.MeterID)
 	if err != nil {
@@ -532,6 +535,9 @@ func (o *Orchestrator) ContributeToPot(ctx context.Context, req ContributePotReq
 		}
 		if err != nil {
 			return err
+		}
+		if pot.Kind != pots.KindSplitMeter {
+			return ErrPotNotFound
 		}
 
 		switch pot.Status {
@@ -850,7 +856,7 @@ func (o *Orchestrator) recordPaidContributionInTx(
 ) error {
 	expected := money.New(cur.AmountMinor, cur.Currency)
 	// Always record actual money received at PSP in the double-entry ledger.
-	if err := post(ctx, r, "pot-contrib:"+cur.ID.String(), cur.ID, "Pot contribution received",
+	if err := o.post(ctx, r, "pot-contrib:"+cur.ID.String(), cur.ID, "Pot contribution received",
 		ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Debit, Amount: v.Amount},
 		ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Credit, Amount: v.Amount},
 	); err != nil {
@@ -905,7 +911,7 @@ func (o *Orchestrator) recordPaidContributionInTx(
 		if err := cur.Transition(pots.ContribRefundPending, now); err != nil {
 			return err
 		}
-		if err := post(ctx, r, fmt.Sprintf("pot-refund-due:%s:late", cur.ID), cur.ID, "Late/excess pot contribution refund owed",
+		if err := o.post(ctx, r, fmt.Sprintf("pot-refund-due:%s:late", cur.ID), cur.ID, "Late/excess pot contribution refund owed",
 			ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Debit, Amount: money.New(cur.AmountMinor, cur.Currency)},
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: money.New(cur.AmountMinor, cur.Currency)},
 		); err != nil {
@@ -940,7 +946,7 @@ func (o *Orchestrator) recordPaidContributionInTx(
 		if err := cur.Transition(pots.ContribRefundPending, now); err != nil {
 			return err
 		}
-		if err := post(ctx, r, fmt.Sprintf("pot-refund-due:%s:excess", cur.ID), cur.ID, "Overfunded pot contribution excess refund owed",
+		if err := o.post(ctx, r, fmt.Sprintf("pot-refund-due:%s:excess", cur.ID), cur.ID, "Overfunded pot contribution excess refund owed",
 			ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Debit, Amount: money.New(excess, cur.Currency)},
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: money.New(excess, cur.Currency)},
 		); err != nil {
@@ -1004,7 +1010,7 @@ func (o *Orchestrator) queuePotContributorRefundsInTx(
 					return false, err
 				}
 			}
-			if err := post(ctx, r, fmt.Sprintf("pot-refund-due:%s:principal", c.ID), c.ID, "Pot contributor refund owed: "+reason,
+			if err := o.post(ctx, r, fmt.Sprintf("pot-refund-due:%s:principal", c.ID), c.ID, "Pot contributor refund owed: "+reason,
 				ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Debit, Amount: money.New(toQueue, c.Currency)},
 				ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: money.New(toQueue, c.Currency)},
 			); err != nil {
@@ -1031,7 +1037,7 @@ func (o *Orchestrator) AdvancePot(ctx context.Context, potID uuid.UUID) (*pots.P
 	if err != nil {
 		return nil, err
 	}
-	if pot.ReviewReason != "" {
+	if pot.ReviewReason != "" || pot.Status == pots.StatusPendingApproval {
 		return pot, nil
 	}
 	now := o.Now().UTC()
@@ -1107,128 +1113,141 @@ func (o *Orchestrator) AdvancePot(ctx context.Context, potID uuid.UUID) (*pots.P
 		}
 	}
 
-	// 3. Allocate FUNDED pot into a POT-funded electricity transaction and vend.
+	// 3. Allocate FUNDED pot into POT-funded electricity transaction(s) and vend.
 	if pot.Status == pots.StatusFunded {
-		var allocatedTxnID uuid.UUID
-		err = o.st.InTx(ctx, func(r store.Repos) error {
-			cur, err := r.Pots().GetForUpdate(ctx, potID)
-			if err != nil || cur.Status != pots.StatusFunded || cur.ReviewReason != "" {
-				return err
-			}
-			cs, err := r.Pots().ListContributionsForUpdate(ctx, cur.ID)
-			if err != nil {
-				return err
-			}
-			// Re-verify organiser still holds PURCHASE on the target meter.
-			m, authErr := registry.AuthorizeForUpdateIn(ctx, r, cur.OwnerID, cur.MeterID, meters.PermPurchase)
-			if authErr != nil {
-				if errors.Is(authErr, meters.ErrForbidden) || errors.Is(authErr, meters.ErrNotFound) {
-					if err := cur.Transition(pots.StatusRefunding, now); err != nil {
-						return err
-					}
-					cur.NextCheckAt = now
-					cur.CheckAttempts = 0
-					if _, err := o.queuePotContributorRefundsInTx(ctx, r, cur, cs, "organiser lost meter PURCHASE access", now); err != nil {
-						return err
-					}
-					if err := r.Pots().Update(ctx, cur); err != nil {
-						return err
-					}
-					actor := audit.Actor{Type: audit.ActorSystem, CorrelationID: audit.CorrelationFrom(ctx), Reason: "organiser lost meter PURCHASE access"}
-					return r.Audit().Add(ctx, actor.Event("pot.cancelled", resourcePot, cur.ID, map[string]any{"meter_id": cur.MeterID}))
-				}
-				return authErr
-			}
-
-			options := []tx.DeliveryMethod{tx.MethodToken}
-			method := tx.MethodToken
-			if o.remote != nil && m.Capabilities.RemoteCreditUsable() {
-				options = append([]tx.DeliveryMethod{tx.MethodRemote}, options...)
-				if ok, eErr := r.Providers().Enabled(ctx, o.remote.Name()); eErr == nil && ok {
-					method = tx.MethodRemote
-				}
-			}
-			elecAmount := money.New(cur.ElectricityAmountMinor(), cur.Currency)
-			feeAmount := money.New(cur.FeeMinor, cur.Currency)
-			totalAmount := money.New(cur.TargetMinor, cur.Currency)
-			q := &tx.Quote{
-				ID:              uuid.New(),
-				CustomerID:      cur.OwnerID,
-				MeterID:         cur.MeterID,
-				Amount:          elecAmount,
-				Fee:             feeAmount,
-				Total:           totalAmount,
-				DeliveryMethod:  method,
-				DeliveryOptions: options,
-				ExpiresAt:       now.Add(o.cfg.QuoteTTL),
-				Used:            true,
-				CreatedAt:       now,
-			}
-			if err := r.Quotes().Create(ctx, q); err != nil {
-				return err
-			}
-			potTxn := tx.NewPotFunded(cur.OwnerID, q, now)
-			if err := r.Transactions().Create(ctx, potTxn); err != nil {
-				return err
-			}
-			alloc := &pots.Allocation{
-				ID:            uuid.New(),
-				PotID:         cur.ID,
-				TransactionID: potTxn.ID,
-				MeterID:       cur.MeterID,
-				AmountMinor:   cur.TargetMinor,
-				Currency:      cur.Currency,
-				Status:        pots.AllocActive,
-				CreatedAt:     now,
-				UpdatedAt:     now,
-			}
-			if err := r.Pots().CreateAllocation(ctx, alloc); err != nil {
-				return err
-			}
-			if err := post(ctx, r, "pot-alloc:"+alloc.ID.String(), potTxn.ID, "Allocated pot funds to electricity purchase",
-				ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Debit, Amount: totalAmount},
-				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: totalAmount},
-			); err != nil {
-				return err
-			}
-			if err := cur.Transition(pots.StatusAllocating, now); err != nil {
-				return err
-			}
-			cur.NextCheckAt = now
-			cur.CheckAttempts = 0
-			if err := r.Pots().Update(ctx, cur); err != nil {
-				return err
-			}
-			if err := emit(ctx, r, "electricity.transaction.created", potTxn.ID, map[string]any{
-				"funding_source": string(tx.FundingPot),
-				"pot_id":         cur.ID,
-			}); err != nil {
-				return err
-			}
-			if err := emit(ctx, r, "payment.confirmed", potTxn.ID, map[string]any{
-				"funding_source": string(tx.FundingPot),
-				"pot_id":         cur.ID,
-			}); err != nil {
-				return err
-			}
-			allocatedTxnID = potTxn.ID
-			return nil
-		})
-		if err != nil {
-			return pot, err
-		}
-		if allocatedTxnID != uuid.Nil {
-			if _, advErr := o.advance(ctx, allocatedTxnID); advErr != nil {
-				// Return error so ResumeDue tracks provider outages/failures accurately;
-				// first run any overfund excess refunds before returning if possible.
+		if pot.Kind == pots.KindLandlordBulk {
+			advErr := o.allocateAndVendLandlordBulkPot(ctx, potID, now)
+			if advErr != nil {
 				_ = o.executePendingContributionRefunds(ctx, potID)
 				p2, _ := o.st.Repos().Pots().Get(ctx, potID)
 				return p2, advErr
 			}
-		}
-		pot, err = o.st.Repos().Pots().Get(ctx, potID)
-		if err != nil {
-			return nil, err
+			pot, err = o.st.Repos().Pots().Get(ctx, potID)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			var allocatedTxnID uuid.UUID
+			err = o.st.InTx(ctx, func(r store.Repos) error {
+				cur, err := r.Pots().GetForUpdate(ctx, potID)
+				if err != nil || cur.Status != pots.StatusFunded || cur.ReviewReason != "" {
+					return err
+				}
+				cs, err := r.Pots().ListContributionsForUpdate(ctx, cur.ID)
+				if err != nil {
+					return err
+				}
+				// Re-verify organiser still holds PURCHASE on the target meter.
+				m, authErr := registry.AuthorizeForUpdateIn(ctx, r, cur.OwnerID, cur.MeterID, meters.PermPurchase)
+				if authErr != nil {
+					if errors.Is(authErr, meters.ErrForbidden) || errors.Is(authErr, meters.ErrNotFound) {
+						if err := cur.Transition(pots.StatusRefunding, now); err != nil {
+							return err
+						}
+						cur.NextCheckAt = now
+						cur.CheckAttempts = 0
+						if _, err := o.queuePotContributorRefundsInTx(ctx, r, cur, cs, "organiser lost meter PURCHASE access", now); err != nil {
+							return err
+						}
+						if err := r.Pots().Update(ctx, cur); err != nil {
+							return err
+						}
+						actor := audit.Actor{Type: audit.ActorSystem, CorrelationID: audit.CorrelationFrom(ctx), Reason: "organiser lost meter PURCHASE access"}
+						return r.Audit().Add(ctx, actor.Event("pot.cancelled", resourcePot, cur.ID, map[string]any{"meter_id": cur.MeterID}))
+					}
+					return authErr
+				}
+
+				options := []tx.DeliveryMethod{tx.MethodToken}
+				method := tx.MethodToken
+				if o.remote != nil && m.Capabilities.RemoteCreditUsable() {
+					options = append([]tx.DeliveryMethod{tx.MethodRemote}, options...)
+					if ok, eErr := r.Providers().Enabled(ctx, o.remote.Name()); eErr == nil && ok {
+						method = tx.MethodRemote
+					}
+				}
+				elecAmount := money.New(cur.ElectricityAmountMinor(), cur.Currency)
+				feeAmount := money.New(cur.FeeMinor, cur.Currency)
+				totalAmount := money.New(cur.TargetMinor, cur.Currency)
+				q := &tx.Quote{
+					ID:              uuid.New(),
+					CustomerID:      cur.OwnerID,
+					MeterID:         cur.MeterID,
+					Amount:          elecAmount,
+					Fee:             feeAmount,
+					Total:           totalAmount,
+					DeliveryMethod:  method,
+					DeliveryOptions: options,
+					ExpiresAt:       now.Add(o.cfg.QuoteTTL),
+					Used:            true,
+					CreatedAt:       now,
+				}
+				if err := r.Quotes().Create(ctx, q); err != nil {
+					return err
+				}
+				potTxn := tx.NewPotFunded(cur.OwnerID, q, now)
+				if err := r.Transactions().Create(ctx, potTxn); err != nil {
+					return err
+				}
+				alloc := &pots.Allocation{
+					ID:            uuid.New(),
+					PotID:         cur.ID,
+					TransactionID: potTxn.ID,
+					MeterID:       cur.MeterID,
+					AmountMinor:   cur.TargetMinor,
+					Currency:      cur.Currency,
+					Status:        pots.AllocActive,
+					CreatedAt:     now,
+					UpdatedAt:     now,
+				}
+				if err := r.Pots().CreateAllocation(ctx, alloc); err != nil {
+					return err
+				}
+				if err := o.post(ctx, r, "pot-alloc:"+alloc.ID.String(), potTxn.ID, "Allocated pot funds to electricity purchase",
+					ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Debit, Amount: totalAmount},
+					ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: totalAmount},
+				); err != nil {
+					return err
+				}
+				if err := cur.Transition(pots.StatusAllocating, now); err != nil {
+					return err
+				}
+				cur.NextCheckAt = now
+				cur.CheckAttempts = 0
+				if err := r.Pots().Update(ctx, cur); err != nil {
+					return err
+				}
+				if err := emit(ctx, r, "electricity.transaction.created", potTxn.ID, map[string]any{
+					"funding_source": string(tx.FundingPot),
+					"pot_id":         cur.ID,
+				}); err != nil {
+					return err
+				}
+				if err := emit(ctx, r, "payment.confirmed", potTxn.ID, map[string]any{
+					"funding_source": string(tx.FundingPot),
+					"pot_id":         cur.ID,
+				}); err != nil {
+					return err
+				}
+				allocatedTxnID = potTxn.ID
+				return nil
+			})
+			if err != nil {
+				return pot, err
+			}
+			if allocatedTxnID != uuid.Nil {
+				if _, advErr := o.advance(ctx, allocatedTxnID); advErr != nil {
+					// Return error so ResumeDue tracks provider outages/failures accurately;
+					// first run any overfund excess refunds before returning if possible.
+					_ = o.executePendingContributionRefunds(ctx, potID)
+					p2, _ := o.st.Repos().Pots().Get(ctx, potID)
+					return p2, advErr
+				}
+			}
+			pot, err = o.st.Repos().Pots().Get(ctx, potID)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -1287,31 +1306,7 @@ func (o *Orchestrator) AdvancePot(ctx context.Context, potID uuid.UUID) (*pots.P
 			return r.Pots().Update(ctx, cur)
 
 		case pots.StatusAllocating:
-			for _, c := range cs {
-				if c.Status == pots.ContribRefundPending || c.PendingRefundMinor() > 0 {
-					return nil
-				}
-			}
-			allocs, err := r.Pots().ListAllocations(ctx, cur.ID)
-			if err != nil || len(allocs) == 0 {
-				return err
-			}
-			for _, al := range allocs {
-				if al.Status != pots.AllocActive {
-					return nil
-				}
-				t, err := r.Transactions().Get(ctx, al.TransactionID)
-				if err != nil {
-					return err
-				}
-				if t.Delivery != tx.DelConfirmed {
-					return nil
-				}
-			}
-			if err := cur.Transition(pots.StatusSettled, now); err != nil {
-				return err
-			}
-			return r.Pots().Update(ctx, cur)
+			return o.settleAllocatingPotInTx(ctx, r, cur, cs, now)
 		}
 		return nil
 	})
@@ -1340,29 +1335,64 @@ func (o *Orchestrator) trySettleAllocatedPot(ctx context.Context, txnID uuid.UUI
 		if err != nil {
 			return err
 		}
-		for _, c := range cs {
-			if c.Status == pots.ContribRefundPending || c.PendingRefundMinor() > 0 {
+		return o.settleAllocatingPotInTx(ctx, r, cur, cs, now)
+	})
+}
+
+func (o *Orchestrator) settleAllocatingPotInTx(
+	ctx context.Context,
+	r store.Repos,
+	cur *pots.Pot,
+	cs []*pots.Contribution,
+	now time.Time,
+) error {
+	for _, c := range cs {
+		if c.Status == pots.ContribRefundPending || c.PendingRefundMinor() > 0 {
+			return nil
+		}
+	}
+	allocs, err := r.Pots().ListAllocations(ctx, cur.ID)
+	if err != nil || len(allocs) == 0 {
+		return err
+	}
+	delivered := 0
+	returned := 0
+	for _, al := range allocs {
+		if al.Status == pots.AllocReturned {
+			if cur.Kind != pots.KindLandlordBulk {
 				return nil
 			}
+			returned++
+			continue
 		}
-		allocs, err := r.Pots().ListAllocations(ctx, cur.ID)
-		if err != nil || len(allocs) == 0 {
+		if al.Status != pots.AllocActive {
+			return nil
+		}
+		t, err := r.Transactions().Get(ctx, al.TransactionID)
+		if err != nil {
 			return err
 		}
-		for _, al := range allocs {
-			if al.Status != pots.AllocActive {
-				return nil
-			}
-			t, err := r.Transactions().Get(ctx, al.TransactionID)
-			if err != nil || t.Delivery != tx.DelConfirmed {
-				return err
-			}
+		if t.Delivery != tx.DelConfirmed {
+			return nil
 		}
+		delivered++
+	}
+	if delivered > 0 {
 		if err := cur.Transition(pots.StatusSettled, now); err != nil {
 			return err
 		}
 		return r.Pots().Update(ctx, cur)
-	})
+	}
+	if cur.Kind == pots.KindLandlordBulk && returned == len(allocs) {
+		if err := cur.Transition(pots.StatusRefunding, now); err != nil {
+			return err
+		}
+		if err := cur.Transition(pots.StatusRefunded, now); err != nil {
+			return err
+		}
+		return r.Pots().Update(ctx, cur)
+	}
+	return nil
 }
 
 func (o *Orchestrator) executePendingContributionRefunds(ctx context.Context, potID uuid.UUID) error {
@@ -1470,7 +1500,7 @@ func (o *Orchestrator) executePendingContributionRefunds(ctx context.Context, po
 			cur.RefundedMinor += claimAmount
 			cur.RefundProviderRef = refundProvRef
 			cur.RefundClaimUntil = time.Unix(0, 0).UTC()
-			if err := post(ctx, r, fmt.Sprintf("pot-refund-paid:%s:%d", cur.ID, claimStep), cur.ID, "Pot contribution refund paid",
+			if err := o.post(ctx, r, fmt.Sprintf("pot-refund-paid:%s:%d", cur.ID, claimStep), cur.ID, "Pot contribution refund paid",
 				ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Debit, Amount: money.New(claimAmount, currency)},
 				ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Credit, Amount: money.New(claimAmount, currency)},
 			); err != nil {
@@ -1580,7 +1610,7 @@ func (o *Orchestrator) refundPotFunded(ctx context.Context, txnID uuid.UUID, rea
 		if err := r.Transactions().Save(ctx, t); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-pot:"+t.ID.String(), t.ID, "Returned POT-funded purchase to pot: "+reason,
+		if err := o.post(ctx, r, "refund-pot:"+t.ID.String(), t.ID, "Returned POT-funded purchase to pot: "+reason,
 			ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Debit, Amount: t.Total},
 			ledger.Entry{Account: ledger.PotFundsHeld, Direction: ledger.Credit, Amount: t.Total},
 		); err != nil {
@@ -1591,7 +1621,9 @@ func (o *Orchestrator) refundPotFunded(ctx context.Context, txnID uuid.UUID, rea
 			return err
 		}
 
-		// Check if all allocations on the pot have been returned; if so, move pot to REFUNDING.
+		// Check if all allocations on the pot have been returned; for LANDLORD_BULK,
+		// queue an immediate partial contributor refund for this failed unit even
+		// while sibling units succeed or remain UNKNOWN.
 		allAllocs, err := r.Pots().ListAllocations(ctx, pot.ID)
 		if err != nil {
 			return err
@@ -1606,7 +1638,39 @@ func (o *Orchestrator) refundPotFunded(ctx context.Context, txnID uuid.UUID, rea
 				break
 			}
 		}
-		if allReturned && pot.Status == pots.StatusAllocating {
+		if pot.Kind == pots.KindLandlordBulk {
+			hasPending, err := o.queuePotPartialRefundInTx(
+				ctx, r, contribs, t.Total.Minor,
+				"pot-item-refund-due:"+al.ID.String(),
+				al.ID,
+				"Bulk top-up failed unit refund owed: "+reason,
+				now,
+			)
+			if err != nil {
+				return err
+			}
+			if allReturned && pot.Status == pots.StatusAllocating {
+				if err := pot.Transition(pots.StatusRefunding, now); err != nil {
+					return err
+				}
+				pot.NextCheckAt = now
+				pot.CheckAttempts = 0
+				if !hasPending {
+					if err := pot.Transition(pots.StatusRefunded, now); err != nil {
+						return err
+					}
+				}
+				if err := r.Pots().Update(ctx, pot); err != nil {
+					return err
+				}
+			} else if pot.Status == pots.StatusAllocating {
+				pot.NextCheckAt = now
+				pot.CheckAttempts = 0
+				if err := r.Pots().Update(ctx, pot); err != nil {
+					return err
+				}
+			}
+		} else if allReturned && pot.Status == pots.StatusAllocating {
 			if err := pot.Transition(pots.StatusRefunding, now); err != nil {
 				return err
 			}
