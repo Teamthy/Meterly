@@ -316,8 +316,45 @@ Invariants enforced and tested:
 
 `GET /v1/orgs/{id}/statements?property_id=&month=YYYY-MM&format=csv` evaluates `[monthStart, nextMonthStart)` in `Africa/Lagos` and derives per-unit, per-property, and organisation totals directly from double-entry `ledger` postings (`vend:<txn_id>`, `refund-pot:<txn_id>`, `pot-unalloc-refund-due:<item_id>:<contrib_id>`), never from request payloads or UI arithmetic. All JSON fields and CSV headers label principal `"electricity purchased"` (never `"used"` or `"consumed"`), and CSV cells sanitize spreadsheet-formula prefixes (`=`, `+`, `-`, `@`, `\t`, `\r`).
 
+---
 
+## M11 — Meterly Offline (USSD & WhatsApp Purchase Channels)
 
+### Feature gates and external founder blockers
 
+1. **Independent channel gates:** USSD and WhatsApp purchase channels are gated independently behind `FEATURE_USSD` (default `false`) and `FEATURE_WHATSAPP` (default `false`). When disabled, inbound channel routes return `404 FEATURE_DISABLED`.
+2. **No new ledger accounts or bypasses:** Both channels drive the existing `Orchestrator` purchase pipeline (`CreateQuote` → `CreateTransaction` with deterministic `Idempotency-Key = <ussd|whatsapp>:<sessionId>:<step>` → `EnsurePaymentInitialised` → standard M1–M3 PSP webhook verification, vending, delivery, and refund ledger postings). No quote, payment verification, or state-machine guard is bypassed.
 
+### Conversation state machine (`internal/conversation`)
 
+Per-session state is persisted in `conversation_sessions` with channel-specific TTLs (`180s` for USSD, `30m` for WhatsApp). If a USSD session expires (`now >= expires_at`) before explicit confirmation, the expired session is discarded and **zero** transactions are created.
+
+```
+IDLE / NEW SESSION
+  ├─(unverified or inactive > OFFLINE_REVERIFY_AFTER and OTP flow chosen / required for Last Token)
+  │    └─► AWAIT_OTP ──(valid 6-digit SMS OTP)──► MENU (phone VERIFIED)
+  └─► MENU ("1. Buy for my meter  2. Buy for saved meter  3. Last token  4. Help  [5. Verify phone]")
+        ├─ "1" (1 saved meter) ──────────────────────► AWAIT_AMOUNT
+        ├─ "1" (>1 saved meters) / "2" (has saved) ──► AWAIT_METER_CHOICE ──► AWAIT_AMOUNT
+        ├─ "1"/"2" (0 saved meters or "NEW") ────────► AWAIT_DISCO ──► AWAIT_METER_NUMBER ──► AWAIT_AMOUNT
+        ├─ "3" ("Last token", requires VERIFIED) ────► COMPLETED (resends caller's own latest token, ≤3/day, audited)
+        └─ "4" ("Help") ─────────────────────────────► COMPLETED
+AWAIT_AMOUNT ──(valid ₦ amount within cap)──► AWAIT_CONFIRM ("1. Confirm  2. Cancel")
+  ├─ "1" ──► Orchestrator Quote + CreateTransaction + Checkout link ──► COMPLETED
+  └─ "2" ──► CANCELLED (zero transaction created)
+```
+
+### Phone identity, SMS OTP linking, daily caps and SIM-swap guard
+
+1. **Authenticated caller phone:** The caller's phone number from Africa's Talking or Meta WhatsApp Cloud API is trusted **only after** transport authentication (`USSD` IP allowlist + HMAC-SHA256 `X-USSD-Signature` / `X-AfricasTalking-Signature` -> `401` on failure; `WhatsApp` `hub.verify_token` challenge + `X-Hub-Signature-256` -> `401` on failure) and mapped via `notifications.DestinationHMAC(box, normalizedE164)` (zero plaintext phone numbers stored or logged).
+2. **Automatic OIDC link vs SMS OTP:**
+   - If `users` already holds an OIDC-verified `phone_hmac` (M5), the phone links automatically as `VERIFIED` unless inactive beyond `OFFLINE_REVERIFY_AFTER`.
+   - First-time callers link their phone via a 6-digit SMS OTP (`channel_otps`, HMAC-bound `otp:<id>:<code>`, 10-minute TTL, max 5 attempts). Authenticated app users can also link a phone via `POST /v1/channels/phone/link/start` and `POST /v1/channels/phone/link/verify`.
+   - **Daily caps by verification tier (`Africa/Lagos` day):** Unverified / pending-reverification phones can still make small emergency purchases up to `OFFLINE_UNVERIFIED_DAILY_MAX_MINOR` (default `₦5,000`/day), while OTP/OIDC-verified phones allow up to `OFFLINE_VERIFIED_DAILY_MAX_MINOR` (default `₦200,000`/day).
+   - **SIM-swap inactivity guard:** If a verified phone has had no channel activity for more than `OFFLINE_REVERIFY_AFTER` (default `30d`), its channel link enters `REVERIFY_REQUIRED`, blocking `Last token` and capping spend at the unverified tier until a fresh SMS OTP is verified.
+
+### Transport constraints, idempotency, STOP opt-outs and audited token resends
+
+1. **USSD 182-character hard limit & callback idempotency:** Every USSD response (`CON …` or `END …`) is bounded to `≤ 182` characters. Each session caches `(last_raw_input, last_reply)` so duplicate Africa's Talking callbacks return the identical reply without re-executing steps.
+2. **WhatsApp 24-hour window, templates, dedupe & out-of-order safety:** Inbound `wamid` IDs are recorded atomically in `processed_channel_messages` (duplicate webhooks are no-ops), and messages older than `session.last_inbound_msg_ts` are ignored so out-of-order delivery never corrupts active prompts. When `token.available` fires for a WhatsApp purchase, `notificationservice` sends free-form text in-chat when `HasActiveWhatsAppWindow` is true, and falls back to pre-approved template `meterly_offline_token_v1` outside the 24-hour customer-service window. Replying `STOP` records an M5 `opt_outs` entry immediately and closes any active session.
+3. **Audited `Last token` cap:** `"Last token"` inspects only transactions where `customer_id == callerUserID`, enforces at most **3** resends per `(user_id, Africa/Lagos day)` in `offline_token_resends`, and records an `offline.token.resent` audit event (with redacted metadata only) in the same database transaction.
