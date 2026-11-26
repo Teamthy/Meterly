@@ -28,6 +28,7 @@ import (
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -45,6 +46,7 @@ type Store struct {
 	authChallenges    map[string]identity.Challenge
 	authCreds         map[string]identity.Credential
 	authSessions      map[string]identity.Session
+	securityEvents    []security.Event
 	meters            map[uuid.UUID]*meters.Meter
 	meterByHash       map[string]uuid.UUID
 	grants            []*meters.Grant

@@ -30,6 +30,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -52,6 +53,7 @@ type Server struct {
 	O             *orchestrator.Orchestrator
 	Auth          auth.Authenticator
 	Identity      *identity.Engine
+	Security      *security.Engine
 	Payments      providers.PaymentProvider
 	Remote        providers.RemoteCreditProvider
 	Notifications *notificationservice.Service
@@ -144,6 +146,7 @@ func (s *Server) Routes() http.Handler {
 
 	user, write := s.authed(auth.RoleCustomer, false), s.authed(auth.RoleCustomer, true)
 	s.identityRoutes(mux, user, write)
+	s.securityRoutes(mux, user, write)
 	mux.Handle("POST /v1/meters/validate", write(s.validateMeter))
 	mux.Handle("POST /v1/meters", write(s.registerMeter))
 	mux.Handle("GET /v1/meters", user(s.listMeters))
@@ -678,6 +681,9 @@ func (s *Server) paymentCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAction(w, r, security.ActionTokenRead) {
+		return
+	}
 	id, err := uuid.Parse(r.PathValue("transaction_id"))
 	if err != nil {
 		writeErr(w, 404, "TRANSACTION_NOT_FOUND", "transaction not found")
@@ -879,6 +885,12 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 401, "UNAUTHENTICATED", "passkey or session was rejected")
 	case errors.Is(err, identity.ErrStepOrder), errors.Is(err, identity.ErrInvalidStep):
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, security.ErrStepUp):
+		writeErr(w, 403, "STEP_UP_REQUIRED", "confirm this device to continue")
+	case errors.Is(err, security.ErrLastPasskey), errors.Is(err, identity.ErrLastPasskey):
+		writeErr(w, 403, "FORBIDDEN", "cannot delete the last passkey")
+	case errors.Is(err, security.ErrDenied):
+		writeErr(w, 403, "FORBIDDEN", "action denied")
 	case errors.Is(err, errInvalidJSON):
 		writeErr(w, 400, "INVALID_REQUEST", "invalid request body")
 	case errors.Is(err, gifts.ErrInvalidContact), errors.Is(err, notifications.ErrInvalidPhone), errors.Is(err, notifications.ErrInvalidEmail), errors.Is(err, tokenshares.ErrUnsupportedChannel):

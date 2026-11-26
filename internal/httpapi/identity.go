@@ -115,6 +115,7 @@ func (s *Server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		s.mapErr(w, r, err)
 		return
 	}
+	s.recordAuthEvent(r, sess.UserID, "REGISTER", "RECORDED", "passkey registered", sess.ID)
 	writeJSON(w, 200, map[string]any{
 		"token":      token,
 		"expires_at": sess.ExpiresAt,
@@ -160,6 +161,7 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		s.mapErr(w, r, err)
 		return
 	}
+	s.recordAuthEvent(r, sess.UserID, "LOGIN", "RECORDED", "passkey sign-in", sess.ID)
 	writeJSON(w, 200, map[string]any{
 		"token":      token,
 		"expires_at": sess.ExpiresAt,
@@ -387,6 +389,9 @@ func (s *Server) deletePasskey(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, 404, "NOT_FOUND", "passkey not found")
+		return
+	}
+	if !s.requireAction(w, r, "DELETE_PASSKEY") {
 		return
 	}
 	if err := s.Identity.DeletePasskey(r.Context(), userID(r), id); err != nil {

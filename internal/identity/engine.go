@@ -94,6 +94,7 @@ type PublicKeyOptions struct {
 	UserVerification       string            `json:"userVerification,omitempty"`
 	RPID                   string            `json:"rpId,omitempty"`
 	ExcludeCredentials     []map[string]any  `json:"excludeCredentials,omitempty"`
+	AllowCredentials       []map[string]any  `json:"allowCredentials,omitempty"`
 }
 
 func (e *Engine) BeginRegister(ctx context.Context, origin, displayName, existingUserID string) (PublicKeyOptions, string, error) {
@@ -425,6 +426,102 @@ func (e *Engine) DeletePasskey(ctx context.Context, userID string, id uuid.UUID)
 		return ErrNoPasskeys
 	}
 	return e.Auth.DeleteCredential(ctx, userID, id)
+}
+
+func (e *Engine) BeginStepUp(ctx context.Context, origin, userID string) (PublicKeyOptions, error) {
+	if e == nil || e.Auth == nil {
+		return PublicKeyOptions{}, ErrNoPasskeys
+	}
+	if userID == "" {
+		return PublicKeyOptions{}, ErrSession
+	}
+	if !e.originAllowed(origin) {
+		return PublicKeyOptions{}, ErrOrigin
+	}
+	rpID := rpIDFromOrigin(origin)
+	ch := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, ch); err != nil {
+		return PublicKeyOptions{}, err
+	}
+	if err := e.Auth.PutChallenge(ctx, Challenge{
+		ID: uuid.New(), Challenge: ch, Purpose: "step-up", UserID: userID, ExpiresAt: e.now().Add(ChallengeTTL),
+	}); err != nil {
+		return PublicKeyOptions{}, err
+	}
+	opt := PublicKeyOptions{
+		Challenge:        b64u(ch),
+		Timeout:          60000,
+		UserVerification: "required",
+		RPID:             rpID,
+		PubKeyCredParams: []map[string]any{{"type": "public-key", "alg": coseAlgES256}},
+	}
+	if creds, err := e.Auth.ListCredentials(ctx, userID); err == nil {
+		for _, c := range creds {
+			opt.AllowCredentials = append(opt.AllowCredentials, map[string]any{
+				"type": "public-key", "id": b64u(c.CredentialID),
+			})
+		}
+	}
+	return opt, nil
+}
+
+func (e *Engine) FinishStepUp(ctx context.Context, origin, userID string, as AssertionResponse) error {
+	if e == nil || e.Auth == nil {
+		return ErrNoPasskeys
+	}
+	if !e.originAllowed(origin) {
+		return ErrOrigin
+	}
+	rpID := rpIDFromOrigin(origin)
+	cd, err := b64uDecode(as.ClientDataJSON)
+	if err != nil {
+		return ErrBadAssertion
+	}
+	var parsed clientData
+	if err := json.Unmarshal(cd, &parsed); err != nil {
+		return ErrBadAssertion
+	}
+	chBytes, err := b64uDecode(parsed.Challenge)
+	if err != nil {
+		return ErrChallenge
+	}
+	ch, err := e.Auth.TakeChallenge(ctx, chBytes, e.now())
+	if err != nil || ch.Purpose != "step-up" || ch.UserID != userID {
+		return ErrChallenge
+	}
+	if err := parseClientData(cd, "webauthn.get", origin, ch.Challenge); err != nil {
+		return err
+	}
+	rawID, err := b64uDecode(as.RawID)
+	if err != nil {
+		rawID, err = b64uDecode(as.ID)
+	}
+	if err != nil {
+		return ErrUnknownCredential
+	}
+	cred, err := e.Auth.GetCredentialByCredID(ctx, rawID)
+	if err != nil || cred.UserID != userID {
+		return ErrUnknownCredential
+	}
+	authData, err := b64uDecode(as.AuthenticatorData)
+	if err != nil {
+		return ErrBadAssertion
+	}
+	sc, err := parseAssertionAuthData(authData, rpID)
+	if err != nil {
+		return err
+	}
+	if sc > 0 && sc <= cred.SignCount {
+		return ErrClonedKey
+	}
+	sig, err := b64uDecode(as.Signature)
+	if err != nil {
+		return ErrBadAssertion
+	}
+	if err := verifyES256(cred.PublicKey, authData, cd, sig); err != nil {
+		return err
+	}
+	return e.Auth.UpdateCredentialUse(ctx, cred.CredentialID, sc, e.now())
 }
 
 func (e *Engine) rpName() string {

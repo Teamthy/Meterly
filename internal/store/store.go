@@ -29,6 +29,7 @@ import (
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -179,7 +180,14 @@ type AuthRepo interface {
 	DeleteCredential(ctx context.Context, userID string, id uuid.UUID) error
 	InsertSession(ctx context.Context, s identity.Session) error
 	GetSessionByHMAC(ctx context.Context, hmac string) (identity.Session, error)
+	GetSession(ctx context.Context, id uuid.UUID) (identity.Session, error)
+	ListSessions(ctx context.Context, userID string) ([]identity.Session, error)
 	RevokeSession(ctx context.Context, id uuid.UUID, at time.Time) error
+	RevokeOtherSessions(ctx context.Context, userID string, keep uuid.UUID, at time.Time) error
+	MarkSessionStepUp(ctx context.Context, id uuid.UUID, at time.Time) error
+	TouchSession(ctx context.Context, id uuid.UUID, ipHMAC, uaHMAC string, at time.Time) error
+	InsertSecurityEvent(ctx context.Context, e security.Event) error
+	ListSecurityEvents(ctx context.Context, userID string, limit int) ([]security.Event, error)
 }
 
 type MeterRepo interface {

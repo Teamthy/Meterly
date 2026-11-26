@@ -68,6 +68,14 @@ Public docs only: [authentication](https://www.vtpass.com/documentation/authenti
 - **Capability truth:** `supported` comes from the vending adapter **or** an operator-attested `remote_credit_cohorts` row (DisCo + digit prefix + evidence). `authorised` requires a live RemoteCreditProvider and `CheckEligibility`. Application code must not hard-code `7…` as production AMI. Mock vending may still report prefix 7 as supported.
 - **Lost accepted command:** if the HES later returns NOT_FOUND for an ACCEPTED credit, MANUAL_REVIEW — never auto re-send (double-credit).
 
+## Customer security engine
+
+- **Not a rewrite of the purchase engine.** Payment, vend and delivery stay in `orchestrator`. This package only decides whether a *caller* may perform a sensitive action, and records that decision.
+- **Dev/OIDC bearers are not stepped-up.** There is no passkey session to bind. Token reads and saved-card consent stay available in sandbox and staff impersonation. Passkey sessions (`mls_…`) must confirm the device (WebAuthn assertion, purpose `step-up`) before `TOKEN_READ`, `SAVE_CARD`, `DELETE_PASSKEY` and `REVOKE_OTHERS` if the last step-up is older than 15 minutes.
+- **Last passkey cannot be deleted.** An account that has exactly one credential is denied `DELETE_PASSKEY` even without a session.
+- **Events are metadata.** `security_events` stores action, outcome, reason, session id and IP HMAC. Never tokens, meter numbers, contacts or raw IPs.
+- **`FEATURE` flag is not used.** This is account security, not a money-pooling product. Console is `GET /v1/security/console`.
+
 ## Auth, admin and audit (M4)
 
 - **OIDC verification uses only the Go standard library** (`internal/auth`), not a JWT library. The supported surface is deliberately small:

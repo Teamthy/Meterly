@@ -38,6 +38,7 @@ import (
 	"github.com/teamthy/meterly/internal/ratelimit"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/store/memstore"
 	"github.com/teamthy/meterly/internal/store/pgstore"
@@ -78,6 +79,7 @@ type App struct {
 	remoteRaw    providers.RemoteCreditProvider
 	authn        auth.Authenticator
 	Identity     *identity.Engine
+	Security     *security.Engine
 	wrapPublic   func(http.Handler) http.Handler
 	redis        *ratelimit.Client
 
@@ -229,6 +231,11 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		Dev:     cfg.Mode == config.Dev,
 	}
 	a.authn = auth.SessionThen(a.authn, a.Identity)
+	a.Security = &security.Engine{
+		Store:    a.Store.Repos().Auth(),
+		Identity: a.Identity,
+		Box:      box,
+	}
 
 	if cfg.RedisURL != "" {
 		rc, err := ratelimit.Dial(cfg.RedisURL)
@@ -438,7 +445,7 @@ func (a *App) RefreshMetrics(ctx context.Context) {
 
 func (a *App) Handler() http.Handler {
 	s := &httpapi.Server{
-		O: a.Orch, Auth: a.authn, Identity: a.Identity, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
+		O: a.Orch, Auth: a.authn, Identity: a.Identity, Security: a.Security, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
 		Metrics: a.Metrics, Tracer: a.Tracer, Log: a.Log, Ready: a.Ready,
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,

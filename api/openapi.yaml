@@ -762,6 +762,131 @@ paths:
         "200":
           description: Logged out.
 
+  /v1/security/console:
+    get:
+      operationId: getSecurityConsole
+      tags: [Identity]
+      summary: Server-driven security console (sessions, events, passkey counts)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Console.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/security/events:
+    get:
+      operationId: listSecurityEvents
+      tags: [Identity]
+      summary: Recent security events for the caller (no secrets)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Events.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/security/sessions:
+    get:
+      operationId: listSecuritySessions
+      tags: [Identity]
+      summary: Active and recent passkey sessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Sessions.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/security/sessions/{id}/revoke:
+    post:
+      operationId: revokeSecuritySession
+      tags: [Identity]
+      summary: Revoke one of the caller's sessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/security/sessions/revoke-others:
+    post:
+      operationId: revokeOtherSecuritySessions
+      tags: [Identity]
+      summary: Revoke every session except the current passkey session
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Other sessions revoked.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/security/step-up/begin:
+    post:
+      operationId: beginSecurityStepUp
+      tags: [Identity]
+      summary: Start a passkey assertion to unlock a sensitive action
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                origin: { type: string }
+      responses:
+        "200":
+          description: PublicKeyCredentialRequestOptions.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/security/step-up/finish:
+    post:
+      operationId: finishSecurityStepUp
+      tags: [Identity]
+      summary: Verify passkey assertion and mark the session as stepped-up
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Stepped up.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
   /v1/me:
     get:
       operationId: getMe
@@ -3863,6 +3988,7 @@ components:
         - EVIDENCE_REQUIRED
         - NOT_PENDING_APPROVAL
         - READING_UNAVAILABLE
+        - STEP_UP_REQUIRED
         - INTERNAL_ERROR
 
     ErrorEnvelope:

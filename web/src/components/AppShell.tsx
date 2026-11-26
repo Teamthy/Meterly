@@ -17,6 +17,7 @@ import {
   Fingerprint,
   FlaskConical,
   ChevronDown,
+  Shield,
 } from "lucide-react";
 
 const PRIMARY = [
@@ -34,6 +35,7 @@ const MORE = [
   { href: "/onboarding", label: "Setup", icon: UserCheck },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/security", label: "Security", icon: Shield },
   { href: "/signin", label: "Passkey", icon: Fingerprint },
 ];
 
