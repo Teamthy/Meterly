@@ -19,6 +19,7 @@ const (
 	RecipientGift           RecipientKind = "GIFT_RECIPIENT"
 	RecipientPayer          RecipientKind = "PAYER"
 	RecipientPotContributor RecipientKind = "POT_CONTRIBUTOR"
+	RecipientTokenShare     RecipientKind = "TOKEN_SHARE"
 )
 
 type Status string

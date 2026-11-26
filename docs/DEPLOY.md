@@ -1,6 +1,6 @@
 # Deploy Meterly (Vercel + Render + Supabase)
 
-This is the “for now” hosting layout while vending/AMI are still mocks.
+This is the “for now” hosting layout. VTpass vending exists in-repo; Render still defaults to `MODE=dev` until you paste VTpass + Paystack keys and drop mocks.
 
 | Piece | Where | Notes |
 |---|---|---|
@@ -35,7 +35,22 @@ Render is not an Arena-connected app. Deploy the Blueprint from GitHub:
 
 The public API URL will look like `https://meterly-api.onrender.com`.
 
-`MODE=dev` is temporary: config refuses mock vending/AMI outside dev. Switch to `MODE=staging` only after a real vending adapter exists.
+`MODE=dev` is the Blueprint default because mocks are refused outside dev. After pasting VTpass + Paystack keys, switch to `MODE=staging` with:
+
+```
+PAYMENT_PROVIDER=paystack
+PAYSTACK_SECRET_KEY=sk_test_...
+VENDING_PROVIDER=vtpass
+VTPASS_API_KEY=...
+VTPASS_SECRET_KEY=...
+VTPASS_DEFAULT_PHONE=2348012345678
+REMOTE_PROVIDER=none
+METER_READING_PROVIDER=none
+SMS_PROVIDER=none
+EMAIL_PROVIDER=none
+WHATSAPP_PROVIDER=none
+PROVIDER_ENVIRONMENT=SANDBOX
+```
 
 ## 3. Point Vercel at Render
 
@@ -56,6 +71,6 @@ METERLY_API_ORIGIN=https://meterly-api.onrender.com
 
 ## 5. What this hosted stack cannot do yet
 
-- Live Paystack / Africa’s Talking / WhatsApp / OIDC — still fakes in `MODE=dev`.
-- Real STS vending or remote meter credit.
+- Live Paystack / VTpass / Africa’s Talking / WhatsApp / OIDC — still fakes in `MODE=dev` until keys are pasted.
+- Remote meter credit (AMI/HES) — no partner docs, so `REMOTE_PROVIDER=none`.
 - Production feature flags (`FEATURE_SPLIT_METER`, gift SMS, USSD, …) pending legal sign-off.

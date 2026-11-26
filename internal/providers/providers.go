@@ -136,6 +136,10 @@ type VendRequest struct {
 	DiscoCode      string
 	Amount         money.Amount
 	IdempotencyKey string
+	// MeterType is PREPAID or POSTPAID when known from a prior validation.
+	MeterType string
+	// Phone is the customer or recipient MSISDN some aggregators require on pay.
+	Phone string
 }
 
 type VendStatus string
@@ -157,6 +161,10 @@ type VendResult struct {
 
 type VendingProvider interface {
 	Name() string
+	// NewVendKey returns the provider-facing idempotency key for one
+	// transaction. It must stay stable for the life of that vend attempt
+	// once the caller records it (some aggregators require a dated prefix).
+	NewVendKey(transactionID string, at time.Time) string
 	ValidateMeter(ctx context.Context, req MeterValidationRequest) (MeterValidationResult, error)
 	Vend(ctx context.Context, req VendRequest) (VendResult, error)
 	// GetVendStatus looks up by our idempotency key so it works even when the

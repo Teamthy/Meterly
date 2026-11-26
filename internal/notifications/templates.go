@@ -37,12 +37,13 @@ const (
 	TemplateAutoPowerSkippedCap = "autopower_skipped_cap"
 	TemplateAutoPowerMissed     = "autopower_run_missed"
 	TemplateOfflineToken        = "offline_token_delivery"
+	TemplateTokenShare          = "token_share"
 
 	CurrentTemplateVersion = "v1"
 )
 
 func IsTokenBearing(templateID string) bool {
-	return templateID == TemplateGiftTokenSMS || templateID == TemplateOfflineToken
+	return templateID == TemplateGiftTokenSMS || templateID == TemplateOfflineToken || templateID == TemplateTokenShare
 }
 
 type TemplateSpec struct {
@@ -120,6 +121,7 @@ var whatsAppTemplateNames = map[string]string{
 	TemplateAutoPowerFailed:     "meterly_autopower_failed_v1",
 	TemplateAutoPowerPaused:     "meterly_autopower_paused_v1",
 	TemplateOfflineToken:        "meterly_offline_token_v1",
+	TemplateTokenShare:          "meterly_offline_token_v1",
 	TemplateAutoPowerSkippedCap: "meterly_autopower_skipped_cap_v1",
 	TemplateAutoPowerMissed:     "meterly_autopower_missed_v1",
 }

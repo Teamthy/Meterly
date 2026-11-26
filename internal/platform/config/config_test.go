@@ -84,6 +84,22 @@ func TestPaystackKeyMustMatchMode(t *testing.T) {
 	}
 }
 
+func TestVTPassVendingConfig(t *testing.T) {
+	if _, err := Load(env(map[string]string{"MODE": "dev", "VENDING_PROVIDER": "vtpass"})); err == nil || !strings.Contains(err.Error(), "VTPASS_API_KEY") {
+		t.Fatalf("missing vtpass keys: %v", err)
+	}
+	c, err := Load(env(map[string]string{
+		"MODE": "dev", "VENDING_PROVIDER": "vtpass",
+		"VTPASS_API_KEY": "ak", "VTPASS_SECRET_KEY": "sk", "VTPASS_DEFAULT_PHONE": "+2348012345678",
+	}))
+	if err != nil || c.VendingProvider != "vtpass" || c.VTPassBaseURL != "https://sandbox.vtpass.com/api" {
+		t.Fatalf("sandbox default: %v %+v", err, c)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "VENDING_PROVIDER": "acme"})); err == nil || !strings.Contains(err.Error(), "vtpass") {
+		t.Fatalf("unknown vending provider: %v", err)
+	}
+}
+
 func TestAuthConfig(t *testing.T) {
 	c, err := Load(env(map[string]string{"MODE": "dev"}))
 	if err != nil || c.AuthMode != "dev" || len(c.OIDCMFAValues) == 0 {
@@ -293,6 +309,17 @@ func TestOfflineChannelsConfig(t *testing.T) {
 	}
 	if _, err := Load(env(map[string]string{"MODE": "dev", "USSD_ALLOWED_IPS": "not-an-ip"})); err == nil || !strings.Contains(err.Error(), "USSD_ALLOWED_IPS") {
 		t.Fatalf("invalid USSD_ALLOWED_IPS must fail: %v", err)
+	}
+}
+
+func TestHouseholdsConfig(t *testing.T) {
+	dev, err := Load(env(map[string]string{"MODE": "dev"}))
+	if err != nil || !dev.FeatureHouseholds {
+		t.Fatalf("FEATURE_HOUSEHOLDS must default true in dev: %v %+v", err, dev)
+	}
+	off, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_HOUSEHOLDS": "false"}))
+	if err != nil || off.FeatureHouseholds {
+		t.Fatalf("expected FEATURE_HOUSEHOLDS=false: %v %+v", err, off)
 	}
 }
 

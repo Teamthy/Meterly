@@ -12,6 +12,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/events"
+	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
@@ -168,17 +169,62 @@ func authorizeGrant(ctx context.Context, r store.Repos, userID string, id uuid.U
 		return nil, notFound(err)
 	}
 	gr, err := r.Meters().ActiveGrant(ctx, id, userID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && !gr.Permission.Allows(want)) {
-		return nil, meters.ErrForbidden
+	if err == nil && gr.Permission.Allows(want) {
+		return m, nil
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	return m, nil
+	// Household membership is a separate authorization path. Legacy MANAGE
+	// grants are never treated as verified ownership.
+	if hp, herr := r.Households().PermissionForMeter(ctx, userID, id); herr == nil && hp.Allows(want) {
+		return m, nil
+	} else if herr != nil && !errors.Is(herr, store.ErrNotFound) {
+		return nil, herr
+	}
+	return nil, meters.ErrForbidden
 }
 
 func (g *Registry) ListForUser(ctx context.Context, userID string) ([]meters.Listed, error) {
-	return g.st.Repos().Meters().ListForUser(ctx, userID)
+	listed, err := g.st.Repos().Meters().ListForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, l := range listed {
+		seen[l.ID] = true
+	}
+	ids, err := g.st.Repos().Households().HouseholdIDsForUser(ctx, userID)
+	if err != nil {
+		return listed, nil
+	}
+	r := g.st.Repos()
+	for _, hid := range ids {
+		mem, err := r.Households().Member(ctx, hid, userID)
+		if err != nil || mem.Status != households.StatusActive {
+			continue
+		}
+		perm := households.PermissionForRole(mem.Role)
+		if perm == "" {
+			continue
+		}
+		links, err := r.Households().ListMeters(ctx, hid)
+		if err != nil {
+			return nil, err
+		}
+		for _, link := range links {
+			if seen[link.MeterID] {
+				continue
+			}
+			m, err := r.Meters().Get(ctx, link.MeterID)
+			if err != nil {
+				continue
+			}
+			listed = append(listed, meters.Listed{Meter: *m, Label: "Household", Permission: perm})
+			seen[link.MeterID] = true
+		}
+	}
+	return listed, nil
 }
 
 // Number decrypts the meter number for provider calls only.

@@ -18,6 +18,7 @@ import (
 	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
+	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
@@ -90,6 +91,7 @@ type Repos interface {
 	PowerDesk() PowerDeskRepo
 	Offline() OfflineRepo
 	Support() SupportRepo
+	Households() HouseholdRepo
 }
 
 type AuditRepo interface {
@@ -202,11 +204,15 @@ type IdempotencyRepo interface {
 	Complete(ctx context.Context, scope, op, key, resultRef string) error
 }
 
-// TokenShareRepo persists metadata only, never token values or destinations.
+// TokenShareRepo persists metadata only, never token values or plaintext destinations.
 type TokenShareRepo interface {
 	AddCopy(context.Context, tokenshares.Share) error
 	GetCopy(context.Context, uuid.UUID, uuid.UUID, string) (tokenshares.Share, error)
 	ListCopies(context.Context, uuid.UUID, string) ([]tokenshares.Share, error)
+	AddShare(context.Context, tokenshares.Share) error
+	GetShare(context.Context, uuid.UUID) (tokenshares.Share, error)
+	ListShares(context.Context, uuid.UUID, string) ([]tokenshares.Share, error)
+	CountSends(ctx context.Context, userID string, start, end time.Time) (int, error)
 }
 
 // GiftRepo stores encrypted contact metadata; no raw recipient contact.
@@ -409,4 +415,27 @@ type SupportRepo interface {
 	UpsertWrappedKey(ctx context.Context, w support.WrappedKey) error
 	ListWrappedKeys(ctx context.Context, threadID uuid.UUID) ([]support.WrappedKey, error)
 	GetWrappedKey(ctx context.Context, threadID uuid.UUID, holderUserID string) (support.WrappedKey, error)
+}
+
+// HouseholdRepo persists verified ownership, households and membership.
+// Grant rows are not used as proof of ownership.
+type HouseholdRepo interface {
+	Create(ctx context.Context, h households.Household) error
+	Get(ctx context.Context, id uuid.UUID) (households.Household, error)
+	HouseholdIDsForUser(ctx context.Context, userID string) ([]uuid.UUID, error)
+
+	UpsertMember(ctx context.Context, m households.Member) error
+	Member(ctx context.Context, householdID uuid.UUID, userID string) (households.Member, error)
+	ListMembers(ctx context.Context, householdID uuid.UUID) ([]households.Member, error)
+
+	AddMeter(ctx context.Context, link households.MeterLink) error
+	ListMeters(ctx context.Context, householdID uuid.UUID) ([]households.MeterLink, error)
+
+	UpsertOwnership(ctx context.Context, o households.Ownership) error
+	ActiveOwnership(ctx context.Context, meterID uuid.UUID, userID string) (households.Ownership, error)
+	ListOwnership(ctx context.Context, meterID uuid.UUID) ([]households.Ownership, error)
+
+	// PermissionForMeter returns the highest household-implied permission
+	// for an ACTIVE member on this meter, or ErrNotFound.
+	PermissionForMeter(ctx context.Context, userID string, meterID uuid.UUID) (meters.Permission, error)
 }

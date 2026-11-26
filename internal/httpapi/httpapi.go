@@ -21,6 +21,7 @@ import (
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/meters"
+	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/notificationservice"
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/offline"
@@ -29,6 +30,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
 	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
@@ -63,6 +65,7 @@ type Server struct {
 	USSDDisabled       bool
 	WhatsAppDisabled   bool
 	SupportDisabled    bool
+	HouseholdsDisabled bool
 	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
@@ -138,6 +141,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("DELETE /v1/meters/{meter_id}", write(s.removeSavedMeter))
 	mux.Handle("GET /v1/meters/{meter_id}/capabilities", user(s.getCapabilities))
 	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
+	s.householdRoutes(mux, user, write)
 
 	mux.Handle("POST /v1/electricity/quotes", write(s.createQuote))
 	mux.Handle("POST /v1/electricity/transactions", write(s.createTransaction))
@@ -727,6 +731,10 @@ func writeErr(w http.ResponseWriter, code int, errCode, msg string) {
 }
 
 func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
+	if code, c, msg, ok := mapHouseholdErr(err); ok {
+		writeErr(w, code, c, msg)
+		return
+	}
 	switch {
 	case errors.Is(err, meters.ErrInvalidMeter):
 		writeErr(w, 422, "METER_VALIDATION_FAILED", "meter could not be validated with the provider")
@@ -736,8 +744,16 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 403, "FORBIDDEN", "you do not have access to this meter")
 	case errors.Is(err, orchestrator.ErrNotEligible):
 		writeErr(w, 422, "METER_NOT_ELIGIBLE", err.Error())
-	case errors.Is(err, gifts.ErrInvalidContact):
+	case errors.Is(err, gifts.ErrInvalidContact), errors.Is(err, notifications.ErrInvalidPhone), errors.Is(err, notifications.ErrInvalidEmail), errors.Is(err, tokenshares.ErrUnsupportedChannel):
 		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, orchestrator.ErrTokenShareContact):
+		writeErr(w, 422, "INVALID_REQUEST", "no verified contact for this channel")
+	case errors.Is(err, orchestrator.ErrTokenShareDisabled):
+		writeErr(w, 403, "FEATURE_DISABLED", "sending a token to another destination is not enabled")
+	case errors.Is(err, orchestrator.ErrTokenShareOptedOut):
+		writeErr(w, 422, "INVALID_REQUEST", "destination has opted out of this channel")
+	case errors.Is(err, orchestrator.ErrTokenShareRateLimited):
+		writeErr(w, 429, "RATE_LIMITED", "daily token send limit reached")
 	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference):
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrQuoteExpired), errors.Is(err, orchestrator.ErrQuoteNotFound):

@@ -35,6 +35,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
@@ -1258,6 +1259,133 @@ func (s *Service) prepareSendInTx(
 				TransactionID: d.TransactionID,
 				Channel:       notifications.SMS,
 				Destination:   normPhone,
+				Subject:       content.Subject,
+				Body:          content.Body,
+			},
+		}, "", "", nil
+
+	case notifications.RecipientTokenShare:
+		if t == nil {
+			return req, "", "MISSING_CONTEXT", nil
+		}
+		share, err := r.TokenShares().GetShare(ctx, d.EventID)
+		if errors.Is(err, store.ErrNotFound) {
+			return req, "", "SHARE_NOT_FOUND", nil
+		}
+		if err != nil {
+			return req, "", "", err
+		}
+		if share.Channel != string(d.Channel) || len(share.DestCipher) == 0 {
+			return req, "", "SHARE_NOT_FOUND", nil
+		}
+		plainDest, err := s.box.DecryptBound(share.DestCipher, tokenshares.DestAAD(share.ID))
+		if err != nil {
+			return req, "", "CONTACT_DECRYPT_FAILED", nil
+		}
+		var dest string
+		switch d.Channel {
+		case notifications.SMS, notifications.WhatsApp:
+			dest, err = notifications.NormalizePhone(plainDest)
+		case notifications.Email:
+			dest, err = notifications.NormalizeEmail(plainDest)
+		default:
+			return req, "", "UNSUPPORTED_CHANNEL", nil
+		}
+		if err != nil {
+			return req, "", "INVALID_RECIPIENT", nil
+		}
+		destHMAC := notifications.DestinationHMAC(s.box, dest)
+		optedOut, err := r.Notifications().IsOptedOut(ctx, destHMAC, d.Channel)
+		if err != nil {
+			return req, "", "", err
+		}
+		if optedOut {
+			return req, "RECIPIENT_OPTED_OUT", "", nil
+		}
+		selfHMAC := ""
+		if c, cErr := r.Users().Contacts(ctx, t.CustomerID); cErr == nil {
+			switch d.Channel {
+			case notifications.SMS, notifications.WhatsApp:
+				if len(c.PhoneCiphertext) > 0 {
+					if p, oErr := notifications.OpenUserPhone(s.box, t.CustomerID, c.PhoneCiphertext); oErr == nil {
+						selfHMAC = notifications.DestinationHMAC(s.box, p)
+					}
+				}
+			case notifications.Email:
+				if len(c.EmailCiphertext) > 0 {
+					if p, oErr := notifications.OpenUserEmail(s.box, t.CustomerID, c.EmailCiphertext); oErr == nil {
+						selfHMAC = notifications.DestinationHMAC(s.box, p)
+					}
+				}
+			}
+		}
+		if destHMAC != selfHMAC && !s.featureGiftSMS {
+			return req, "FEATURE_GIFT_SMS_DISABLED", "", nil
+		}
+		if t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 {
+			return req, "", "TOKEN_UNAVAILABLE", nil
+		}
+		rawToken, err := s.box.Decrypt(t.TokenCiphertext)
+		if err != nil {
+			return req, "", "TOKEN_DECRYPT_FAILED", nil
+		}
+		m, err := r.Meters().Get(ctx, t.MeterID)
+		if err != nil {
+			return req, "", "", err
+		}
+		var (
+			content        notifications.Content
+			ver            string
+			tplParams      []string
+			preferChatText = true
+		)
+		if destHMAC == selfHMAC {
+			content, tplParams, ver, err = notifications.RenderOfflineToken(d.Locale, t.Amount.Minor, m.Masked, rawToken)
+		} else {
+			senderName := ""
+			if c, cErr := r.Users().Contacts(ctx, t.CustomerID); cErr == nil {
+				senderName = c.DisplayName
+			}
+			content, ver, err = notifications.RenderGiftTokenSMS(d.Locale, t.Amount.Minor, m.Masked, rawToken, senderName)
+			if err == nil {
+				tok, _ := notifications.FormatSTSToken(rawToken)
+				tplParams = []string{notifications.FormatNairaMinor(t.Amount.Minor), notifications.ShortMaskedMeter(m.Masked), tok}
+				if content.Subject == "" {
+					content.Subject = "Electricity token shared via Meterly"
+				}
+			}
+		}
+		if err != nil {
+			return req, "", "INVALID_TOKEN_FORMAT", nil
+		}
+		inWindow := false
+		var waTpl string
+		if d.Channel == notifications.WhatsApp {
+			inWindow, err = r.Notifications().HasActiveWhatsAppWindow(ctx, destHMAC, now)
+			if err != nil {
+				return req, "", "", err
+			}
+			if !(preferChatText && inWindow) {
+				waTpl = notifications.WhatsAppTemplateName(d.TemplateID)
+			}
+		}
+		d.DestinationHMAC = destHMAC
+		d.TemplateVersion = ver
+		return notifications.SendRequest{
+			DeliveryID:                  d.ID,
+			IdempotencyKey:              idempotencyKey(d.ID),
+			TemplateID:                  d.TemplateID,
+			TemplateVersion:             ver,
+			Locale:                      d.Locale,
+			WhatsAppTemplateName:        waTpl,
+			TemplateParams:              tplParams,
+			WithinCustomerServiceWindow: inWindow,
+			PreferTextInWindow:          preferChatText,
+			Message: notifications.Message{
+				EventID:       d.EventID,
+				TransactionID: d.TransactionID,
+				Channel:       d.Channel,
+				Destination:   dest,
 				Subject:       content.Subject,
 				Body:          content.Body,
 			},

@@ -1,35 +1,56 @@
 # Handoff
 
-> Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-26, after E2E support chat + Render/Supabase deploy docs.
+> Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
+> **Last updated:** 2026-11-23, after VTpass + households (FR-008) + token send (FR-007) on `arena/7cc28241-meterly`.
+
+## 0. Start here (new session / new developer)
+
+1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
+2. Branch: `arena/7cc28241-meterly` at `318b81c` (plus this handoff commit). Base is `origin/main` @ `90e0078` (PR #13 merged).
+3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, and token send are in code. Left is **hosting, live sandboxes, AMI/HES docs, legal flags, frontend for new APIs**.
+4. Do **not** invent AMI/HES, Benin Electric `serviceID`, or native apps.
+5. Do **not** commit secrets. Render keys stay in the dashboard.
+
+### Immediate next work (priority order)
+
+| # | What | Who | Blocker |
+|---|---|---|---|
+| 1 | Merge the PR from this branch | GitHub | review |
+| 2 | **Render dashboard paste** so the hosted API exists | Human | Render is not an Arena connector. Paste session-pooler `DATABASE_URL` **port 5432**, `TOKEN_ENC_KEY`, `METER_HMAC_KEY`. See `docs/DEPLOY.md`. |
+| 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | step 2 |
+| 4 | After keys: `MODE=staging`, `VENDING_PROVIDER=vtpass`, `PAYMENT_PROVIDER=paystack`, `REMOTE_PROVIDER=none` | Human | VTpass + Paystack sandbox keys |
+| 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
+| 6 | Web UI for households + token send | Eng | APIs exist; `web/` has no household screens yet |
+| 7 | AMI/HES remote credit | Eng | **real partner docs only** — do not invent |
+| 8 | Distributed rate limits (Redis) | Eng | only if >1 API replica |
+| 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
+
+---
 
 ## 1. What Meterly is
 
-A Nigerian electricity platform. People buy prepaid electricity from anywhere, for their own meter or someone else's. It is delivered **remotely** to compatible smart meters (no keypad, no ladder) or as an **STS token** fallback. The full product spec (PRD, architecture, schema, API, roadmap) was supplied by the founder in the first session's chat; `docs/ROADMAP.md` maps it to the code. The backend is a Go modular monolith.
+A Nigerian electricity platform. People buy prepaid electricity from anywhere, for their own meter or someone else's. Delivery is **STS token** today (VTpass). **Remote credit** (AMI/HES, no keypad) is an interface plus mock only — no partner docs.
+
+Backend: Go modular monolith. Frontend: Next.js 15 in `web/`. Spec mapped in `docs/ROADMAP.md`. Decisions in `docs/DECISIONS.md`. Deploy in `docs/DEPLOY.md`.
+
+---
 
 ## 2. Current state
 
 | Milestone | Status | Where |
 |---|---|---|
-| Foundation: transaction engine, mocks, API | ✅ merged | [PR #1](https://github.com/Teamthy/Meterly/pull/1) |
-| M1: PostgreSQL persistence, atomic units of work | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
-| M2: api/worker split, Resume/reconciliation, config | ✅ merged | [PR #2](https://github.com/Teamthy/Meterly/pull/2) |
-| M3: Paystack payment adapter | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3) |
-| M4: OIDC auth, admin API, audit, rate limits | ✅ merged | [PR #3](https://github.com/Teamthy/Meterly/pull/3), [PR #4](https://github.com/Teamthy/Meterly/pull/4) |
-| M5: notification delivery, preferences, inbound STOP, gift SMS | ✅ merged | [PR #5](https://github.com/Teamthy/Meterly/pull/5) |
-| M6: OpenAPI 3.1, Prometheus `/metrics`, OpenTelemetry, Dockerfiles, graceful shutdown | ✅ merged | [PR #6](https://github.com/Teamthy/Meterly/pull/6) |
-| M7: F1 Pay-for-Me shareable payment request links | ✅ merged | [PR #7](https://github.com/Teamthy/Meterly/pull/7) |
-| M8: F2 Split the Meter (reusable Funding Pot) | ✅ merged | [PR #8](https://github.com/Teamthy/Meterly/pull/8) |
-| M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ merged | [PR #9](https://github.com/Teamthy/Meterly/pull/9) |
-| M10: F4 Landlord Power Desk (orgs, unit meters, `LANDLORD_BULK` pots, statements) | ✅ merged | [PR #10](https://github.com/Teamthy/Meterly/pull/10) |
-| M11: F5 Meterly Offline (USSD & WhatsApp purchase channels) | ✅ merged | [PR #11](https://github.com/Teamthy/Meterly/pull/11) |
-| Web Frontend (`web/`): Next.js 15 app across Consumer, Guest `/p/[code]` & `/pots/[code]`, AutoPower, Power Desk, Offline Simulator & Ops Console | ✅ merged | [PR #12](https://github.com/Teamthy/Meterly/pull/12) |
-| Support chat: Meterly Agent + E2E human operators | ✅ on `arena/7cc28241-meterly` | `/support`, `/admin/support`, `FEATURE_SUPPORT` |
-| Hosting: Vercel (`web/`) + Render Blueprint (`render.yaml`) + Supabase Postgres | ⏳ Vercel live; Render needs dashboard paste of `DATABASE_URL` | [`docs/DEPLOY.md`](DEPLOY.md) |
+| Foundation → M11 (engine, PG, Paystack, OIDC/admin, notifications, OpenAPI, Pay-for-Me, Split the Meter, AutoPower, Power Desk, USSD/WhatsApp) | ✅ merged | PRs #1–#11 |
+| Web frontend | ✅ merged | [PR #12](https://github.com/Teamthy/Meterly/pull/12) |
+| Support chat (agent + E2E human) | ✅ merged | [PR #13](https://github.com/Teamthy/Meterly/pull/13) |
+| **VTpass electricity vending** | ✅ this branch | `internal/providers/vtpass` — **not live-sandbox tested** |
+| **FR-008 households / verified ownership** | ✅ this branch | `FEATURE_HOUSEHOLDS`, never mints `MANAGE` |
+| **FR-007 token send** SMS/email/WhatsApp | ✅ this branch | share endpoint + notification worker |
+| Hosting: Vercel `web/` | ✅ live | `meterly-iota.vercel.app` |
+| Hosting: Render API + Supabase | ⏳ **blocked on dashboard paste** | `docs/DEPLOY.md` |
 
-PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
+CI (`.github/workflows/ci.yml`): gofmt, vet, `go test -race` against PostgreSQL 16; fails if PG subtests were skipped.
 
-CI (`.github/workflows/ci.yml`) runs gofmt, vet, `go test -race` against a PostgreSQL 16 service, and fails if the PostgreSQL subtests were skipped. It passed on GitHub for PR #2.
+---
 
 ## 3. Architecture in one minute
 
@@ -40,40 +61,45 @@ cmd/migrate    applies embedded migrations
 
 internal/orchestrator   purchase workflow; Resume = single recovery path   ← core
 internal/store          Store/Repos contracts; InTx = unit of work
-  memstore              in-memory, undo-log rollback (tests, dev)
-  pgstore               PostgreSQL (pgx v5); pgtest = per-test DBs
+  memstore / pgstore
 internal/registry       meter validation, capabilities, access grants
+                        (+ household perm fallback)
 internal/providers      Payment / Vending / RemoteCredit contracts
-  mock                  deterministic mocks (behaviour keyed by meter number; see README)
+  mock                  deterministic mocks (meter-number behaviour; README)
   paystack (+paystacktest fake)
-internal/transactions meters ledger events idempotency money secure   domain
-internal/notifications  templates (i18n catalog + gift SMS), status transitions, transport contracts
-  africastalking (+africastalkingtest)   SMS adapter + HMAC inbound STOP
-  resend (+resendtest)                   email adapter + status API + Svix webhook verification
-  whatsapp (+whatsapptest)               WhatsApp Cloud API (template outside 24h window) + X-Hub-Signature-256
-internal/notificationservice   outbox sink -> notification_deliveries, claim/send/UNKNOWN engine, inbound STOP, retention purge
-internal/payrequests    Pay-for-Me domain, 128-bit base32 HMAC codes, anti-phishing validation, pure-stdlib QR PNG encoder
-internal/pots           reusable Funding Pot domain (`SPLIT_METER`, `LANDLORD_BULK`), contributions, allocations, initials & AEAD helpers
-internal/autopower      AutoPower domain, bound AEAD card mandate encryption, card expiry & Africa/Lagos schedule engine
-internal/authz          centralised organisation RBAC & zero-IDOR guard (`authz.Require`)
-internal/powerdesk      Landlord Power Desk domain, Africa/Lagos monthly statement bounds & CSV formula-safe exporter
-internal/conversation   channel-agnostic USSD & WhatsApp purchase state machine, OTP & Africa/Lagos daily caps
-internal/channels/ussd  Africa's Talking USSD HTTP adapter (+ussdtest simulator; IP allowlist + HMAC, <= 182 chars)
-internal/offline        USSD & WhatsApp store-to-orchestrator wiring, phone OTP linking & audited token resends
-internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/support        Meterly Agent + E2E human support threads (ciphertext only for HUMAN)
-internal/httpapi        /v1 REST + /v1/admin + /v1/support + /v1/admin/support + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/orgs/* + /v1/properties/* + /v1/units/* + /v1/channels/* + /v1/notifications/inbound/{provider}
-api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
-Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
-internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
-internal/audit          audit events + actor; correlation ID in context
-internal/ratelimit      in-memory token buckets
-internal/orchestrator/admin.go   operator actions (all audited, reason required)
-internal/platform/{config,migrate}
-migrations/0001_init.sql .. 0013_offline_channels.sql
+  vtpass  (+vtpasstest fake)   first real vending adapter
+internal/households     FR-008 domain (roles, NamesMatch, PermissionForRole)
+internal/tokenshares    COPY metadata + send channels (no raw tokens)
+internal/notificationservice   outbox → deliveries; TOKEN_SHARE send path
+internal/httpapi        /v1 REST + admin + public pay/pots + channels + households
+api/openapi.yaml        OpenAPI 3.1 vs mux + writeErr AST
+web/                    Next.js 15 (no household UI yet)
+migrations/             0001 … 0016_token_share_send.sql
 ```
 
-How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` (checkout) → webhook or sweeper → `checkPayment` (always verifies with the PSP) → `vend` → `deliver` (TOKEN: confirmed in the same commit; REMOTE: send, then ACCEPTED, then the meter confirms) → refund only on a definitive vend failure.
+Purchase flow: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` → webhook/sweeper → `checkPayment` (PSP verify) → `vend` (VTpass `request_id` stored at **claim**, never regenerated) → `deliver` → refund only on definitive vend failure.
+
+### New HTTP (this branch)
+
+Households (`FEATURE_HOUSEHOLDS`, default **on in `MODE=dev`**, else off):
+
+- `POST/GET /v1/households`, `GET /v1/households/{id}`
+- `POST /v1/households/{id}/meters`
+- `POST /v1/households/{id}/members` (`user_id` **or** `external_id` + role)
+- `POST …/members/me/accept|decline`, `DELETE …/members/{uid}`
+- `POST/GET /v1/meters/{meter_id}/ownership[/verify]`
+- Admin `POST /v1/admin/meters/{meter_id}/ownership` (reason 5–500)
+
+Token shares (purchaser only, vend confirmed, token path):
+
+- `POST /v1/electricity/transactions/{id}/token/shares`
+  - `{"channel":"COPY"}` — metadata only
+  - `{"channel":"SMS"|"EMAIL"|"WHATSAPP"}` — send to verified contact
+  - `destination` set → third-party; requires `FEATURE_GIFT_SMS`
+- `GET` same path — COPY + sends (masked dest only)
+- Cap: 5 sends / purchaser / Africa/Lagos day. Token decrypted only in worker memory. No auto-resend of token-bearing `UNKNOWN`.
+
+---
 
 ## 4. Invariants (must hold after every change)
 
@@ -84,147 +110,165 @@ How a purchase flows: quote → `CreateTransaction` (idempotent, one commit) →
 5. Every money movement is a balanced, idempotent ledger posting. PostgreSQL triggers enforce balance and append-only.
 6. No raw tokens or meter numbers in logs, URLs or plaintext columns. Tokens are readable only by the purchaser.
 7. Duplicates and concurrency never double-charge, double-vend or double-credit.
+8. **VTpass `request_id` is stored at vend-claim (`Transaction.VendIdempotencyKey`) and reused on retry.** Do not call `NewVendKey` again on resume.
+9. **Household roles never mint `meters.MANAGE`.** Grants are not proof of ownership. Add-meter requires `ActiveOwnership`.
+10. **Self-registration still grants at most `PURCHASE`.** Legacy `MANAGE` rows are unverified — do not silently downgrade, do not treat as ownership.
 
 **How the code enforces them:**
+
 - Every state change goes through `orchestrator.mutate` (lock row → guarded change → save state, history, ledger and outbox in one tx).
 - Guards return `errSkip` when another worker got there first.
-- **Only the worker whose commit claimed a step may call the provider**: look for the `claimed` flag in `vend`, `deliver`, `refund` and the reconcile re-sends. Do not infer the claim from the resulting state. That exact bug (10 webhooks → 10 vend calls) was only caught on PostgreSQL.
+- **Only the worker whose commit claimed a step may call the provider** (`claimed` flag in `vend`, `deliver`, `refund`). Do not infer the claim from resulting state.
+
+---
 
 ## 5. Running things
 
 ```bash
-MODE=dev go run ./cmd/api                      # in-memory, everything mocked
+MODE=dev go run ./cmd/api                      # in-memory, mocked payment/vending/AMI
 docker compose up -d && export DATABASE_URL='postgres://meterly:meterly@localhost:5432/meterly?sslmode=disable'
 go run ./cmd/migrate && MODE=dev go run ./cmd/api
-go test -race ./...                            # with DATABASE_URL set for the PG suite
+go test -race ./...                            # set DATABASE_URL for the PG suite
 ```
 
-### Running PostgreSQL locally (cloud sandbox, no Docker daemon)
-
-PostgreSQL 16 binaries are at `/usr/lib/postgresql/16/bin`. Run the cluster as the `postgres` user in a directory it owns (it can't access the scratchpad):
+**Arena sandbox:** default PATH has no `go`; `GOPROXY=off` without the overlay fails uuid.
 
 ```bash
-D=/var/tmp/meterly-pg; PG=/usr/lib/postgresql/16/bin
-mkdir -p $D && chown postgres $D
-su postgres -c "$PG/initdb -D $D/data -A trust -U postgres"
-su postgres -c "$PG/pg_ctl -D $D/data -o '-p 5499 -k $D -c listen_addresses=127.0.0.1 -c max_connections=300' -l $D/log start"
-export DATABASE_URL='postgres://postgres@127.0.0.1:5499/postgres?sslmode=disable'
+export PATH="/tmp/meterly-tools/go-extract/go/bin:$PATH"
+export GOROOT="/tmp/meterly-tools/go-extract/go"
+export GOPROXY=off GOSUMDB=off
+go test -modfile=/tmp/meterly-tools/overlay.mod ./...
 ```
 
-The server can stop between turns, which shows up as "connection refused"; rerun `pg_ctl … start`. Tests create `meterly_tmpl_*` / `meterly_test_*` databases and drop them; check for none left with `psql -h $D -p 5499 -U postgres -Atc "select datname from pg_database where datname like 'meterly_%'"`. Any new test package that uses `pgtest` needs a `TestMain` that calls `pgtest.DropTemplate()`.
+No local Postgres in this sandbox → pgstore tests skip. CI runs them.
 
-## 6. Gotchas and context
+### PostgreSQL locally (if you have binaries)
 
-- **Mock providers keep state in-process.** That's why `cmd/worker` refuses to run with mocks; in dev, the worker runs inside `cmd/api`. With any mock in use (vending and AMI are still mocks), only `MODE=dev` can start.
-- **Paystack** has been tested only against `paystacktest` (a stateful fake), **never against the live sandbox**. Each initialisation attempt gets a new reference (`<txn-id>.<random>`). Refunds are made idempotent by listing existing ones first. Only `sk_test_` keys are accepted outside production.
-- **Email is required** on `POST /v1/electricity/transactions` (Paystack needs it).
-- **Migrations are immutable once applied**; the runner checks checksums. `0001` was edited once, before it was ever applied (its BEGIN/COMMIT were removed). Add new files only.
-- **Git:** force-pushes are blocked by the session's permission classifier. When a PR has merged and the branch needs `main`, use `git merge origin/main`, not a rebase. Develop on the branch named in the session's system instructions.
-- **Orchestrator time** is `o.Now` (injectable); tests use it to make transactions "stale" for `ResumeDue`. Transaction timestamps themselves use wall time.
-- **Auth:** `AUTH_MODE=dev` (dev only): the bearer token *is* the subject, and the `operator:`/`admin:` prefixes grant staff roles. `AUTH_MODE=oidc` is required outside dev, and staff roles need MFA (`amr`). Users are created on first sight from `sub`.
-- **Operator actions** live under `/v1/admin/*`. Each needs a `reason` and writes an audit row in the same tx. `/v1/dev/*` now only has simulation helpers (complete payment, settle meter, resume).
-- **Operator refunds** only from MANUAL_REVIEW, only if vending is NOT_STARTED/FAILED, and for the amount the PSP says was paid. The new payment transitions PENDING/FAILED→REFUND_PENDING are for that path only; automation never takes them.
-- **Provider disable** pauses new outbound work without failing or escalating anything (`ErrProviderDisabled`; `schedule(..., paused)`).
-- **Rate limits are per process** (in-memory). The dev-auth "admin:" prefix must never be reachable in prod; config refuses `AUTH_MODE=dev` outside `MODE=dev`.
-- **Tests with a frozen clock** (`e.later`) give identical `CreatedAt`s; advance the clock between creations if order matters.
+See older notes: cluster as `postgres`, `sslmode=disable`. Any new `pgtest` package needs `TestMain` → `pgtest.DropTemplate()`.
 
-## 7. What's next
+---
 
-**All M1–M11 core platform & flagship product milestones (F1–F5) are implemented and verified**, plus the Next.js web app and E2E support chat. Next engineering focus: first real Nigerian DisCo/aggregator vending adapter, AMI/HES remote-credit adapter, live provider sandbox verification, and flipping Render from `MODE=dev` once mocks are gone.
+## 6. Mocks vs real adapters
 
-**Hosting (for now):** Vercel serves `web/`. Render should serve `cmd/api` (`render.yaml`, `MODE=dev` because mock providers are refused outside dev) against the existing Supabase project `Meterly` (`wiqfbscyppgsolvmereh`). Render is not an Arena-connected app — deploy via https://render.com/deploy?repo=https://github.com/Teamthy/Meterly and paste `DATABASE_URL` / `TOKEN_ENC_KEY` / `METER_HMAC_KEY`. Then set Vercel `METERLY_API_ORIGIN` to the Render URL. Details in `docs/DEPLOY.md`.
+| Provider | Config | Implementation | Tested against | Live sandbox |
+|---|---|---|---|---|
+| Payments | `PAYMENT_PROVIDER=mock\|paystack` | mock / `internal/providers/paystack` | `paystacktest` fake | **No** |
+| Vending | `VENDING_PROVIDER=mock\|vtpass` | mock / `internal/providers/vtpass` | `vtpasstest` fake | **No** |
+| Remote credit (AMI) | `REMOTE_PROVIDER=mock\|none` | mock or disabled | mock only | **No adapter** — no docs |
+| Meter readings | `METER_READING_PROVIDER=mock\|none` | mock or disabled | mock | **No** |
+| SMS | `SMS_PROVIDER=mock\|africastalking\|none` | AT adapter | `africastalkingtest` | **No** |
+| Email | `EMAIL_PROVIDER=mock\|resend\|none` | Resend | `resendtest` | **No** |
+| WhatsApp | `WHATSAPP_PROVIDER=mock\|whatsapp\|none` | Cloud API | `whatsapptest` | **No** |
+| Auth | `AUTH_MODE=dev\|oidc` | DevAuth / OIDC JWKS | in-process JWKS | **No real IdP** |
 
-**Blocked on the founder or partners (not code):**
-- **M11 USSD founder blocker — NCC/aggregator USSD shortcode:** provisioning a dedicated or shared Nigerian USSD shortcode (e.g. `*xxx#` via Africa's Talking + NCC/telco approval), configuring aggregator source CIDR ranges (`USSD_ALLOWED_IPS`) and `USSD_SHARED_SECRET`, and setting `FEATURE_USSD=true`
-- **M11 WhatsApp founder blocker — WhatsApp Business Account (WABA) with approved templates:** registering a verified Meta WhatsApp Business Account + phone number ID, obtaining Meta approval for out-of-window utility templates (including `meterly_offline_token_v1` alongside M5 templates), configuring `WHATSAPP_APP_SECRET` + `WHATSAPP_VERIFY_TOKEN` + `WHATSAPP_ACCESS_TOKEN`, and setting `FEATURE_WHATSAPP=true`
-- a real **vending** partner/aggregator (e.g. Buypower / VTpass / Irecharge) and its API docs (needed before any non-dev deployment)
-- an **AMI/HES remote-credit** partner and an authorised test on a real meter
-- live sandbox credentials + webhook configuration to verify Paystack, Africa's Talking, Resend and WhatsApp Cloud API against live provider sandboxes
-- legal sign-off (NDPA/NCC and CBN/PSP fund-holding terms) before enabling `FEATURE_GIFT_SMS=true`, `FEATURE_SPLIT_METER=true`, `FEATURE_AUTOPOWER=true`, `FEATURE_POWER_DESK=true`, `FEATURE_USSD=true`, or `FEATURE_WHATSAPP=true` in production
-- choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
+`config.UsesMocks()` is true if **any** of payment/vending/remote/readings/sms/email/whatsapp is `mock`. Outside `MODE=dev`, mocks are refused. `cmd/worker` also refuses mocks (state is in-process).
 
-## 8. Session log (newest first)
+**VTpass facts (do not “fix” without docs):**
 
-- **2026-11-26: Support chat + Render/Supabase hosting.** Added E2E human support (`migrations/0014_support_chat.sql`, `internal/support`, `/v1/support/*`, `/v1/admin/support/*`, `/support`, `/admin/support`). Agent answers are server-side and can look up the caller's own purchases; human messages are ciphertext only. `render.yaml` + `docs/DEPLOY.md` target Render (`MODE=dev` while vending is mocked) and the existing Supabase project `wiqfbscyppgsolvmereh`. Render is not an Arena connector — deploy from GitHub and paste `DATABASE_URL` / encryption keys. Vercel `METERLY_API_ORIGIN` still needs the Render URL.
+- POST `/api/merchant-verify`, `/api/pay`, `/api/requery`
+- Live `https://vtpass.com/api`, sandbox `https://sandbox.vtpass.com/api`
+- Auth: POST headers `api-key` + `secret-key` (not Basic)
+- Amount on pay is **naira**, not kobo
+- `request_id` ≥ 12 chars; first 12 = Africa/Lagos `YYYYMMDDHHII` of **pay day**; **store at claim, never regenerate**
+- `000` is not success — inspect `content.transactions.status` (`delivered` = success); `099` = requery
+- Documented DisCos only: IKEDC, EKEDC, AEDC, IBEDC, EEDC, PHED, KEDCO, KAEDCO, JED, YEDC. **No Benin Electric `serviceID` — do not invent.**
+- Sandbox prepaid `1111111111111`, postpaid `1010101010101`
 
-- **2026-11-23 (latest): Next.js 15 web frontend (`web/`) built and verified against the live Go `/v1` API (M11 merged in PR #11).**
-  - Built `web/` (Next.js 15 App Router, TypeScript, Tailwind CSS v4, Vercel-ready `web/vercel.json` + `next.config.mjs` proxying `/v1/:path*`, `/healthz`, and `/readyz` to `METERLY_API_ORIGIN` so browser code never calls `localhost` directly).
-  - Implemented truthful 3-dimension status tracking (`Payment`, `Vending`, `Delivery`, explicitly distinguishing remote `ACCEPTED` from `CONFIRMED` and displaying non-transferability copy on revealed 20-digit STS tokens) across all product surfaces: Consumer Power Hub (`/`), Pay-for-Me links & QR codes (`/pay-for-me`) + unauthenticated guest checkout & token-free status pages (`/p/[code]`, `/p/status/[status_code]`), Split-the-Meter Funding Pots (`/pots`, `/pots/[code]` with contributor initials only), AutoPower rules & saved card mandates (`/autopower`, hiding low-balance mode unless `remote_reading` is confirmed), Landlord Power Desk (`/power-desk`, `LANDLORD_BULK` top-ups + ledger-derived `Africa/Lagos` statements & CSV export), dev-only USSD/WhatsApp simulator (`/offline`, `/api/dev/offline`), and Staff Operator/Admin Console (`/admin`).
-  - Verified with `npm run typecheck`, `npm run build` (all 11 routes clean), and live end-to-end HTTP smoke tests through `:3000`.
+**Mock vending** still keys behaviour off meter numbers (see README). memstore still will not find txns by **vend** ref (`txnByPayRef` is payment-only).
 
-- **2026-11-23 (earlier): M11 Meterly Offline (USSD & WhatsApp purchase channels) completed (M10 merged in PR #10).**
-  - Engine, USSD & WhatsApp adapters (`internal/conversation`, `internal/channels/ussd`, `internal/offline`, `internal/notifications/whatsapp`, `docs/DECISIONS.md`): built channel-agnostic conversational state machine persisted in `conversation_sessions` (`0013_offline_channels.sql` across `memstore` and `pgstore`), Africa's Talking USSD HTTP adapter + `ussdtest.Simulator` enforcing CIDR allowlist + HMAC-SHA256 (`401` on failure), `<= 182`-character `CON`/`END` responses, and ~180s session TTL (creating zero transactions on mid-flow timeout), and Meta WhatsApp Cloud API inbound `hub.verify_token` + `X-Hub-Signature-256` verification (`401` on failure), duplicate `wamid` + out-of-order timestamp protection, free-form in-chat token delivery inside the 24h customer-service window with automatic fallback to `meterly_offline_token_v1` outside 24h, and `STOP` integration with M5 `opt_outs`.
-  - Phone identity, SIM-swap defense, orchestrator wiring & HTTP/OpenAPI (`internal/httpapi/offline.go`, `api/openapi.yaml`): mapped authenticated inbound phones via HMAC (`phone_channel_links`), auto-linked OIDC-verified phones, added `POST /v1/channels/phone/link/{start,verify}` + conversational 6-digit SMS OTP linking (`channel_otps`), enforced SIM-swap inactivity reverification (`OFFLINE_REVERIFY_AFTER`, default `30d`) and unverified vs verified `Africa/Lagos` daily purchase caps, routed all purchases through `orchestrator.Quote` + `CreateTransaction` (`Idempotency-Key = ussd:<sessionId>:<step>` / `whatsapp:<sessionId>:<step>`), added caller-scoped audited `<= 3/day` `"Last token"` resends, hashed session turn inputs so zero raw phones/meters/OTPs/tokens persist in logs or PostgreSQL tables, and gated behind `FEATURE_USSD` and `FEATURE_WHATSAPP` (both default `false`).
+---
 
-- **2026-11-23 (earlier): M10 Landlord Power Desk completed (M9 merged in PR #9).**
-  - RBAC, domain & decisions (`internal/authz`, `internal/powerdesk`, `docs/DECISIONS.md`): implemented `authz.Require(ctx, orgID, role)` (`OWNER > MANAGER > VIEWER`) returning `404` on non-member/cross-org access (zero IDOR), unit-meter verification states (`ACCOUNT_NAME_MATCH`, `EVIDENCE_APPROVED`), honest partial-success bulk summary formatting, and `Africa/Lagos` monthly statement bounds + CSV formula-injection sanitizer labelling vending `"electricity purchased"`.
-  - Schema & dual stores (`migrations/0012_power_desk.sql`, `internal/store/{memstore,pgstore}/powerdesk.go`): reused `organisations`, `roles`, `organisation_members`, `properties`, `buildings`, `units`; added `unit_meters`, `bulk_topups`, `bulk_topup_items`, `organisations.manager_approval_threshold_minor`, and `PENDING_APPROVAL` on `funding_pots`; verified with `TestPowerDeskRepoParity` across both stores.
-  - Orchestrator, `LANDLORD_BULK` pots & HTTP/OpenAPI (`internal/orchestrator/{powerdesk,pots}.go`, `internal/httpapi/powerdesk.go`, `api/openapi.yaml`): implemented 16 Power Desk + admin endpoints gated behind `FEATURE_POWER_DESK` (default `false`); `LANDLORD_BULK` Funding Pots create 1 landlord contribution and N POT-funded unit allocations (₦100 fee per unit), support `MANAGER` over-threshold `OWNER` approval before checkout, execute automatic partial pot refunds for failed units while never refunding `UNKNOWN` vends, and compute monthly statements strictly from double-entry ledger postings. Verified under `-race` on `memstore` and PostgreSQL 16.16.
+## 7. Feature flags
 
-- **2026-11-23 (earlier): M9 AutoPower scheduled & low-balance auto-recharge completed (M8 merged in PR #8).**
-  - Saved mandates & Paystack (`internal/autopower`, `migrations/0011_autopower.sql`, `internal/providers/paystack`): explicit consent-gated `POST /v1/me/payment-methods/{transaction_id}/save` sealing card authorization codes with AEAD bound to `(user_id, pm_id)`; `ChargeSaved` via `POST /transaction/charge_authorization` always verified via `VerifyPayment`; deleting a saved card or revoking meter access atomically pauses active rules.
-  - Scheduler, spend guards & low-balance poller (`internal/orchestrator/autopower.go`, `internal/httpapi/autopower.go`, `api/openapi.yaml`): `Africa/Lagos` weekly/monthly scheduler with 12h heads-up notifications, one-tap `POST /v1/autopower/runs/{id}/skip`, 6h catch-up window, row-locked monthly rule cap + `AUTOPOWER_DAILY_MAX_MINOR` per-user cap, 3-strike failure auto-pause, and capability-gated `MeterReadingProvider` low-balance poller with 24h cooldown; gated behind `FEATURE_AUTOPOWER` (default `false`).
+| Flag | Default | Notes |
+|---|---|---|
+| `FEATURE_HOUSEHOLDS` | on in `MODE=dev`, else off | this branch |
+| `FEATURE_GIFT_SMS` | **false everywhere** until legal | also gates **third-party** token send |
+| `FEATURE_PAY_FOR_ME` | on in dev | |
+| `FEATURE_SPLIT_METER` | on in dev | legal |
+| `FEATURE_AUTOPOWER` | false | legal |
+| `FEATURE_POWER_DESK` | false | legal |
+| `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
+| `FEATURE_SUPPORT` | on in dev | |
 
-- **2026-11-23 (latest): M8 Split the Meter (reusable Funding Pot) completed (M7 merged in PR #7).**
-  - Legal gate & ledger (`docs/DECISIONS.md`, `internal/ledger`, `migrations/0009_funding_pots.sql`): gated behind `FEATURE_SPLIT_METER` (default `true` in `dev`, `false` outside `dev`) and `POT_MAX_HOLD` (default `72h`, cap `7d`), added liability account `POT_FUNDS_HELD`, and extended `electricity_transactions` with `funding_source` (`PSP` | `POT`).
-  - Domain & stores (`internal/pots`, `internal/store/{memstore,pgstore}`, `internal/providers/paystack`): built `Pot` (`SPLIT_METER`, `LANDLORD_BULK`), `Contribution` (`AmountMinor`, `RetainedMinor`, `RefundAmountMinor`, `RefundedMinor`, deterministic `refund:contribution:<id>` keys, privacy-preserving `FormatInitials`), and `Allocation`; updated Paystack client + `paystacktest` to match refund `merchant_note` references and support cumulative partial refunds.
-  - Orchestrator, notifications & HTTP API (`internal/orchestrator/pots.go`, `internal/httpapi/pots.go`, `internal/notificationservice`, `migrations/0010_pot_contributor_notifications.sql`, `api/openapi.yaml`): implemented `POST /v1/pots`, `GET /v1/pots/{id}`, `POST /v1/pots/{id}/cancel`, `GET /v1/public/pots/{code}`, and `POST /v1/public/pots/{code}/contribute`; branched all automated and operator refund paths on `FundingSource` (`POT` returns `CUSTOMER_FUNDS_CLEARING -> POT_FUNDS_HELD` and drives per-contributor PSP refunds while blocking refunds on `VendUnknown`); added M5 `POT_CONTRIBUTOR` consented settlement SMS; verified under `-race` on both `memstore` and PostgreSQL 16.16.
+Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does **not** need `FEATURE_GIFT_SMS`. Sending to another destination does.
 
-- **2026-11-23 (earlier): M7 Pay-for-Me links completed (M6 merged in PR #6).**
-  - Domain & QR (`internal/payrequests`): 128-bit unpadded RFC 4648 base32 link and guest status codes indexed solely by domain-separated HMAC-SHA256 (`payrequest-code:<code>`, `payer-status-code:<code>`) with constant-time comparison, AES-256-GCM bound encryption for notes, guest emails, guest names and replay status codes, anti-phishing URL/domain rejection on notes and payer names, and a pure-stdlib ISO/IEC 18004 QR Code PNG encoder (`EncodeQRPNGBase64`).
-  - Schema & stores (`migrations/0007_payment_requests.sql`, `migrations/0008_payer_notifications.sql`, `internal/store/{memstore,pgstore}`): added `payment_requests`, `transaction_payers` (`slot_released` guard), and widened `notification_deliveries.recipient_kind` to include `'PAYER'` for token-free payment/refund receipt emails (with automatic `DUPLICATE_DESTINATION` suppression when payer == requester).
-  - Orchestrator & HTTP API (`internal/orchestrator/payrequests.go`, `internal/httpapi/payrequests.go`, `api/openapi.yaml`): implemented `POST/GET/DELETE /v1/payment-requests`, `GET /v1/public/pay/{code}`, `POST /v1/public/pay/{code}/checkout`, and `GET /v1/public/pay/status/{status_code}` behind `FEATURE_PAY_FOR_ME` (`no-store` + `Referrer-Policy: no-referrer`, per-IP + per-link rate limits, `SELECT ... FOR UPDATE` slot concurrency returning `409 LINK_ALREADY_PAID`, `409 LINK_UNUSABLE` on revoked meter grant, automatic slot reopening across all three `PayFailed` paths, and mid-checkout link expiry honouring). Verified with `-race` on both `memstore` and PostgreSQL 16.16 + `paystacktest`.
+---
 
-- **2026-11-23 (later): M6 production readiness completed (M5 merged in PR #5).**
-  - OpenAPI 3.1 (`api/openapi.yaml` + `internal/httpapi/openapi_test.go`): authored full OpenAPI 3.1.0 contract covering all 34 production routes, schemas, `bearerAuth` security scheme, and standard error envelope + all 18 error codes; added `Server.RegisteredPatterns()` and CI tests verifying bidirectional mux parity, `$ref` integrity, path parameter coverage, and AST `writeErr` code coverage (`gopkg.in/yaml.v3` justified in `docs/DECISIONS.md`).
-  - Observability (`internal/observability`): implemented stdlib Prometheus 0.0.4 metrics registry served strictly on an internal listener (`METRICS_ADDR`, default `:9090`, `404` on public API port) with zero PII/high-cardinality labels (`http_requests_total`, `http_request_duration_seconds`, `provider_calls_total`, `provider_call_duration_seconds`, 1-minute `transactions_by_status` / `manual_review_open` / `outbox_lag_seconds` gauges, `resume_escalations_total`, `notification_deliveries_total`), plus W3C `traceparent` + OTLP/HTTP JSON span export (`OTEL_EXPORTER_OTLP_ENDPOINT`) with `meterly.correlation_id` on every HTTP and provider span.
-  - Graceful shutdown (`internal/app/app.go`, `internal/app/shutdown_test.go`): unified ordered shutdown draining public HTTP, stopping worker loops from claiming new rows while finishing in-flight claims within `SHUTDOWN_TIMEOUT`, shutting down the internal metrics listener, flushing OTel spans, and only then closing PostgreSQL; verified under `-race`.
-  - Containers & CI (`Dockerfile`, `.dockerignore`, `docker-compose.yml`, `scripts/smoke-compose.sh`, `.github/workflows/ci.yml`): added multi-stage non-root `gcr.io/distroless/static-debian12:nonroot` targets (`api`, `worker`, `migrate`), extended `docker-compose.yml` for the full stack, and added CI image builds + compose end-to-end purchase and metrics smoke test.
+## 8. Gotchas
 
-- **2026-11-23: M5 notification delivery completed.**
-  - Schema (`migrations/0006_notifications.sql`): dropped unused plaintext `users.email`/`users.phone` columns and indexes; added bound-encrypted contact columns (`email_ciphertext`, `email_hmac`, `email_masked`, `email_key_version`, `phone_ciphertext`, `phone_hmac`, `phone_masked`, `phone_key_version`, `display_name`) on `users`; created `notification_preferences`, `opt_outs`, `whatsapp_service_windows`, and `notification_deliveries` (`UNIQUE (event_id, recipient_kind, channel)`). Kept `notification_candidates` (`0005`) intact.
-  - Contact capture & preferences: `auth.OIDC` captures `email` / `phone_number` strictly when `email_verified === true` / `phone_number_verified === true`; `httpapi` seals contacts via `EncryptBound` (`"user-email:"+uid`, `"user-phone:"+uid`). Added `GET/PUT /v1/me/notification-preferences` (`sms=true, email=true, whatsapp=false` defaults).
-  - Delivery engine (`internal/notificationservice`): atomic outbox dispatch via `outbox.Publisher` (`store.WithRepos`), explicit `PENDING -> SENDING` claim before external calls, send-time opt-out/preference re-check (`-> SUPPRESSED`), `UNKNOWN` handling on timeout/5xx/lost response (status API reconciliation on Resend; zero auto-resend of token-bearing gift SMS; single retry on non-token `UNKNOWN`; `30s, 2m, 10m, 1h` backoff up to 5 attempts on retryable errors), gift-to-self phone dedupe (`DUPLICATE_DESTINATION`), and configurable 12-month `destination_hmac` retention purge.
-  - Provider adapters & fakes: `africastalking` + `africastalkingtest`, `resend` + `resendtest`, and `whatsapp` + `whatsapptest` (enforcing pre-approved templates outside the 24h customer-service window and Meta `131047`), plus `GET/POST /v1/notifications/inbound/{provider}` signature-verified `STOP`/complaint handling and audited redacted `notifications` array on `GET /v1/admin/transactions/{id}` (`ResourceType: "notification_deliveries"`).
-  - Verified: `gofmt`, `go vet ./...`, `go test -race -count=1 ./...` on memory + PostgreSQL 16.16, 3× concurrency repeats, twice-idempotent `cmd/migrate` run, and clean `meterly_*` DB check. Adapters verified against stateful fakes only (no live provider calls; Supabase untouched).
+- **Migrations are immutable** once applied; runner checksums. Add `0017_*.sql`, never edit 0015/0016 after they hit a real DB.
+- **Supabase session pooler must be port 5432**, not transaction-mode 6543 (pgx prepared statements). Project for Render: `wiqfbscyppgsolvmereh` (eu-west-1). Do **not** migrate inactive project `okatwpkovcmipjdnqkys`.
+- **Git:** this session’s branch name is fixed (`arena/7cc28241-meterly`). After a PR merges, `git merge origin/main` — do not rebase/force-push.
+- **Orchestrator time** is `o.Now` (injectable).
+- **Auth:** `AUTH_MODE=dev` only in `MODE=dev`. Bearer token *is* the subject; `operator:` / `admin:` prefixes. `X-Dev-Display-Name`, `X-Dev-Verified-Email`, `X-Dev-Verified-Phone` populate contacts.
+- **Rate limits are in-memory per process.** Redis only when one replica’s view is not enough.
+- **Email is required** on `POST /v1/electricity/transactions` (Paystack).
+- **Do not restore `internal/households/service.go`** — mutations live on `Orchestrator`.
+- **Render connector is unsupported** in Arena. Dashboard + `render.yaml` only.
+- Missing helpers from older notes: use `internal/secure` (not `box.go`), `observability` `InjectHTTP`.
 
-- **Opt-in held-candidate worker:** `NOTIFICATION_CANDIDATES_SINCE` (nonzero RFC3339 timestamp) enables bounded collection; absent means off. Inclusive event-created-at cutoff applies independently of published status; a late commit whose creation time predates the cutoff is excluded. No sends or recipient consent. Keep cutoff stable across replicas and define rollout/backfill/retention before production; database does not enforce consistency. Worker now waits for background loops during shutdown. Boundary, delayed arrival, opt-in/default, log privacy and worker tests pass on memory/PostgreSQL. Supabase remains untouched.
+---
 
+## 9. What's left (honest)
 
-- **Purchase/removal serialization:** transaction creation now locks the meter before reauthorizing the purchase grant, serializing with self-removal and registration. Deterministic gate tests force both lock orderings against memory/PostgreSQL: removal first rejects creation without consuming the quote; creation first leaves the committed purchase in flight. Future grant mutation paths must also take the meter lock. Race suite and vet pass with disposable local PostgreSQL.
+### Engineering, unblocked once hosting/keys exist
 
+- Render deploy + Vercel origin (human paste).
+- Live sandbox runs: Paystack `sk_test_`, VTpass sandbox keys, AT, Resend, WhatsApp, a real OIDC issuer.
+- `web/` screens for households, ownership verify, token send (API is ready; UI is not).
+- Optional: Redis rate limits if Render scales to >1 instance.
 
-- **Meter access hardening:** registration now grants PURCHASE only, never MANAGE based on a meter number. `DELETE /v1/meters/{id}` removes caller's own access atomically with audit; row locking serializes registration/removal. Invalid permission comparisons fail closed. Concurrent removal and injected audit failure tested on memory/PostgreSQL; HTTP tests cover privacy, restored registration, quote reauthorization and isolation. Legacy MANAGE grants persist unverified; do not use them for household delegation. Existing in-flight purchases are not cancelled. Verified ownership and household delegation remain unimplemented.
+### Engineering, blocked on documents / partners
 
+- AMI/HES remote-credit adapter — **interface + mock only**. No partner API. Do not invent.
+- Benin Electric and any undocumented DisCo.
+- Native mobile apps.
 
-- **Held notification candidates:** migration 0005 and the then-unwired transactional consumer record metadata-only candidates for allowlisted events, independently of outbox publication. Unique event keys, row locks and rollback tests cover concurrent/replayed consumption on memory and PostgreSQL. No sender or consent/destination logic is wired; candidates must never be treated as delivery jobs. Define retention and a historical-event cutoff/backfill policy before enabling. Supabase was not migrated.
+### Not engineering (production blockers)
 
+- Aggregator/DisCo commercial agreement (VTpass code exists; contract does not).
+- Real-meter AMI confirmation before marketing “no tokens” (spec §19).
+- Legal: NERC/state regulators, CBN/PSP money flow, NDPA 2023 before enabling gift SMS / split / AutoPower / Power Desk / USSD / WhatsApp in production.
+- Identity provider choice (Auth0/Clerk/…) with `email_verified` / `phone_number_verified`, roles claim, MFA for staff.
+- NCC/telco USSD shortcode + CIDRs; Meta WABA + approved templates (`meterly_offline_token_v1`, `meterly_token_available_v1`, …).
 
-- **Encrypted gift-contact storage:** optional E.164 recipient phone and purchaser notification request are stored as AES-GCM ciphertext bound to the transaction, with a key version. New migration 0004 adds metadata; creation is atomic with the transaction and idempotency record. Contact-bearing request hashes use HMAC. This does not establish recipient consent, send messages, or implement key rotation and retention. HTTP tests cover encryption, associated data, idempotency and log/outbox/response redaction against both memory and PostgreSQL 16.16; race tests and vet use the temporary offline module overlay. Migration 0004 has not been applied to Supabase.
+### Explicitly out of scope unless asked
 
+- Inventing AMI/HES.
+- Legal sign-off.
+- Switching this Arena session to another git branch.
 
-- **Copy metadata:** added purchaser-only, idempotent COPY record and history endpoints. Records, audit and outbox metadata commit atomically; no token is copied into the record, and the endpoint does not send messages or prove delivery. Concurrent duplicate requests and HTTP authorization tests pass on memory and PostgreSQL 16.16. The local PG server was downloaded temporarily from an npm-packaged distribution because Docker and system PostgreSQL were unavailable; it is not part of the repo. `go test -race -count=1` and `go vet` passed with the temporary offline Go module overlay. SMS/email/WhatsApp, durable notification delivery remained unimplemented at that point; gift contact storage was added subsequently.
+---
 
+## 10. Hosting checklist (founder)
 
-- **Notification foundation:** added privacy-preserving event templates and process-local mock SMS/email/WhatsApp sender contracts with concurrent dedup tests. They are not connected to the outbox or real providers; durable contact storage and ambiguous-send handling are still required. `go test -race` and `go vet` passed with the temporary offline module overlay; PostgreSQL tests remained skipped (no local PostgreSQL or Docker). M5 is not complete.
+1. [ ] Push/merge this branch so `render.yaml` + migrations 0015/0016 are on GitHub.
+2. [ ] https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
+3. [ ] Paste `DATABASE_URL` (Supabase **session** pooler `:5432`, `sslmode=require`).
+4. [ ] Paste `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex chars each; already generated offline — **not in git**).
+5. [ ] Confirm `GET /healthz` and `GET /readyz`.
+6. [ ] Vercel project `meterly`: `METERLY_API_ORIGIN=https://<render-host>` and redeploy.
+7. [ ] Later, with sandbox keys: `MODE=staging`, `PAYMENT_PROVIDER=paystack`, `VENDING_PROVIDER=vtpass`, `REMOTE_PROVIDER=none`, `METER_READING_PROVIDER=none`. Keep SMS/email/WhatsApp `none` or `mock` until those keys exist.
 
+---
 
-- **Receipt slice:** added purchaser-only JSON and escaped printable HTML transaction records with no-store headers and independently displayed statuses. Unit and HTTP tests cover pending, completed, ownership, no token leakage and HTML escaping. Ran `go test -race` and `go vet` with a temporary offline module overlay and Go 1.27.4; PostgreSQL tests were skipped because this sandbox had neither Docker nor PostgreSQL binaries. M5 remains incomplete. No live provider or Supabase changes were made.
+## 11. Session log (newest first)
 
+- **2026-11-23: VTpass + FR-008 households + FR-007 token send** (`318b81c` on `arena/7cc28241-meterly`).
+  - VTpass: verify/pay/requery, documented DisCo map, 000/099 mapping, Lagos `request_id` persisted at claim (`VendIdempotencyKey`), `vtpasstest` fake. Wired in `app.go` / config. **Not called against live VTpass.**
+  - Households: `migrations/0015_households.sql`, domain `internal/households`, memstore+pgstore, orchestrator, HTTP, registry grant **or** household perm, admin attest, `FEATURE_HOUSEHOLDS`. Tests: name match, never-MANAGE, HTTP ownership → invite → accept → purchase → revoke. OpenAPI paths added.
+  - Token send: `migrations/0016_token_share_send.sql`, share dest ciphertext bound to `token-share-dest:<id>`, `RecipientKind=TOKEN_SHARE`, worker send (self vs gift template), opt-out, 5/day cap, `FEATURE_GIFT_SMS` for third-party. E2E against AT/Resend/WhatsApp fakes; logs must not contain token or E.164.
+  - Verified: `go test -modfile=/tmp/meterly-tools/overlay.mod ./...` (memory). PG skipped (no `DATABASE_URL` in sandbox).
+  - Hosting still waiting on Render paste. AMI still `none`.
 
-- **2026-11-21 (later): M4.** Opened PR #3 (M3 + handoff). Built:
-  - `internal/auth`: OIDC verifier using only the stdlib (RS256/ES256, iss/aud/exp/nbf/iat, ≤60s skew, cached JWKS with rate-limited refresh on rotation, discovery), roles claim, MFA gate for staff.
-  - `/v1/admin/*`: search with keyset paging, detail (ledger, events, audit), reconcile, fallback-to-token, audited token reveal, requeue, operator refund of the amount actually paid, provider enable/disable.
-  - Audit log in the same tx as each action. Customer token reads audited.
-  - Rate limits: per-user writes, per-IP auth failures and webhooks.
-  - Migration `0003_operations.sql`.
-  - Found and fixed a JWKS bug: the rate limit blocked a legitimate key rotation within 30s of startup.
-  - Verified: full suite with the race detector on memory and PostgreSQL (green, repeated 3× for the concurrent suites). OIDC tested against an in-process JWKS only, **not a real identity provider**.
+- **2026-11-26 (prior): Support chat + Render/Supabase docs** — merged PR #13 @ `90e0078`.
 
-- **2026-11-21: M1, M2, M3.**
-  - M1/M2 (PR #2, merged, CI green on GitHub): PostgreSQL store with `InTx`; orchestrator rewrite with atomic transitions and explicit claims; atomic idempotent create; migration runner; Resume worker with payment sweeper, expiry, late-payment and mismatch review, backoff and escalation; api/worker split; validated config; outbox publisher.
-  - M3 (pushed, no PR yet): Paystack adapter, `ParseWebhook` interface, paystacktest fake, e2e tests on both stores, email required.
-  - Verified: full suite with the race detector on memory and PostgreSQL 16 (all green); a manual binary run against PostgreSQL.
-  - Not verified: the live Paystack sandbox.
-  - Added this handoff and `CLAUDE.md`.
-- **2026-11-20: foundation (PR #1, merged).** Transaction engine, mock providers, `/v1` API, schema `0001`, tests for the spec's critical scenarios.
+- **Older milestones (M1–M12 web):** see git history PRs #1–#12. Do not treat “Copy metadata / gift contact / held candidates” session notes below as current — M5 notifications and FR-007 send superseded them.
+
+<details>
+<summary>Archived session notes (pre-M11)</summary>
+
+Older entries (M5–M10, receipts, copy metadata, gift contact, held candidates) remain in git history of this file before this rewrite. They describe work that is already merged.
+
+</details>

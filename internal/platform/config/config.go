@@ -38,11 +38,16 @@ type Config struct {
 	KeyVersion   string
 
 	PaymentProvider string // mock | paystack
-	VendingProvider string // mock
+	VendingProvider string // mock | vtpass
 
 	PaystackSecretKey    string
 	PaystackBaseURL      string
 	PaystackCallbackURL  string
+	VTPassAPIKey         string
+	VTPassSecretKey      string
+	VTPassPublicKey      string
+	VTPassBaseURL        string
+	VTPassDefaultPhone   string
 	RemoteProvider       string // mock | none
 	MeterReadingProvider string // mock | none
 	ProviderEnvironment  string // SANDBOX | PRODUCTION
@@ -104,7 +109,9 @@ type Config struct {
 	FeatureUSSD     bool
 	FeatureWhatsApp bool
 	// Support chat (agent + E2E human operators).
-	FeatureSupport                 bool
+	FeatureSupport bool
+	// Households: verified ownership + membership (FR-008).
+	FeatureHouseholds              bool
 	USSDSharedSecret               string
 	USSDAllowedIPs                 []string
 	OfflineReverifyAfter           time.Duration
@@ -194,11 +201,16 @@ func Load(getenv func(string) string) (Config, error) {
 		KeyVersion:             get("KEY_VERSION", "v1"),
 		PaymentProvider:        get("PAYMENT_PROVIDER", "mock"),
 		VendingProvider:        get("VENDING_PROVIDER", "mock"),
-		RemoteProvider:         get("REMOTE_PROVIDER", "mock"),
+		RemoteProvider:         get("REMOTE_PROVIDER", map[bool]string{true: "mock", false: "none"}[Mode(get("MODE", "")) == Dev]),
 		ProviderEnvironment:    get("PROVIDER_ENVIRONMENT", "SANDBOX"),
 		PaystackSecretKey:      getenv("PAYSTACK_SECRET_KEY"),
 		PaystackBaseURL:        get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
 		PaystackCallbackURL:    getenv("PAYSTACK_CALLBACK_URL"),
+		VTPassAPIKey:           strings.TrimSpace(getenv("VTPASS_API_KEY")),
+		VTPassSecretKey:        strings.TrimSpace(getenv("VTPASS_SECRET_KEY")),
+		VTPassPublicKey:        strings.TrimSpace(getenv("VTPASS_PUBLIC_KEY")),
+		VTPassBaseURL:          strings.TrimSpace(getenv("VTPASS_BASE_URL")),
+		VTPassDefaultPhone:     strings.TrimSpace(getenv("VTPASS_DEFAULT_PHONE")),
 		ResumeInterval:         dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:         dur("OUTBOX_INTERVAL", 2*time.Second),
 		ShutdownTimeout:        dur("SHUTDOWN_TIMEOUT", 15*time.Second),
@@ -345,6 +357,16 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_SUPPORT: must be true or false"))
 	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_HOUSEHOLDS"))) {
+	case "":
+		c.FeatureHouseholds = c.Mode == Dev
+	case "true", "1":
+		c.FeatureHouseholds = true
+	case "false", "0":
+		c.FeatureHouseholds = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_HOUSEHOLDS: must be true or false"))
+	}
 
 	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)
 	c.OfflineUnverifiedDailyMaxMinor = integer("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR", conversation.DefaultUnverifiedDailyCapMinor)
@@ -439,8 +461,32 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("PAYMENT_PROVIDER: unsupported value %q (available: mock, paystack)", c.PaymentProvider))
 	}
-	if c.VendingProvider != "mock" {
-		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock)", c.VendingProvider))
+	switch c.VendingProvider {
+	case "mock":
+	case "vtpass":
+		if c.VTPassAPIKey == "" || c.VTPassSecretKey == "" {
+			errs = append(errs, errors.New("VTPASS_API_KEY and VTPASS_SECRET_KEY are required when VENDING_PROVIDER=vtpass"))
+		}
+		if digits := strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, c.VTPassDefaultPhone); len(digits) < 10 {
+			errs = append(errs, errors.New("VTPASS_DEFAULT_PHONE is required when VENDING_PROVIDER=vtpass (VTpass pay needs a customer MSISDN)"))
+		}
+		if c.VTPassBaseURL == "" {
+			if c.ProviderEnvironment == "PRODUCTION" {
+				c.VTPassBaseURL = "https://vtpass.com/api"
+			} else {
+				c.VTPassBaseURL = "https://sandbox.vtpass.com/api"
+			}
+		}
+		if c.Mode != Dev && !strings.HasPrefix(c.VTPassBaseURL, "https://") {
+			errs = append(errs, errors.New("VTPASS_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock, vtpass)", c.VendingProvider))
 	}
 	if c.RemoteProvider != "mock" && c.RemoteProvider != "none" {
 		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none)", c.RemoteProvider))
@@ -535,7 +581,7 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("TOKEN_ENC_KEY and METER_HMAC_KEY are required outside dev"))
 		}
 		if c.UsesMocks() {
-			errs = append(errs, errors.New("mock providers are only allowed in MODE=dev; no real provider adapters are configured yet"))
+			errs = append(errs, errors.New("mock providers are only allowed in MODE=dev"))
 		}
 	}
 	switch strings.ToLower(c.MetricsAddr) {

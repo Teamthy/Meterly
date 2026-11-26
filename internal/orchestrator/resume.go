@@ -78,7 +78,7 @@ func (o *Orchestrator) Resume(ctx context.Context, id uuid.UUID) (*tx.Transactio
 
 func (o *Orchestrator) reconcileVend(ctx context.Context, t *tx.Transaction) (*tx.Transaction, error) {
 	pctx, cancel := o.pctx(ctx)
-	res, err := o.vending.GetVendStatus(pctx, vendKey(t.ID))
+	res, err := o.vending.GetVendStatus(pctx, o.vendIdempotencyKey(t))
 	cancel()
 	if err != nil {
 		return t, fmt.Errorf("vend status: %w", err)
