@@ -402,14 +402,14 @@ export default function PowerDeskPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-[#0B1F1A] p-6 text-white">
-        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
+      <div className="ml-panel p-6 sm:p-8">
+        <span className="text-xs font-semibold uppercase tracking-wider text-volt">
           F4 • Landlord Power Desk & Compound Bulk Top-Ups
         </span>
-        <h1 className="mt-1 text-2xl font-bold">
+        <h1 className="font-display mt-3 text-3xl font-semibold leading-tight">
           One payment across dozens of units — ledger-derived monthly statements.
         </h1>
-        <p className="mt-1 max-w-2xl text-sm text-stone-300">
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/55">
           Organisation RBAC (<code className="font-mono">OWNER</code>,{" "}
           <code className="font-mono">MANAGER</code>,{" "}
           <code className="font-mono">VIEWER</code>), verified unit-meter ownership, honest partial-success reporting with automatic unit-failure refunds, and formula-sanitized CSV exports.
@@ -420,7 +420,7 @@ export default function PowerDeskPage() {
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -432,10 +432,10 @@ export default function PowerDeskPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <form
           onSubmit={handleCreateOrg}
-          className="space-y-3 rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-5"
+          className="space-y-3 ml-card p-5 lg:col-span-5"
         >
           <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-emerald-600" />
+            <Building2 className="h-4 w-4 text-ink" />
             Create Landlord / Estate Organisation
           </h2>
           <div className="grid grid-cols-2 gap-3">
@@ -484,13 +484,13 @@ export default function PowerDeskPage() {
           </div>
           <button
             type="submit"
-            className="w-full rounded-xl bg-[#0B1F1A] px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-950"
+            className="w-full rounded-full bg-ink px-4 py-2.5 text-xs font-semibold text-volt hover:bg-black"
           >
             Create Organisation
           </button>
         </form>
 
-        <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-7 space-y-3">
+        <div className="ml-card p-5 lg:col-span-7 space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-stone-900">
               Active Organisation Workspace
@@ -649,7 +649,7 @@ export default function PowerDeskPage() {
                     <button
                       type="submit"
                       disabled={!attachUnitId}
-                      className="w-full rounded-lg bg-emerald-700 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                      className="w-full rounded-full bg-ink py-1.5 text-xs font-semibold text-volt disabled:opacity-40"
                     >
                       Attach Meter
                     </button>
@@ -665,9 +665,9 @@ export default function PowerDeskPage() {
       {activeOrg && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           {/* Compound Bulk Top-Up */}
-          <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-6">
+          <div className="space-y-4 ml-card p-5 lg:col-span-6">
             <h3 className="text-base font-bold text-stone-900 flex items-center gap-2">
-              <Layers className="h-4 w-4 text-emerald-600" />
+              <Layers className="h-4 w-4 text-ink" />
               Compound Bulk Top-Up (1 Payment → N Units)
             </h3>
 
@@ -697,7 +697,7 @@ export default function PowerDeskPage() {
                         {u.unit_meter && (
                           <span className="ml-2 inline-flex items-center gap-1">
                             {u.unit_meter.verified ? (
-                              <span className="text-emerald-700 font-semibold">
+                              <span className="text-ink font-semibold">
                                 <CheckCircle2 className="inline h-3 w-3" /> Verified
                               </span>
                             ) : (
@@ -745,7 +745,7 @@ export default function PowerDeskPage() {
 
                 <button
                   type="submit"
-                  className="w-full rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                  className="w-full rounded-full bg-ink px-4 py-2.5 text-xs font-semibold text-volt hover:bg-black"
                 >
                   Pay Once & Dispatch Bulk Top-Up (+₦100 fee/unit)
                 </button>
@@ -800,7 +800,7 @@ export default function PowerDeskPage() {
           </div>
 
           {/* Ledger-Derived Monthly Statements */}
-          <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-6">
+          <div className="space-y-4 ml-card p-5 lg:col-span-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-base font-bold text-stone-900">
@@ -820,7 +820,7 @@ export default function PowerDeskPage() {
                 <button
                   type="button"
                   onClick={handleDownloadCSV}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[#0B1F1A] px-3 py-1.5 text-xs font-semibold text-white"
+                  className="inline-flex items-center gap-1 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt"
                 >
                   <Download className="h-3.5 w-3.5" /> CSV
                 </button>
@@ -850,11 +850,11 @@ export default function PowerDeskPage() {
                       {formatNaira(statement.refunds_minor)}
                     </p>
                   </div>
-                  <div className="rounded-xl bg-emerald-50 p-3 border border-emerald-200">
-                    <p className="text-[10px] uppercase text-emerald-900">
+                  <div className="rounded-xl bg-volt/20 p-3 border border-stone-200">
+                    <p className="text-[10px] uppercase text-ink">
                       Net Charged
                     </p>
-                    <p className="font-mono text-sm font-bold text-emerald-950">
+                    <p className="font-mono text-sm font-bold text-ink">
                       {formatNaira(statement.net_charged_minor)}
                     </p>
                   </div>

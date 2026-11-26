@@ -152,7 +152,7 @@ export default function AdminSupportPage() {
         <button
           type="button"
           onClick={() => setPersonaById("operator:kemi")}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+          className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt"
         >
           Use operator:kemi
         </button>
@@ -162,9 +162,9 @@ export default function AdminSupportPage() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-      <aside className="rounded-2xl border border-stone-200 bg-white p-4">
+      <aside className="ml-card p-4">
         <h1 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-          <Headphones className="h-4 w-4 text-emerald-600" />
+          <Headphones className="h-4 w-4 text-ink" />
           Support inbox
         </h1>
         <ul className="space-y-1">
@@ -174,7 +174,7 @@ export default function AdminSupportPage() {
                 type="button"
                 onClick={() => openThread(th)}
                 className={`w-full rounded-xl px-3 py-2 text-left text-xs ${
-                  active?.id === th.id ? "bg-emerald-50" : "hover:bg-stone-50"
+                  active?.id === th.id ? "bg-volt/20" : "hover:bg-stone-50"
                 }`}
               >
                 <div className="font-medium">{th.status.replaceAll("_", " ")}</div>
@@ -186,7 +186,7 @@ export default function AdminSupportPage() {
         </ul>
       </aside>
 
-      <section className="flex min-h-[520px] flex-col rounded-2xl border border-stone-200 bg-white">
+      <section className="flex min-h-[520px] flex-col ml-card">
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 px-5 py-3">
           <div>
             <div className="text-sm font-semibold">
@@ -202,7 +202,7 @@ export default function AdminSupportPage() {
                 <button
                   type="button"
                   onClick={claim}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+                  className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt"
                 >
                   Claim
                 </button>
@@ -223,7 +223,7 @@ export default function AdminSupportPage() {
             <div
               key={m.id}
               className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${
-                m.sender_kind === "OPERATOR" ? "ml-auto bg-emerald-600 text-white" : "bg-stone-100"
+                m.sender_kind === "OPERATOR" ? "ml-auto bg-ink text-volt" : "bg-stone-100"
               }`}
             >
               <div className="mb-1 text-[10px] uppercase opacity-70">
@@ -260,7 +260,7 @@ export default function AdminSupportPage() {
             <button
               type="submit"
               disabled={!e2eReady || !draft.trim()}
-              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt disabled:opacity-40"
             >
               <Lock className="h-3.5 w-3.5" />
               Send

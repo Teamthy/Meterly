@@ -75,7 +75,7 @@ export default function DevConsolePage() {
 
   if (!screen) {
     return (
-      <div className="rounded-2xl border border-stone-200 bg-white p-8 text-sm text-stone-500">
+      <div className="ml-card p-8 text-sm text-stone-500">
         Loading sandbox console…
       </div>
     );
@@ -87,20 +87,20 @@ export default function DevConsolePage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-[#0B1F1A] p-6 text-white">
-        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
+      <div className="ml-panel p-6 sm:p-8">
+        <span className="text-xs font-semibold uppercase tracking-wider text-volt">
           MODE=dev · never production
         </span>
-        <h1 className="mt-1 text-2xl font-bold">{screen.title}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-stone-300">{screen.subtitle}</p>
-        <p className="mt-2 max-w-2xl text-xs text-stone-400">{screen.copy}</p>
+        <h1 className="font-display mt-3 text-3xl font-semibold leading-tight">{screen.title}</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/55">{screen.subtitle}</p>
+        <p className="mt-2 max-w-2xl text-xs text-white/40">{screen.copy}</p>
       </div>
 
       {banner && (
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -123,9 +123,9 @@ export default function DevConsolePage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3">
+        <section className="ml-card space-y-3 p-4">
           <h2 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-            <Gauge className="h-4 w-4 text-emerald-600" />
+            <Gauge className="h-4 w-4 text-ink" />
             {screen.meters_title}
           </h2>
           {screen.meters.length === 0 ? (
@@ -169,9 +169,9 @@ export default function DevConsolePage() {
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3">
+        <section className="ml-card space-y-3 p-4">
           <h2 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-            <CreditCard className="h-4 w-4 text-emerald-600" />
+            <CreditCard className="h-4 w-4 text-ink" />
             {screen.payments_title}
           </h2>
           {screen.payments.length === 0 ? (
@@ -193,7 +193,7 @@ export default function DevConsolePage() {
                       type="button"
                       disabled={!p.complete.enabled || busy}
                       onClick={() => run(p.complete, { success: true })}
-                      className="rounded-lg bg-emerald-800 px-3 py-1 text-xs font-semibold text-white disabled:opacity-40"
+                      className="rounded-full bg-ink px-3 py-1 text-xs font-semibold text-volt disabled:opacity-40"
                     >
                       {p.complete.label}
                     </button>
@@ -212,9 +212,9 @@ export default function DevConsolePage() {
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3">
+        <section className="ml-card space-y-3 p-4">
           <h2 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-            <Radio className="h-4 w-4 text-emerald-600" />
+            <Radio className="h-4 w-4 text-ink" />
             {screen.remote.title}
           </h2>
           <p className="text-xs text-stone-600">{screen.remote.copy}</p>
@@ -231,7 +231,7 @@ export default function DevConsolePage() {
           </button>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3">
+        <section className="ml-card space-y-3 p-4">
           <h2 className="text-sm font-bold text-stone-900">{screen.recent_title}</h2>
           {screen.recent.length === 0 ? (
             <p className="text-xs text-stone-400">{screen.recent_empty}</p>

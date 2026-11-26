@@ -66,9 +66,9 @@ function TxnList({
   onSelect: (id: string) => void;
 }) {
   return (
-    <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3">
+    <section className="ml-card space-y-3 p-4">
       <h2 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-        <Search className="h-4 w-4 text-emerald-600" />
+        <Search className="h-4 w-4 text-ink" />
         {title}
       </h2>
       <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
@@ -82,7 +82,7 @@ function TxnList({
               onClick={() => onSelect(t.transaction_id)}
               className={`w-full rounded-xl border p-3 text-left text-xs transition ${
                 selectedId === t.transaction_id
-                  ? "border-emerald-600 bg-emerald-50/60"
+                  ? "border-ink bg-volt/12"
                   : "border-stone-200 bg-stone-50 hover:bg-stone-100"
               }`}
             >
@@ -257,7 +257,7 @@ export default function AdminConsolePage() {
 
   if (!ready) {
     return (
-      <div className="rounded-2xl border border-stone-200 bg-white p-8 text-sm text-stone-500">
+      <div className="ml-card p-8 text-sm text-stone-500">
         Loading ops console…
       </div>
     );
@@ -286,7 +286,7 @@ export default function AdminConsolePage() {
           <button
             type="button"
             onClick={() => setPersonaById("admin")}
-            className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white"
+            className="rounded-full bg-ink px-4 py-2.5 text-xs font-semibold text-volt"
           >
             Switch to Segun (Admin)
           </button>
@@ -305,20 +305,20 @@ export default function AdminConsolePage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-[#0B1F1A] p-6 text-white">
-        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
+      <div className="ml-panel p-6 sm:p-8">
+        <span className="text-xs font-semibold uppercase tracking-wider text-volt">
           {console.role} · ops
         </span>
-        <h1 className="mt-1 text-2xl font-bold">{console.title}</h1>
-        <p className="mt-1 max-w-2xl text-sm text-stone-300">{console.subtitle}</p>
-        <p className="mt-2 max-w-2xl text-xs text-stone-400">{console.copy}</p>
+        <h1 className="font-display mt-3 text-3xl font-semibold leading-tight">{console.title}</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/55">{console.subtitle}</p>
+        <p className="mt-2 max-w-2xl text-xs text-white/40">{console.copy}</p>
       </div>
 
       {banner && (
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -330,13 +330,13 @@ export default function AdminConsolePage() {
         {console.summary.map((line) => (
           <div
             key={line.label}
-            className="rounded-2xl border border-stone-200 bg-white p-4"
+            className="ml-card p-4"
           >
             <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
               {line.label}
             </p>
             <p
-              className={`mt-1 text-2xl font-bold ${
+              className={`font-display mt-3 text-3xl font-semibold leading-tight ${
                 line.emphasis ? "text-amber-700" : "text-stone-900"
               }`}
             >
@@ -346,7 +346,7 @@ export default function AdminConsolePage() {
         ))}
       </div>
 
-      <div className="rounded-2xl border border-stone-200 bg-white p-4 flex flex-wrap items-center gap-3">
+      <div className="ml-card p-4 flex flex-wrap items-center gap-3">
         <label className="text-xs font-bold uppercase tracking-wider text-stone-600">
           {console.reason.label}
         </label>
@@ -379,15 +379,15 @@ export default function AdminConsolePage() {
             onSelect={loadDetail}
           />
 
-          <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2">
+          <section className="ml-card p-4 space-y-2">
             <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-              <Headphones className="h-4 w-4 text-emerald-600" />
+              <Headphones className="h-4 w-4 text-ink" />
               {console.support.title}
             </h3>
             <p className="text-xs text-stone-600">{console.support.summary}</p>
             <Link
               href={console.support.inbox_path}
-              className="inline-flex text-xs font-semibold text-emerald-800 hover:underline"
+              className="inline-flex text-xs font-semibold text-ink hover:underline"
             >
               Open inbox
             </Link>
@@ -395,10 +395,10 @@ export default function AdminConsolePage() {
 
           <form
             onSubmit={handleVerifyUnitMeter}
-            className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2.5"
+            className="ml-card p-4 space-y-2.5"
           >
             <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <CheckCircle2 className="h-4 w-4 text-ink" />
               {console.unit_meter.title}
             </h3>
             <p className="text-[11px] text-stone-500">{console.unit_meter.hint}</p>
@@ -438,9 +438,9 @@ export default function AdminConsolePage() {
             </button>
           </form>
 
-          <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2.5">
+          <section className="ml-card p-4 space-y-2.5">
             <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-              <Radio className="h-4 w-4 text-emerald-600" />
+              <Radio className="h-4 w-4 text-ink" />
               {console.cohorts_title}
             </h3>
             <p className="text-[11px] text-stone-500">{console.cohorts_copy}</p>
@@ -481,7 +481,7 @@ export default function AdminConsolePage() {
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full rounded-xl bg-emerald-800 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  className="w-full rounded-full bg-ink py-2 text-xs font-semibold text-volt disabled:opacity-50"
                 >
                   {console.cohort_attest.label}
                 </button>
@@ -523,9 +523,9 @@ export default function AdminConsolePage() {
           </section>
 
           {console.providers.length > 0 && (
-            <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2">
+            <section className="ml-card p-4 space-y-2">
               <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-                <Sliders className="h-4 w-4 text-emerald-600" />
+                <Sliders className="h-4 w-4 text-ink" />
                 Providers
               </h3>
               {console.providers.map((p) => (
@@ -543,7 +543,7 @@ export default function AdminConsolePage() {
                     onClick={() => runAction(p.action)}
                     className={`rounded-lg px-2.5 py-1 font-semibold disabled:opacity-40 ${
                       p.enabled
-                        ? "bg-emerald-100 text-emerald-900"
+                        ? "bg-volt/20 text-ink"
                         : "bg-rose-100 text-rose-900"
                     }`}
                   >
@@ -554,7 +554,7 @@ export default function AdminConsolePage() {
             </section>
           )}
 
-          <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2">
+          <section className="ml-card p-4 space-y-2">
             <h3 className="text-sm font-bold text-stone-900">{console.audit_title}</h3>
             <Lines lines={console.audit} empty={console.audit_empty} />
           </section>
@@ -567,7 +567,7 @@ export default function AdminConsolePage() {
               pane: three-dimension state, ledger, notifications and audit.
             </div>
           ) : (
-            <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4">
+            <div className="ml-card space-y-4 p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-bold text-stone-900">

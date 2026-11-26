@@ -40,7 +40,7 @@ export default function GuestPayStatusPage({
 
   if (!data) {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-stone-200 bg-white p-8 text-center text-sm text-stone-500">
+      <div className="mx-auto max-w-lg ml-card p-8 text-center text-sm text-stone-500">
         Loading payment status…
       </div>
     );
@@ -49,10 +49,10 @@ export default function GuestPayStatusPage({
   const receipt = data.receipt || {};
 
   return (
-    <div className="mx-auto max-w-lg rounded-2xl border border-stone-200 bg-white p-6 shadow-xs space-y-4">
+    <div className="mx-auto max-w-lg ml-card p-6 shadow-xs space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <CheckCircle2 className="h-5 w-5 text-ink" />
           <h1 className="text-lg font-bold text-stone-900">
             Guest Payment Receipt
           </h1>

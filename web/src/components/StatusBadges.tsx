@@ -14,7 +14,7 @@ function toneClass(status: string): string {
     s === "ACTIVE" ||
     s === "VERIFIED"
   ) {
-    return "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-600/25";
+    return "bg-volt/20 text-volt-ink ring-1 ring-volt/40";
   }
   if (s === "ACCEPTED") {
     // Non-negotiable product truth: ACCEPTED != DELIVERED
@@ -85,17 +85,17 @@ export function ThreeDimensionStatus({
         />
       </div>
       {method === "REMOTE" && delivery === "CONFIRMED" && (
-        <p className="text-xs font-semibold text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1">
+        <p className="rounded-md border border-volt/40 bg-volt/20 px-2.5 py-1 text-xs font-semibold text-volt-ink">
           On the meter. The meter confirmed the credit. No token to type.
         </p>
       )}
       {delivery === "ACCEPTED" && (
-        <p className="text-xs font-medium text-sky-800 bg-sky-50/80 border border-sky-200 rounded-md px-2.5 py-1">
+        <p className="rounded-md border border-sky-200 bg-sky-50/80 px-2.5 py-1 text-xs font-medium text-sky-800">
           Pushed to the meter network — not on the meter yet. Accepted ≠ delivered.
         </p>
       )}
       {(vending === "UNKNOWN" || delivery === "UNKNOWN") && (
-        <p className="text-xs font-medium text-amber-900 bg-amber-50/90 border border-amber-200 rounded-md px-2.5 py-1">
+        <p className="rounded-md border border-amber-200 bg-amber-50/90 px-2.5 py-1 text-xs font-medium text-amber-900">
           Ambiguous provider response (UNKNOWN). Meterly is reconciling status before any retry and will never auto-refund while electricity may have vended.
         </p>
       )}
@@ -118,20 +118,20 @@ export function CapabilityBadges({ caps }: { caps?: Capabilities }) {
   return (
     <div className="flex flex-wrap gap-1.5 text-xs">
       {remoteUsable ? (
-        <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-800 ring-1 ring-emerald-600/20">
+        <span className="rounded-full bg-volt/20 px-2 py-0.5 font-medium text-volt-ink ring-1 ring-volt/35">
           Credit on meter {caps.remote_credit.confirmed ? "· confirmed" : "· eligible"}
         </span>
       ) : (
-        <span className="rounded-md bg-stone-100 px-2 py-0.5 text-stone-500">
+        <span className="rounded-full bg-stone-100 px-2 py-0.5 text-stone-500">
           Keypad STS token
         </span>
       )}
-      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-medium text-stone-700">
+      <span className="rounded-full bg-stone-100 px-2 py-0.5 font-medium text-stone-700">
         Token fallback
       </span>
       {readingConfirmed && (
-        <span className="rounded-md bg-teal-50 px-2 py-0.5 font-medium text-teal-800 ring-1 ring-teal-600/20">
-          Live kWh Reading
+        <span className="rounded-full bg-ink px-2 py-0.5 font-medium text-volt">
+          Live kWh
         </span>
       )}
     </div>

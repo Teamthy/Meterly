@@ -97,7 +97,7 @@ export default function GuestPayLinkPage({
 
   if (!view) {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-stone-200 bg-white p-8 text-center text-sm text-stone-500">
+      <div className="mx-auto max-w-lg ml-card p-8 text-center text-sm text-stone-500">
         Loading electricity request…
       </div>
     );
@@ -110,10 +110,10 @@ export default function GuestPayLinkPage({
 
   return (
     <div className="mx-auto max-w-lg space-y-5">
-      <div className="rounded-2xl border border-stone-200 bg-white overflow-hidden shadow-sm">
-        <div className="bg-[#0B1F1A] p-6 text-white space-y-2">
+      <div className="ml-card overflow-hidden shadow-sm">
+        <div className="bg-ink p-6 text-white space-y-2">
           <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-300">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-volt">
               <Zap className="h-3.5 w-3.5" /> Meterly Pay-for-Me Request
             </span>
             <StatusPill status={view.status} />
@@ -121,7 +121,7 @@ export default function GuestPayLinkPage({
           <h1 className="text-xl font-bold">
             Pay electricity for {view.requester_display_name}
           </h1>
-          <p className="font-mono text-sm text-emerald-200">
+          <p className="font-mono text-sm text-volt">
             Meter {view.masked_meter_number} • {view.disco}
           </p>
         </div>
@@ -146,8 +146,8 @@ export default function GuestPayLinkPage({
           ) : (
             <form onSubmit={handleCheckout} className="space-y-4">
               {view.amount_mode === "FIXED" ? (
-                <div className="rounded-xl bg-emerald-50/70 border border-emerald-200 p-4 flex items-baseline justify-between">
-                  <span className="text-xs font-semibold uppercase text-emerald-900">
+                <div className="rounded-xl bg-volt/15 border border-stone-200 p-4 flex items-baseline justify-between">
+                  <span className="text-xs font-semibold uppercase text-ink">
                     Electricity Amount
                   </span>
                   <span className="font-mono text-2xl font-bold text-stone-900">
@@ -201,7 +201,7 @@ export default function GuestPayLinkPage({
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50"
+                className="w-full rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt shadow-xs hover:bg-black disabled:opacity-50"
               >
                 {submitting
                   ? "Reserving Slot..."
@@ -213,7 +213,7 @@ export default function GuestPayLinkPage({
           )}
 
           <div className="flex items-start gap-2 pt-2 text-[11px] text-stone-500">
-            <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+            <ShieldCheck className="h-4 w-4 text-ink shrink-0 mt-0.5" />
             <span>
               Privacy guarantee: Your receipt confirms payment & delivery status without exposing the requester&apos;s home address or STS keypad token.
             </span>

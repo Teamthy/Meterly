@@ -46,18 +46,18 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0B1F1A] text-emerald-300">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-volt">
           <Settings className="h-5 w-5" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold">Settings</h1>
-          <p className="text-xs text-stone-500">
-            Channel flags live in notification_preferences. Profile fields live on users.
+          <h1 className="font-display text-3xl font-semibold text-paper">Settings</h1>
+          <p className="text-xs text-white/45">
+            How we reach you. Profile lives on your user record.
           </p>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-stone-200 bg-white p-5 space-y-3">
+      <div className="ml-card space-y-3 p-5">
         <p className="text-sm text-stone-600">
           Signed in as <span className="font-medium">{profile?.display_name || profile?.user_id || "…"}</span>
           {profile?.onboarding_step && profile.onboarding_step !== "done" ? (
@@ -80,7 +80,7 @@ export default function SettingsPage() {
           type="button"
           disabled={busy}
           onClick={save}
-          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt disabled:opacity-50"
         >
           Save settings
         </button>
