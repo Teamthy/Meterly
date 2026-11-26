@@ -17,6 +17,7 @@ import (
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/channels/ussd"
 	"github.com/teamthy/meterly/internal/httpapi"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/notificationconsumer"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/notifications/africastalking"
@@ -76,6 +77,7 @@ type App struct {
 	payments     providers.PaymentProvider
 	remoteRaw    providers.RemoteCreditProvider
 	authn        auth.Authenticator
+	Identity     *identity.Engine
 	wrapPublic   func(http.Handler) http.Handler
 	redis        *ratelimit.Client
 
@@ -217,6 +219,16 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		log.Warn("using dev authentication: the bearer token is the user; operator:/admin: prefixes grant staff roles")
 		a.authn = auth.DevAuth{}
 	}
+
+	a.Identity = &identity.Engine{
+		Users:   a.Store.Repos().Users(),
+		Auth:    a.Store.Repos().Auth(),
+		Box:     box,
+		RPName:  "Meterly",
+		Origins: cfg.WebAuthnOrigins,
+		Dev:     cfg.Mode == config.Dev,
+	}
+	a.authn = auth.SessionThen(a.authn, a.Identity)
 
 	if cfg.RedisURL != "" {
 		rc, err := ratelimit.Dial(cfg.RedisURL)
@@ -426,7 +438,7 @@ func (a *App) RefreshMetrics(ctx context.Context) {
 
 func (a *App) Handler() http.Handler {
 	s := &httpapi.Server{
-		O: a.Orch, Auth: a.authn, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
+		O: a.Orch, Auth: a.authn, Identity: a.Identity, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
 		Metrics: a.Metrics, Tracer: a.Tracer, Log: a.Log, Ready: a.Ready,
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,

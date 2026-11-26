@@ -389,8 +389,9 @@ func (r *RemoteCredit) ParseWebhook(h http.Header, body []byte) (providers.Remot
 // ---- Remote meter readings -------------------------------------------------
 
 type readingEntry struct {
-	kWh float64
-	at  time.Time
+	kWh        float64
+	at         time.Time
+	kwhPerHour float64 // demo drain; 0 = static
 }
 
 type MeterReadings struct {
@@ -411,7 +412,7 @@ func (m *MeterReadings) SetReading(meterNumber string, kWh float64, at time.Time
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	m.readings[meterNumber] = readingEntry{kWh: kWh, at: at.UTC()}
+	m.readings[meterNumber] = readingEntry{kWh: kWh, at: at.UTC(), kwhPerHour: 0.35}
 }
 
 func (m *MeterReadings) LatestReading(_ context.Context, meterNumber string) (float64, time.Time, error) {
@@ -422,7 +423,16 @@ func (m *MeterReadings) LatestReading(_ context.Context, meterNumber string) (fl
 	if !ok {
 		return 0, time.Time{}, providers.ErrReadingUnavailable
 	}
-	return r.kWh, r.at, nil
+	now := time.Now().UTC()
+	elapsed := now.Sub(r.at)
+	if r.kwhPerHour <= 0 || elapsed < time.Minute {
+		return r.kWh, r.at, nil
+	}
+	kwh := r.kWh - r.kwhPerHour*elapsed.Hours()
+	if kwh < 0 {
+		kwh = 0
+	}
+	return kwh, now, nil
 }
 
 // ---- helpers ---------------------------------------------------------------

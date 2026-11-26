@@ -20,6 +20,7 @@ import (
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
@@ -93,6 +94,15 @@ type Repos interface {
 	Support() SupportRepo
 	Households() HouseholdRepo
 	RemoteCohorts() RemoteCohortRepo
+	Auth() AuthRepo
+	Readings() MeterReadingRepo
+}
+
+// MeterReadingRepo stores observed remote kWh samples used to compute
+// consumption rate and time-left on the server.
+type MeterReadingRepo interface {
+	InsertSample(ctx context.Context, s meters.ReadingSample) error
+	ListSamples(ctx context.Context, meterID uuid.UUID, since time.Time, limit int) ([]meters.ReadingSample, error)
 }
 
 // RemoteCohortRepo is the operator-attested AMI meter matrix. Longest matching
@@ -143,6 +153,24 @@ type UserRepo interface {
 	UpsertContacts(ctx context.Context, c notifications.UserContacts) error
 	// Contacts returns the user's encrypted contact record, or ErrNotFound.
 	Contacts(ctx context.Context, userID string) (notifications.UserContacts, error)
+	Profile(ctx context.Context, userID string) (identity.Profile, error)
+	SetDisplayName(ctx context.Context, userID, name string) error
+	SetOnboarding(ctx context.Context, userID, step string, completedAt *time.Time) error
+	ExternalID(ctx context.Context, userID string) (string, error)
+}
+
+// AuthRepo persists WebAuthn credentials, login challenges and sessions.
+type AuthRepo interface {
+	PutChallenge(ctx context.Context, c identity.Challenge) error
+	TakeChallenge(ctx context.Context, challenge []byte, now time.Time) (identity.Challenge, error)
+	InsertCredential(ctx context.Context, c identity.Credential) error
+	GetCredentialByCredID(ctx context.Context, credID []byte) (identity.Credential, error)
+	ListCredentials(ctx context.Context, userID string) ([]identity.Credential, error)
+	UpdateCredentialUse(ctx context.Context, credID []byte, signCount uint32, at time.Time) error
+	DeleteCredential(ctx context.Context, userID string, id uuid.UUID) error
+	InsertSession(ctx context.Context, s identity.Session) error
+	GetSessionByHMAC(ctx context.Context, hmac string) (identity.Session, error)
+	RevokeSession(ctx context.Context, id uuid.UUID, at time.Time) error
 }
 
 type MeterRepo interface {
@@ -345,6 +373,7 @@ type PowerDeskRepo interface {
 	GetActiveMemberRole(ctx context.Context, orgID uuid.UUID, userID string) (powerdesk.Role, error)
 	GetMemberForUpdate(ctx context.Context, orgID uuid.UUID, userID string) (*powerdesk.Member, error)
 	ListActiveMembers(ctx context.Context, orgID uuid.UUID) ([]*powerdesk.Member, error)
+	ListOrgsForUser(ctx context.Context, userID string) ([]*powerdesk.Organisation, error)
 	CountActiveOwners(ctx context.Context, orgID uuid.UUID) (int, error)
 	RemoveMember(ctx context.Context, orgID uuid.UUID, userID string) error
 
@@ -354,6 +383,7 @@ type PowerDeskRepo interface {
 
 	EnsureDefaultBuilding(ctx context.Context, propertyID uuid.UUID, name string, now time.Time) (*powerdesk.Building, error)
 	GetBuilding(ctx context.Context, id uuid.UUID) (*powerdesk.Building, error)
+	ListBuildingsForProperty(ctx context.Context, propertyID uuid.UUID) ([]*powerdesk.Building, error)
 
 	CreateUnit(ctx context.Context, u *powerdesk.Unit) error
 	GetUnit(ctx context.Context, id uuid.UUID) (*powerdesk.Unit, error)

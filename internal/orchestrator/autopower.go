@@ -1933,6 +1933,9 @@ func (o *Orchestrator) pollSingleRule(ctx context.Context, ruleID uuid.UUID, pol
 		}
 		rl.LastReadingMilliKWh = &milliKWh
 		rl.LastReadingAt = &obsAt
+		_ = r.Readings().InsertSample(ctx, meters.ReadingSample{
+			MeterID: rl.MeterID, MilliKWh: milliKWh, ReadAt: obsAt, Provider: o.readings.Name(),
+		})
 
 		cooldownOK := rl.LastLowBalanceTriggered == nil || !now.Before(rl.LastLowBalanceTriggered.Add(autopower.LowBalanceCooldown))
 		if milliKWh <= rl.LowBalanceMilliKWh && cooldownOK {

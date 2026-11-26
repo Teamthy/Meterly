@@ -20,6 +20,7 @@ import (
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/notificationservice"
@@ -50,6 +51,7 @@ type Limits struct {
 type Server struct {
 	O             *orchestrator.Orchestrator
 	Auth          auth.Authenticator
+	Identity      *identity.Engine
 	Payments      providers.PaymentProvider
 	Remote        providers.RemoteCreditProvider
 	Notifications *notificationservice.Service
@@ -141,13 +143,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.readyz)
 
 	user, write := s.authed(auth.RoleCustomer, false), s.authed(auth.RoleCustomer, true)
+	s.identityRoutes(mux, user, write)
 	mux.Handle("POST /v1/meters/validate", write(s.validateMeter))
 	mux.Handle("POST /v1/meters", write(s.registerMeter))
 	mux.Handle("GET /v1/meters", user(s.listMeters))
 	mux.Handle("GET /v1/meters/{meter_id}", user(s.getMeter))
 	mux.Handle("DELETE /v1/meters/{meter_id}", write(s.removeSavedMeter))
 	mux.Handle("GET /v1/meters/{meter_id}/capabilities", user(s.getCapabilities))
+	mux.Handle("GET /v1/meters/{meter_id}/reading", user(s.getMeterReading))
+	mux.Handle("GET /v1/meters/{meter_id}/usage", user(s.getMeterUsage))
+	mux.Handle("GET /v1/meters/usage", user(s.listMeterUsage))
 	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
+	mux.Handle("GET /v1/beneficiaries", user(s.listBeneficiaries))
 	s.householdRoutes(mux, user, write)
 
 	mux.Handle("POST /v1/electricity/quotes", write(s.createQuote))
@@ -201,6 +208,7 @@ func (s *Server) Routes() http.Handler {
 	if s.Dev {
 		mux.HandleFunc("POST /v1/dev/payments/{ref}/complete", s.devCompletePayment)
 		mux.HandleFunc("POST /v1/dev/remote/settle", s.devSettle)
+		mux.HandleFunc("POST /v1/dev/meters/{meter_id}/reading", s.devSetReading)
 		mux.HandleFunc("POST /v1/dev/reconcile", s.devReconcile)
 		mux.HandleFunc("POST /v1/dev/transactions/{transaction_id}/resume", s.devResume)
 	}
@@ -413,6 +421,58 @@ func (s *Server) addBeneficiary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, map[string]any{"meter_id": m.ID, "display_name": req.DisplayName, "masked_meter_number": m.Masked, "customer_name": m.CustomerName})
+}
+
+func (s *Server) listBeneficiaries(w http.ResponseWriter, r *http.Request) {
+	list, err := s.O.Meters.ListForUser(r.Context(), userID(r))
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []meters.Listed{}
+	}
+	writeJSON(w, 200, map[string]any{"data": list})
+}
+
+func (s *Server) getMeterReading(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	reading, err := s.O.LatestMeterReading(r.Context(), userID(r), id)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 200, reading)
+}
+
+func (s *Server) getMeterUsage(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	usage, err := s.O.MeterUsage(r.Context(), userID(r), id)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 200, usage)
+}
+
+func (s *Server) listMeterUsage(w http.ResponseWriter, r *http.Request) {
+	list, err := s.O.ListMeterUsage(r.Context(), userID(r))
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []orchestrator.MeterUsage{}
+	}
+	writeJSON(w, 200, map[string]any{"data": list})
 }
 
 func (s *Server) listMeters(w http.ResponseWriter, r *http.Request) {
@@ -690,6 +750,37 @@ func (s *Server) devSettle(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]any{"settled": true})
 }
 
+func (s *Server) devSetReading(w http.ResponseWriter, r *http.Request) {
+	if s.DevReadings == nil {
+		writeErr(w, 404, "INVALID_REQUEST", "mock meter readings not in use")
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	var body struct {
+		KWh float64 `json:"kwh"`
+	}
+	if !decode(r, &body) {
+		writeErr(w, 400, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	m, err := s.O.Store().Repos().Meters().Get(r.Context(), id)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	number, err := s.O.Box().Decrypt(m.NumberEncrypted)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	s.DevReadings.SetReading(number, body.KWh, time.Now().UTC())
+	writeJSON(w, 200, map[string]any{"set": true, "kwh": body.KWh})
+}
+
 func (s *Server) devReconcile(w http.ResponseWriter, r *http.Request) {
 	processed, progressed, err := s.O.ResumeDue(r.Context())
 	if err != nil {
@@ -755,6 +846,22 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 403, "FORBIDDEN", "you do not have access to this meter")
 	case errors.Is(err, orchestrator.ErrNotEligible):
 		writeErr(w, 422, "METER_NOT_ELIGIBLE", err.Error())
+	case errors.Is(err, orchestrator.ErrReadingUnavailable):
+		writeErr(w, 404, "READING_UNAVAILABLE", "no confirmed meter reading is available")
+	case errors.Is(err, identity.ErrNoPasskeys):
+		writeErr(w, 404, "NOT_FOUND", "passkeys are not configured")
+	case errors.Is(err, identity.ErrOrigin):
+		writeErr(w, 400, "INVALID_REQUEST", "origin is not allowed")
+	case errors.Is(err, identity.ErrBadAttestation), errors.Is(err, identity.ErrBadAssertion),
+		errors.Is(err, identity.ErrChallenge):
+		writeErr(w, 400, "INVALID_REQUEST", "passkey verification failed")
+	case errors.Is(err, identity.ErrUnknownCredential), errors.Is(err, identity.ErrClonedKey),
+		errors.Is(err, identity.ErrSession):
+		writeErr(w, 401, "UNAUTHENTICATED", "passkey or session was rejected")
+	case errors.Is(err, identity.ErrStepOrder), errors.Is(err, identity.ErrInvalidStep):
+		writeErr(w, 422, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, errInvalidJSON):
+		writeErr(w, 400, "INVALID_REQUEST", "invalid request body")
 	case errors.Is(err, gifts.ErrInvalidContact), errors.Is(err, notifications.ErrInvalidPhone), errors.Is(err, notifications.ErrInvalidEmail), errors.Is(err, tokenshares.ErrUnsupportedChannel):
 		writeErr(w, 400, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrTokenShareContact):

@@ -83,8 +83,11 @@ interface AuthContextValue {
   token: string;
   email: string;
   activePersona: Persona | null;
+  isPasskeySession: boolean;
   setPersonaById: (id: string) => void;
   setCustomToken: (token: string, email?: string) => void;
+  applySession: (token: string, displayName?: string) => void;
+  signOut: () => Promise<void>;
   openCheckout: (session: CheckoutSession) => void;
 }
 
@@ -133,7 +136,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const applySession = (newTok: string, displayName?: string) => {
+    const clean = newTok.trim();
+    setToken(clean);
+    setEmail("");
+    try {
+      window.localStorage.setItem("meterly_token", clean);
+      window.localStorage.removeItem("meterly_email");
+      if (displayName) window.localStorage.setItem("meterly_display_name", displayName);
+    } catch {
+      // ignore
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      if (token.startsWith("mls_")) {
+        await apiFetch("/v1/auth/logout", { method: "POST", token });
+      }
+    } catch {
+      // ignore
+    }
+    setPersonaById("ada");
+  };
+
   const activePersona = PERSONAS.find((p) => p.token === token) || null;
+  const isPasskeySession = token.startsWith("mls_");
 
   useEffect(() => {
     const headers: Record<string, string> = {};
@@ -177,8 +205,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         email,
         activePersona,
+        isPasskeySession,
         setPersonaById,
         setCustomToken,
+        applySession,
+        signOut,
         openCheckout: (s) => {
           setErr(null);
           setCheckout(s);

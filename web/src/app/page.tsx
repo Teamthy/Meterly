@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import {
   Meter,
+  MeterUsage,
   MeterValidationResult,
   NotificationPreferences,
   TokenRevealResponse,
@@ -39,6 +40,8 @@ import {
   Bell,
   Phone,
   Radio,
+  Gauge,
+  Clock,
 } from "lucide-react";
 
 const MOCK_PRESETS = [
@@ -72,6 +75,7 @@ export default function ConsumerHubPage() {
   const { token, email, openCheckout } = useAuth();
 
   const [meters, setMeters] = useState<Meter[]>([]);
+  const [usageByMeter, setUsageByMeter] = useState<Record<string, MeterUsage>>({});
   const [txns, setTxns] = useState<TransactionView[]>([]);
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [loading, setLoading] = useState(true);
@@ -121,7 +125,7 @@ export default function ConsumerHubPage() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [mRes, tRes, pRes] = await Promise.all([
+      const [mRes, tRes, pRes, uRes] = await Promise.all([
         apiFetch<{ data: Meter[] }>("/v1/meters", { token }),
         apiFetch<{ data: TransactionView[] }>("/v1/electricity/transactions", {
           token,
@@ -129,9 +133,15 @@ export default function ConsumerHubPage() {
         apiFetch<NotificationPreferences>("/v1/me/notification-preferences", {
           token,
         }).catch(() => null),
+        apiFetch<{ data: MeterUsage[] }>("/v1/meters/usage", { token }).catch(() => ({
+          data: [] as MeterUsage[],
+        })),
       ]);
       const meterList = mRes.data || [];
       setMeters(meterList);
+      const usageMap: Record<string, MeterUsage> = {};
+      for (const u of uRes.data || []) usageMap[u.meter_id] = u;
+      setUsageByMeter(usageMap);
       setTxns(tRes.data || []);
       if (pRes) setPrefs(pRes);
       if (meterList.length > 0) {
@@ -181,6 +191,7 @@ export default function ConsumerHubPage() {
   }, [txns, refreshTxns]);
 
   const selectedMeter = meters.find((m) => m.meter_id === selectedMeterId);
+  const selectedUsage = selectedMeterId ? usageByMeter[selectedMeterId] : undefined;
   const selectedSupportsRemote =
     selectedMeter?.capabilities?.remote_credit?.supported &&
     selectedMeter?.capabilities?.remote_credit?.authorised &&
@@ -795,12 +806,17 @@ export default function ConsumerHubPage() {
                     onChange={(e) => setSelectedMeterId(e.target.value)}
                     className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
                   >
-                    {meters.map((m) => (
-                      <option key={m.meter_id} value={m.meter_id}>
-                        {m.label ? `${m.label} • ` : ""}
-                        {m.masked_meter_number} ({m.disco})
-                      </option>
-                    ))}
+                    {meters.map((m) => {
+                      const u = usageByMeter[m.meter_id];
+                      const rem =
+                        u && u.remaining_kwh != null ? ` · ${u.remaining_kwh} kWh` : "";
+                      return (
+                        <option key={m.meter_id} value={m.meter_id}>
+                          {m.label ? `${m.label} • ` : ""}
+                          {m.masked_meter_number} ({m.disco}){rem}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
               </div>
@@ -816,6 +832,55 @@ export default function ConsumerHubPage() {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
+                </div>
+              )}
+
+              {selectedUsage && (
+                <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-800">
+                    <Gauge className="h-3.5 w-3.5" />
+                    On the meter
+                  </div>
+                  {selectedUsage.remaining_kwh != null ? (
+                    <p className="text-2xl font-bold tabular-nums text-stone-900">
+                      {selectedUsage.remaining_kwh}{" "}
+                      <span className="text-sm font-medium text-stone-500">kWh remaining</span>
+                    </p>
+                  ) : (
+                    <p className="text-sm text-stone-600">
+                      {selectedUsage.unavailable_reason === "REMOTE_READING_NOT_SUPPORTED"
+                        ? "This keypad meter has no remote reading path. Remaining units live on the meter; Meterly cannot see the balance."
+                        : "No confirmed remote reading is available yet."}
+                    </p>
+                  )}
+                  {selectedUsage.consumption && (
+                    <p className="text-xs text-stone-600">
+                      Using {selectedUsage.consumption.kwh_per_hour} kWh/h
+                      {" · "}
+                      {selectedUsage.consumption.kwh_per_day} kWh/day
+                      {selectedUsage.consumption.window_hours
+                        ? ` (last ${selectedUsage.consumption.window_hours} h)`
+                        : ""}
+                    </p>
+                  )}
+                  {selectedUsage.estimated_hours_remaining != null && (
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-900">
+                      <Clock className="h-3.5 w-3.5" />
+                      About {selectedUsage.estimated_hours_remaining} hours left
+                      {selectedUsage.estimated_empty_at
+                        ? ` · empty around ${new Date(selectedUsage.estimated_empty_at).toLocaleString()}`
+                        : ""}
+                    </p>
+                  )}
+                  {selectedUsage.last_credit && (
+                    <p className="text-[11px] text-stone-500">
+                      Last credit {selectedUsage.last_credit.units_kwh} kWh
+                      {" · "}
+                      {selectedUsage.last_credit.delivery_method}
+                      {" · "}
+                      {new Date(selectedUsage.last_credit.credited_at).toLocaleString()}
+                    </p>
+                  )}
                 </div>
               )}
 

@@ -160,6 +160,31 @@ func (o *Orchestrator) CreateOrg(ctx context.Context, p CreateOrgParams) (*OrgDe
 	return o.GetOrg(ctx, org.ID)
 }
 
+type OrgSummary struct {
+	powerdesk.Organisation
+	CallerRole powerdesk.Role `json:"caller_role"`
+}
+
+func (o *Orchestrator) ListMyOrgs(ctx context.Context) ([]OrgSummary, error) {
+	callerUID, err := mustCallerUID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	orgs, err := o.st.Repos().PowerDesk().ListOrgsForUser(ctx, callerUID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OrgSummary, 0, len(orgs))
+	for _, org := range orgs {
+		role, err := o.st.Repos().PowerDesk().GetActiveMemberRole(ctx, org.ID, callerUID)
+		if err != nil {
+			continue
+		}
+		out = append(out, OrgSummary{Organisation: *org, CallerRole: role})
+	}
+	return out, nil
+}
+
 func (o *Orchestrator) GetOrg(ctx context.Context, orgID uuid.UUID) (*OrgDetailView, error) {
 	role, err := authz.RequireRole(ctx, orgID, powerdesk.RoleViewer)
 	if err != nil {
@@ -484,6 +509,38 @@ func (o *Orchestrator) CreateProperty(ctx context.Context, orgID uuid.UUID, p Cr
 		}))
 	})
 	return prop, err
+}
+
+func (o *Orchestrator) CreateBuilding(ctx context.Context, propertyID uuid.UUID, name string) (*powerdesk.Building, error) {
+	prop, err := o.st.Repos().PowerDesk().GetProperty(ctx, propertyID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, authz.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := authz.Require(ctx, prop.OrganisationID, powerdesk.RoleManager); err != nil {
+		return nil, err
+	}
+	clean, err := powerdesk.CleanName(name, powerdesk.ErrInvalidPropertyName)
+	if err != nil {
+		return nil, err
+	}
+	return o.st.Repos().PowerDesk().EnsureDefaultBuilding(ctx, propertyID, clean, o.Now().UTC())
+}
+
+func (o *Orchestrator) ListBuildings(ctx context.Context, propertyID uuid.UUID) ([]*powerdesk.Building, error) {
+	prop, err := o.st.Repos().PowerDesk().GetProperty(ctx, propertyID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, authz.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := authz.Require(ctx, prop.OrganisationID, powerdesk.RoleViewer); err != nil {
+		return nil, err
+	}
+	return o.st.Repos().PowerDesk().ListBuildingsForProperty(ctx, propertyID)
 }
 
 type CreateUnitParams struct {

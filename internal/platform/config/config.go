@@ -78,12 +78,13 @@ type Config struct {
 	NotificationHMACRetention   time.Duration
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
-	AuthMode       string
-	OIDCIssuer     string
-	OIDCAudience   string
-	OIDCJWKSURL    string
-	OIDCRolesClaim string
-	OIDCMFAValues  []string // staff roles require one of these in "amr"
+	AuthMode        string
+	OIDCIssuer      string
+	OIDCAudience    string
+	OIDCJWKSURL     string
+	OIDCRolesClaim  string
+	OIDCMFAValues   []string // staff roles require one of these in "amr"
+	WebAuthnOrigins []string // browser origins allowed to register/login passkeys
 
 	// Observability (M6).
 	MetricsAddr            string        // internal Prometheus bind address (default ":9090", "off" disables)
@@ -401,6 +402,17 @@ func Load(getenv func(string) string) (Config, error) {
 	c.OIDCAudience = getenv("OIDC_AUDIENCE")
 	c.OIDCJWKSURL = getenv("OIDC_JWKS_URL")
 	c.OIDCRolesClaim = get("OIDC_ROLES_CLAIM", "roles")
+	for _, p := range strings.Split(getenv("WEBAUTHN_ORIGINS"), ",") {
+		p = strings.TrimRight(strings.TrimSpace(p), "/")
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "https://") || (c.Mode == Dev && strings.HasPrefix(p, "http://")) {
+			c.WebAuthnOrigins = append(c.WebAuthnOrigins, p)
+			continue
+		}
+		errs = append(errs, errors.New("WEBAUTHN_ORIGINS entries must be https origins (http allowed in MODE=dev)"))
+	}
 	if v := get("OIDC_MFA_AMR", "mfa,otp,hwk,swk"); v != "none" {
 		for _, x := range strings.Split(v, ",") {
 			if x = strings.TrimSpace(x); x != "" {

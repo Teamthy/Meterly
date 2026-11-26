@@ -226,6 +226,32 @@ func (r powerDeskRepo) ListActiveMembers(ctx context.Context, orgID uuid.UUID) (
 	return out, mapErr(rows.Err())
 }
 
+func (r powerDeskRepo) ListOrgsForUser(ctx context.Context, userID string) ([]*powerdesk.Organisation, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, store.ErrNotFound
+	}
+	rows, err := r.db.Query(ctx, orgSelectSQL+`
+		WHERE id IN (
+			SELECT organisation_id FROM organisation_members
+			WHERE user_id = $1 AND status = 'ACTIVE'
+		)
+		ORDER BY created_at ASC, id ASC`, uid)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := []*powerdesk.Organisation{}
+	for rows.Next() {
+		o, err := scanOrg(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, mapErr(rows.Err())
+}
+
 func (r powerDeskRepo) CountActiveOwners(ctx context.Context, orgID uuid.UUID) (int, error) {
 	var cnt int
 	err := r.db.QueryRow(ctx, `
@@ -363,6 +389,24 @@ func (r powerDeskRepo) GetBuilding(ctx context.Context, id uuid.UUID) (*powerdes
 	}
 	b.CreatedAt = b.CreatedAt.UTC()
 	return &b, nil
+}
+
+func (r powerDeskRepo) ListBuildingsForProperty(ctx context.Context, propertyID uuid.UUID) ([]*powerdesk.Building, error) {
+	rows, err := r.db.Query(ctx, `SELECT id, property_id, name, created_at FROM buildings WHERE property_id = $1 ORDER BY created_at ASC, id ASC`, propertyID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := []*powerdesk.Building{}
+	for rows.Next() {
+		var b powerdesk.Building
+		if err := rows.Scan(&b.ID, &b.PropertyID, &b.Name, &b.CreatedAt); err != nil {
+			return nil, mapErr(err)
+		}
+		b.CreatedAt = b.CreatedAt.UTC()
+		out = append(out, &b)
+	}
+	return out, mapErr(rows.Err())
 }
 
 const unitSelectSQL = `

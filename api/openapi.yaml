@@ -39,6 +39,8 @@ tags:
     description: Signature-verified payment and remote-credit (HES) provider webhooks.
   - name: Support
     description: Meterly Agent plus end-to-end encrypted human support chat. Agent messages are processed by Meterly; human messages are ciphertext the server cannot read.
+  - name: Identity
+    description: Device passkeys (WebAuthn / platform biometrics), sessions, user profile, settings and stateful onboarding.
   - name: Admin
     description: Operator and administrator investigation, reconciliation, audited token reveal, refunds and provider switches (OIDC + MFA required outside dev).
 
@@ -231,7 +233,79 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/meters/{meter_id}/reading:
+    parameters:
+      - $ref: "#/components/parameters/MeterIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getMeterReading
+      tags: [Meters]
+      summary: Latest remote kWh reading when the meter and a reading provider support it
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Reading.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /v1/meters/usage:
+    get:
+      operationId: listMeterUsage
+      tags: [Meters]
+      summary: Remaining kWh, consumption rate and time-left for every saved meter (computed on the server)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Usage snapshots.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/meters/{meter_id}/usage:
+    parameters:
+      - $ref: "#/components/parameters/MeterIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getMeterUsage
+      tags: [Meters]
+      summary: Remaining kWh, consumption rate and estimated empty time computed from stored remote readings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Usage snapshot. remaining_kwh is null when remote reading is unsupported or unavailable.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/beneficiaries:
+    get:
+      operationId: listBeneficiaries
+      tags: [Meters]
+      summary: List meters the caller can buy for (own and saved beneficiaries)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Saved meters.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
     post:
       operationId: addBeneficiary
       tags: [Meters]
@@ -547,6 +621,274 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/auth/passkeys/register/begin:
+    post:
+      operationId: beginPasskeyRegister
+      tags: [Identity]
+      summary: Start platform passkey registration (discoverable WebAuthn credential)
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                origin: { type: string }
+      responses:
+        "200":
+          description: PublicKeyCredentialCreationOptions.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/auth/passkeys/register/finish:
+    post:
+      operationId: finishPasskeyRegister
+      tags: [Identity]
+      summary: Verify attestation and issue a Meterly session
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Session token.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/auth/passkeys/login/begin:
+    post:
+      operationId: beginPasskeyLogin
+      tags: [Identity]
+      summary: Start discoverable passkey assertion
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                origin: { type: string }
+      responses:
+        "200":
+          description: PublicKeyCredentialRequestOptions.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/auth/passkeys/login/finish:
+    post:
+      operationId: finishPasskeyLogin
+      tags: [Identity]
+      summary: Verify assertion and issue a Meterly session
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Session token.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [Identity]
+      summary: Revoke the current passkey session if the bearer is a Meterly session token
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Logged out.
+
+  /v1/me:
+    get:
+      operationId: getMe
+      tags: [Identity]
+      summary: Authenticated user profile from users columns (encrypted contacts, onboarding)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Profile.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    patch:
+      operationId: patchMe
+      tags: [Identity]
+      summary: Update display name and verified contact fields stored encrypted on users
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                email: { type: string }
+                phone: { type: string }
+      responses:
+        "200":
+          description: Updated profile.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/me/settings:
+    get:
+      operationId: getSettings
+      tags: [Identity]
+      summary: Profile plus notification channel preferences
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Settings.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    patch:
+      operationId: patchSettings
+      tags: [Identity]
+      summary: Update profile fields and/or notification preferences
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string }
+                email: { type: string }
+                phone: { type: string }
+                sms: { type: boolean }
+                email_enabled: { type: boolean }
+                whatsapp: { type: boolean }
+      responses:
+        "200":
+          description: Settings.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/me/onboarding:
+    get:
+      operationId: getOnboarding
+      tags: [Identity]
+      summary: Current persisted onboarding step (five screens plus done)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Onboarding state.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/me/onboarding/advance:
+    post:
+      operationId: advanceOnboarding
+      tags: [Identity]
+      summary: Advance onboarding one screen (welcome→account→profile→meter→alerts→done)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step]
+              properties:
+                step: { type: string, enum: [welcome, account, profile, meter, alerts, done] }
+      responses:
+        "200":
+          description: Updated onboarding state.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/me/passkeys:
+    get:
+      operationId: listPasskeys
+      tags: [Identity]
+      summary: List passkeys registered on this account
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Passkeys.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/me/passkeys/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    delete:
+      operationId: deletePasskey
+      tags: [Identity]
+      summary: Remove a passkey from this account
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 
   /v1/me/notification-preferences:
     get:
@@ -2453,6 +2795,23 @@ paths:
           $ref: "#/components/responses/NotFound"
 
   /v1/orgs:
+    get:
+      operationId: listOrgs
+      tags: [PowerDesk]
+      summary: List organisations the caller belongs to
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Organisation summaries.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
     post:
       operationId: createOrg
       tags: [PowerDesk]
@@ -2659,6 +3018,48 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/RateLimited"
+
+  /v1/properties/{id}/buildings:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+    get:
+      operationId: listBuildings
+      tags: [PowerDesk]
+      summary: List buildings on a property
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Buildings.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createBuilding
+      tags: [PowerDesk]
+      summary: Create or return a named building on a property (MANAGER+)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: Building.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /v1/properties/{id}/units:
     post:
@@ -3395,6 +3796,7 @@ components:
         - VERIFICATION_MISMATCH
         - EVIDENCE_REQUIRED
         - NOT_PENDING_APPROVAL
+        - READING_UNAVAILABLE
         - INTERNAL_ERROR
 
     ErrorEnvelope:
