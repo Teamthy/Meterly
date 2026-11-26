@@ -30,6 +30,9 @@ func (s *Server) adminRoutes(mux *patternMux) {
 	mux.Handle("POST /v1/admin/providers/{name}/disable", admin(s.adminSetProvider(false)))
 	mux.Handle("POST /v1/admin/unit-meters/{id}/verify", op(s.adminVerifyUnitMeter))
 	mux.Handle("POST /v1/admin/meters/{meter_id}/ownership", op(s.adminAttestOwnership))
+	mux.Handle("POST /v1/admin/remote-credit/cohorts", admin(s.adminCreateRemoteCohort))
+	mux.Handle("GET /v1/admin/remote-credit/cohorts", op(s.adminListRemoteCohorts))
+	mux.Handle("DELETE /v1/admin/remote-credit/cohorts/{id}", admin(s.adminRevokeRemoteCohort))
 	s.adminSupportRoutes(mux)
 }
 

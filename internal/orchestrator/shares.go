@@ -37,6 +37,9 @@ func (o *Orchestrator) RecordTokenCopy(ctx context.Context, user string, id uuid
 		if err != nil {
 			return err
 		}
+		if t.DeliveryMethod == tx.MethodRemote {
+			return ErrCreditOnMeter
+		}
 		if t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 || t.DeliveryMethod != tx.MethodToken {
 			return ErrTokenUnavailable
 		}
@@ -98,6 +101,9 @@ func (o *Orchestrator) RecordTokenSend(ctx context.Context, user string, id uuid
 		}
 		if err != nil {
 			return err
+		}
+		if t.DeliveryMethod == tx.MethodRemote {
+			return ErrCreditOnMeter
 		}
 		if t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 || t.DeliveryMethod != tx.MethodToken {
 			return ErrTokenUnavailable

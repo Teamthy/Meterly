@@ -98,6 +98,7 @@ type Store struct {
 	hhMembers         map[string]households.Member    // householdID:userID
 	hhMeters          map[string]households.MeterLink // householdID:meterID
 	ownership         map[string]households.Ownership // meterID:userID
+	remoteCohorts     map[uuid.UUID]meters.RemoteCohort
 }
 
 func New() *Store {
@@ -148,6 +149,7 @@ func New() *Store {
 		hhMembers:         map[string]households.Member{},
 		hhMeters:          map[string]households.MeterLink{},
 		ownership:         map[string]households.Ownership{},
+		remoteCohorts:     map[uuid.UUID]meters.RemoteCohort{},
 	}
 }
 
@@ -239,6 +241,7 @@ func (r *repos) PowerDesk() store.PowerDeskRepo                          { retur
 func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
 func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
 func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
+func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 

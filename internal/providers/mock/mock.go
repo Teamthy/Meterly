@@ -371,6 +371,21 @@ func (r *RemoteCredit) GetCreditStatus(_ context.Context, key string) (providers
 	return providers.RemoteCreditResult{Status: providers.CreditNotFound}, nil
 }
 
+// ParseWebhook accepts the same dev signature as mock payments. The body is
+// only a hint; callers must GetCreditStatus.
+func (r *RemoteCredit) ParseWebhook(h http.Header, body []byte) (providers.RemoteCreditWebhook, error) {
+	if h.Get("X-Mock-Signature") != "dev-signature" {
+		return providers.RemoteCreditWebhook{}, providers.ErrBadSignature
+	}
+	var evt struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if json.Unmarshal(body, &evt) != nil || evt.IdempotencyKey == "" {
+		return providers.RemoteCreditWebhook{}, fmt.Errorf("mockhes: idempotency_key missing")
+	}
+	return providers.RemoteCreditWebhook{IdempotencyKey: evt.IdempotencyKey, Relevant: true}, nil
+}
+
 // ---- Remote meter readings -------------------------------------------------
 
 type readingEntry struct {

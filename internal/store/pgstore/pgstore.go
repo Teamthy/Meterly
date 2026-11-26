@@ -136,6 +136,7 @@ func (r *repos) PowerDesk() store.PowerDeskRepo                          { retur
 func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
 func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
 func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
+func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

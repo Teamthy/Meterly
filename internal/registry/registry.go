@@ -53,7 +53,15 @@ func (g *Registry) probe(ctx context.Context, number, disco string) (providers.M
 		RemoteReading: meters.Capability{Supported: res.RemoteReadingSupported, LastVerifiedAt: &now},
 		RemoteCredit:  meters.Capability{Supported: res.RemoteCreditSupported, LastVerifiedAt: &now},
 	}
-	if res.RemoteCreditSupported && g.remote != nil {
+	// Operator-attested cohorts are the production signal. Never infer AMI
+	// from a hard-coded meter-number prefix here — mocks may still report
+	// RemoteCreditSupported from the vending adapter.
+	if c, err := g.st.Repos().RemoteCohorts().Match(ctx, disco, number); err == nil && c.Authorised {
+		caps.RemoteCredit.Supported = true
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return res, meters.Capabilities{}, err
+	}
+	if caps.RemoteCredit.Supported && g.remote != nil {
 		if eligible, reachable, err := g.remote.CheckEligibility(ctx, number); err == nil {
 			caps.RemoteCredit.Authorised = eligible
 			caps.RemoteCredit.Reachable = reachable

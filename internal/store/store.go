@@ -92,6 +92,18 @@ type Repos interface {
 	Offline() OfflineRepo
 	Support() SupportRepo
 	Households() HouseholdRepo
+	RemoteCohorts() RemoteCohortRepo
+}
+
+// RemoteCohortRepo is the operator-attested AMI meter matrix. Longest matching
+// number_prefix wins. Application code must not hard-code prefixes.
+type RemoteCohortRepo interface {
+	Create(ctx context.Context, c meters.RemoteCohort) error
+	Get(ctx context.Context, id uuid.UUID) (meters.RemoteCohort, error)
+	List(ctx context.Context) ([]meters.RemoteCohort, error)
+	// Match returns the longest-prefix active authorised cohort for disco+number.
+	Match(ctx context.Context, disco, meterNumber string) (meters.RemoteCohort, error)
+	Revoke(ctx context.Context, id uuid.UUID, at time.Time) error
 }
 
 type AuditRepo interface {

@@ -88,12 +88,15 @@ const (
 )
 
 var (
-	ErrAmountOutOfRange  = errors.New("amount out of allowed range")
-	ErrNotEligible       = errors.New("meter is not eligible for remote credit delivery")
-	ErrQuoteExpired      = errors.New("quote expired or already used")
-	ErrQuoteNotFound     = errors.New("quote not found")
-	ErrPaymentMismatch   = errors.New("verified payment does not match the transaction")
-	ErrTokenUnavailable  = errors.New("token not available for this transaction")
+	ErrAmountOutOfRange = errors.New("amount out of allowed range")
+	ErrNotEligible      = errors.New("meter is not eligible for remote credit delivery")
+	ErrQuoteExpired     = errors.New("quote expired or already used")
+	ErrQuoteNotFound    = errors.New("quote not found")
+	ErrPaymentMismatch  = errors.New("verified payment does not match the transaction")
+	ErrTokenUnavailable = errors.New("token not available for this transaction")
+	// ErrCreditOnMeter: delivery is remote; the purchaser does not get a
+	// keypad token unless an operator falls back after a confirmed failure.
+	ErrCreditOnMeter     = errors.New("credit is on the meter; no keypad token")
 	ErrInvalidPreference = errors.New("unknown delivery preference")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.

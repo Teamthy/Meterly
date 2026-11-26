@@ -314,7 +314,7 @@ func TestRemoteAcceptedIsNotConfirmed(t *testing.T) {
 		if txn.Status() == tx.OverallCompleted {
 			t.Fatal("ACCEPTED must not count as completed")
 		}
-		if _, _, err := e.o.Token(e.ctx, e.user(t, "u1"), txn.ID); !errors.Is(err, orchestrator.ErrTokenUnavailable) {
+		if _, _, err := e.o.Token(e.ctx, e.user(t, "u1"), txn.ID); !errors.Is(err, orchestrator.ErrCreditOnMeter) {
 			t.Fatalf("token should not be shown while remote delivery is in flight: %v", err)
 		}
 		e.remote.Settle()

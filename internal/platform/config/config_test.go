@@ -332,3 +332,21 @@ func TestSupportConfig(t *testing.T) {
 		t.Fatalf("invalid FEATURE_SUPPORT must fail: %v", err)
 	}
 }
+
+func TestRemoteHTTPConfig(t *testing.T) {
+	if _, err := Load(env(map[string]string{"MODE": "dev", "REMOTE_PROVIDER": "http"})); err == nil || !strings.Contains(err.Error(), "REMOTE_HES") {
+		t.Fatalf("http remote without URL/secret must fail: %v", err)
+	}
+	c, err := Load(env(map[string]string{
+		"MODE":                   "dev",
+		"REMOTE_PROVIDER":        "http",
+		"REMOTE_HES_BASE_URL":    "http://127.0.0.1:9099",
+		"REMOTE_HES_HMAC_SECRET": "integration-hmac-secret",
+	}))
+	if err != nil || c.RemoteProvider != "http" {
+		t.Fatalf("http remote: err=%v cfg=%+v", err, c)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "REMOTE_PROVIDER": "hexing"})); err == nil || !strings.Contains(err.Error(), "REMOTE_PROVIDER") {
+		t.Fatalf("invented vendor remote must fail: %v", err)
+	}
+}

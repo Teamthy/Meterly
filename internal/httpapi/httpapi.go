@@ -51,6 +51,7 @@ type Server struct {
 	O                  *orchestrator.Orchestrator
 	Auth               auth.Authenticator
 	Payments           providers.PaymentProvider
+	Remote             providers.RemoteCreditProvider
 	Notifications      *notificationservice.Service
 	Offline            *offline.Service
 	Metrics            *observability.Registry
@@ -185,6 +186,7 @@ func (s *Server) Routes() http.Handler {
 	s.supportRoutes(mux, user, write)
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
+	mux.HandleFunc("POST /v1/webhooks/remote-credit/{provider}", s.limited(s.hooks, s.remoteCreditWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))
 	mux.HandleFunc("POST /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInbound))
 
@@ -531,12 +533,15 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 }
 
 func view(t *tx.Transaction) map[string]any {
+	tokenAvailable := t.DeliveryMethod == tx.MethodToken && t.Vending == tx.VendConfirmed && len(t.TokenCiphertext) > 0
+	creditOnMeter := t.DeliveryMethod == tx.MethodRemote && t.Delivery == tx.DelConfirmed
 	return map[string]any{
 		"transaction_id": t.ID, "status": t.Status(),
 		"payment_status": t.Payment, "vending_status": t.Vending, "delivery_status": t.Delivery,
 		"delivery_method": t.DeliveryMethod, "meter_id": t.MeterID, "is_gift": t.IsGift, "recipient_name": t.RecipientName,
 		"amount_minor": t.Amount.Minor, "fee_minor": t.Fee.Minor, "total_minor": t.Total.Minor, "currency": t.Total.Currency,
 		"units_kwh": t.UnitsKWh, "failure_code": t.FailureCode, "review_reason": t.ReviewReason, "checkout_url": t.CheckoutURL,
+		"token_available": tokenAvailable, "credit_on_meter": creditOnMeter,
 		"history": t.History, "created_at": t.CreatedAt, "updated_at": t.UpdatedAt,
 	}
 }
@@ -758,8 +763,14 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrQuoteExpired), errors.Is(err, orchestrator.ErrQuoteNotFound):
 		writeErr(w, 422, "QUOTE_EXPIRED", err.Error())
+	case errors.Is(err, orchestrator.ErrCreditOnMeter):
+		writeErr(w, 409, "CREDIT_ON_METER", "credit is delivered to the meter; there is no keypad token until an operator falls back")
 	case errors.Is(err, orchestrator.ErrTokenUnavailable):
 		writeErr(w, 409, "DELIVERY_FAILED", "no token is available for this transaction")
+	case errors.Is(err, meters.ErrInvalidCohort):
+		writeErr(w, 422, "INVALID_REQUEST", "invalid remote-credit cohort")
+	case errors.Is(err, store.ErrDuplicate):
+		writeErr(w, 409, "DUPLICATE_RESOURCE", "resource already exists")
 	case errors.Is(err, orchestrator.ErrPaymentMismatch):
 		writeErr(w, 422, "PAYMENT_UNCONFIRMED", err.Error())
 	case errors.Is(err, idempotency.ErrConflict):

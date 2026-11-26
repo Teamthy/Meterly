@@ -7,8 +7,8 @@
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
 2. Branch: `arena/7cc28241-meterly` at `318b81c` (plus this handoff commit). Base is `origin/main` @ `90e0078` (PR #13 merged).
-3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, and token send are in code. Left is **hosting, live sandboxes, AMI/HES docs, legal flags, frontend for new APIs**.
-4. Do **not** invent AMI/HES, Benin Electric `serviceID`, or native apps.
+3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, and token send are in code. Left is **hosting, live sandboxes, a real AMI/HES partner, legal flags**.
+4. **Selling point (product, not a fake AMI):** credit lands on the meter. Compatible smart meters get a remote push; we only call it delivered when the meter confirms (`ACCEPTED ≠ CONFIRMED`). Keypad meters get STS token fallback. Do **not** invent AMI/HES APIs, Benin Electric `serviceID`, or native apps. Mock HES (`700…` meters) is the demo path until a partner document exists.
 5. Do **not** commit secrets. Render keys stay in the dashboard.
 
 ### Immediate next work (priority order)
@@ -21,7 +21,7 @@
 | 4 | After keys: `MODE=staging`, `VENDING_PROVIDER=vtpass`, `PAYMENT_PROVIDER=paystack`, `REMOTE_PROVIDER=none` | Human | VTpass + Paystack sandbox keys |
 | 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
 | 6 | Web UI for households + token send | Eng | APIs exist; `web/` has no household screens yet |
-| 7 | AMI/HES remote credit | Eng | **real partner docs only** — do not invent |
+| 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook are in |
 | 8 | Distributed rate limits (Redis) | Eng | only if >1 API replica |
 | 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
 
@@ -221,7 +221,7 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 
 ### Engineering, blocked on documents / partners
 
-- AMI/HES remote-credit adapter — **interface + mock only**. No partner API. Do not invent.
+- Vendor HES translator (Hexing/Conlog/Mojec) — **do not invent**. `REMOTE_PROVIDER=http` (`heshttp`) plus `remote_credit_cohorts` and `POST /v1/webhooks/remote-credit/{provider}` are the production plane. Point them at a partner gateway when docs exist.
 - Benin Electric and any undocumented DisCo.
 - Native mobile apps.
 

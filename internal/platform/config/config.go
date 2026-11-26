@@ -48,7 +48,9 @@ type Config struct {
 	VTPassPublicKey      string
 	VTPassBaseURL        string
 	VTPassDefaultPhone   string
-	RemoteProvider       string // mock | none
+	RemoteProvider       string // mock | none | http
+	RemoteHESBaseURL     string
+	RemoteHESHMACSecret  string
 	MeterReadingProvider string // mock | none
 	ProviderEnvironment  string // SANDBOX | PRODUCTION
 
@@ -202,6 +204,8 @@ func Load(getenv func(string) string) (Config, error) {
 		PaymentProvider:        get("PAYMENT_PROVIDER", "mock"),
 		VendingProvider:        get("VENDING_PROVIDER", "mock"),
 		RemoteProvider:         get("REMOTE_PROVIDER", map[bool]string{true: "mock", false: "none"}[Mode(get("MODE", "")) == Dev]),
+		RemoteHESBaseURL:       strings.TrimSpace(getenv("REMOTE_HES_BASE_URL")),
+		RemoteHESHMACSecret:    strings.TrimSpace(getenv("REMOTE_HES_HMAC_SECRET")),
 		ProviderEnvironment:    get("PROVIDER_ENVIRONMENT", "SANDBOX"),
 		PaystackSecretKey:      getenv("PAYSTACK_SECRET_KEY"),
 		PaystackBaseURL:        get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
@@ -488,8 +492,20 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock, vtpass)", c.VendingProvider))
 	}
-	if c.RemoteProvider != "mock" && c.RemoteProvider != "none" {
-		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none)", c.RemoteProvider))
+	switch c.RemoteProvider {
+	case "mock", "none":
+	case "http":
+		if len(c.RemoteHESHMACSecret) < 16 {
+			errs = append(errs, errors.New("REMOTE_HES_HMAC_SECRET is required (min 16 characters) when REMOTE_PROVIDER=http"))
+		}
+		if c.RemoteHESBaseURL == "" {
+			errs = append(errs, errors.New("REMOTE_HES_BASE_URL is required when REMOTE_PROVIDER=http"))
+		}
+		if c.Mode != Dev && c.RemoteHESBaseURL != "" && !strings.HasPrefix(c.RemoteHESBaseURL, "https://") {
+			errs = append(errs, errors.New("REMOTE_HES_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none, http)", c.RemoteProvider))
 	}
 	if c.MeterReadingProvider != "mock" && c.MeterReadingProvider != "none" {
 		errs = append(errs, fmt.Errorf("METER_READING_PROVIDER: unsupported value %q (available: mock, none)", c.MeterReadingProvider))
