@@ -118,6 +118,21 @@ export interface Money {
   Currency: string;
 }
 
+export interface ScreenLine {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}
+
+export interface PurchaseScreen {
+  title: string;
+  subtitle: string;
+  lines: ScreenLine[];
+  cta_label: string;
+  total_minor: number;
+  currency: string;
+}
+
 export interface Quote {
   ID?: string;
   quote_id?: string;
@@ -137,6 +152,43 @@ export interface Quote {
   delivery_method?: "TOKEN" | "REMOTE";
   ExpiresAt?: string;
   expires_at?: string;
+  pack_id?: string;
+  disco_code?: string;
+  tariff_band?: string;
+  kobo_per_kwh?: number;
+  credit_minor?: number;
+  discount_minor?: number;
+  confirmation?: PurchaseScreen;
+}
+
+export interface AmountPack {
+  id: string;
+  credit_minor: number;
+  pay_minor: number;
+  discount_minor: number;
+  label: string;
+  pay_label: string;
+  estimated_units_kwh: number;
+  recommended: boolean;
+}
+
+export interface ElectricityCatalog {
+  discos: { code: string; name: string }[];
+  packs: AmountPack[];
+  custom: { min_amount_minor: number; max_amount_minor: number; fee_minor: number; label: string };
+}
+
+export interface BuyOptions {
+  meter_id: string;
+  masked_meter_number: string;
+  disco: { code: string; name: string };
+  tariff: { band: string; kobo_per_kwh: number; naira_per_kwh: number; label: string };
+  usage: MeterUsage;
+  packs: AmountPack[];
+  recommended_pack_id: string;
+  custom: { min_amount_minor: number; max_amount_minor: number; fee_minor: number; label: string };
+  delivery_preference: "AUTO" | "TOKEN" | "REMOTE";
+  delivery_options: ("TOKEN" | "REMOTE")[];
 }
 
 export interface StateTransition {
@@ -170,6 +222,8 @@ export interface TransactionView {
   failure_code?: string;
   review_reason?: string;
   checkout_url?: string;
+  checkout?: PurchaseScreen;
+  estimated_units_kwh?: number;
   history?: StateTransition[];
   created_at: string;
   updated_at: string;

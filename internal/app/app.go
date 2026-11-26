@@ -760,6 +760,19 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 			}
 		})
 	}
+	start("low-units", time.Minute, func(ctx context.Context) {
+		if ctx.Err() != nil {
+			return
+		}
+		n, err := a.Orch.PollLowUnits(drainCtx)
+		if err != nil {
+			a.Log.Warn("low-unit poll failed", "err", err)
+			return
+		}
+		if n > 0 {
+			a.Log.Info("low-unit notifications queued", "count", n)
+		}
+	})
 	a.loop(stopCtx, "resume", a.Cfg.ResumeInterval, func(ctx context.Context) {
 		processed, progressed, err := a.Orch.ResumeDueWithDrain(ctx, drainCtx)
 		if err != nil {

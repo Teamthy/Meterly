@@ -336,11 +336,52 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /v1/electricity/catalog:
+    get:
+      operationId: getElectricityCatalog
+      tags: [Electricity]
+      summary: DISCO list and prepaid amount packs (server-priced)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Catalog of distribution companies and amount packs.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/meters/{meter_id}/buy-options:
+    parameters:
+      - $ref: "#/components/parameters/MeterIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: getMeterBuyOptions
+      tags: [Electricity]
+      summary: Recommended pack, units served and DISCO tariff for a saved meter
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: band
+          in: query
+          schema:
+            type: string
+            enum: [A, B, C, D, E]
+      responses:
+        "200":
+          description: Server-computed buy options. Units and pay amounts must be rendered as returned.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/electricity/quotes:
     post:
       operationId: createElectricityQuote
       tags: [Electricity]
-      summary: Create a priced, single-use, time-limited electricity purchase quote
+      summary: Create a priced, single-use, time-limited electricity purchase quote with a confirmation screen
       security:
         - bearerAuth: []
       parameters:
@@ -4054,7 +4095,7 @@ components:
 
     CreateQuoteRequest:
       type: object
-      required: [meter_id, amount_minor, currency]
+      required: [meter_id, currency]
       additionalProperties: false
       properties:
         meter_id:
@@ -4064,11 +4105,49 @@ components:
           type: integer
           format: int64
           minimum: 1
+          description: Custom electricity amount in kobo. Ignored when pack_id is set.
+        pack_id:
+          type: string
+          description: Catalog pack identifier (e.g. ngn-500). Waives the platform fee.
         currency:
           type: string
           enum: [NGN]
         delivery_preference:
           $ref: "#/components/schemas/DeliveryPreference"
+
+    ScreenLine:
+      type: object
+      required: [label, value]
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        value:
+          type: string
+        emphasis:
+          type: boolean
+
+    PurchaseScreen:
+      type: object
+      required: [title, subtitle, lines, cta_label, total_minor, currency]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        cta_label:
+          type: string
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          enum: [NGN]
 
     Quote:
       type: object
@@ -4081,7 +4160,6 @@ components:
         - delivery_method
         - delivery_options
         - expires_at
-      additionalProperties: false
       properties:
         quote_id:
           type: string
@@ -4095,6 +4173,36 @@ components:
           $ref: "#/components/schemas/MoneyAmount"
         total:
           $ref: "#/components/schemas/MoneyAmount"
+        amount_minor:
+          type: integer
+          format: int64
+        fee_minor:
+          type: integer
+          format: int64
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          enum: [NGN]
+        pack_id:
+          type: string
+        disco_code:
+          type: string
+        tariff_band:
+          type: string
+        kobo_per_kwh:
+          type: integer
+          format: int64
+        estimated_units_kwh:
+          type: number
+          description: Units that will be served. Render as returned; do not recompute in the client.
+        credit_minor:
+          type: integer
+          format: int64
+        discount_minor:
+          type: integer
+          format: int64
         delivery_method:
           $ref: "#/components/schemas/DeliveryMethod"
         delivery_options:
@@ -4104,6 +4212,8 @@ components:
         expires_at:
           type: string
           format: date-time
+        confirmation:
+          $ref: "#/components/schemas/PurchaseScreen"
 
     CreateTransactionRequest:
       type: object
@@ -4206,6 +4316,17 @@ components:
         review_reason:
           type: string
         checkout_url:
+          type: string
+        checkout:
+          $ref: "#/components/schemas/PurchaseScreen"
+        estimated_units_kwh:
+          type: number
+        kobo_per_kwh:
+          type: integer
+          format: int64
+        tariff_band:
+          type: string
+        pack_id:
           type: string
         history:
           type: [array, "null"]

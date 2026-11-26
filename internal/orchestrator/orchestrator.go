@@ -29,7 +29,6 @@ import (
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
-	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
@@ -98,6 +97,7 @@ var (
 	// keypad token unless an operator falls back after a confirmed failure.
 	ErrCreditOnMeter     = errors.New("credit is on the meter; no keypad token")
 	ErrInvalidPreference = errors.New("unknown delivery preference")
+	ErrInvalidPack       = errors.New("unknown amount pack")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
@@ -228,43 +228,7 @@ func (o *Orchestrator) post(ctx context.Context, r store.Repos, ref string, id u
 // ---- Quotes ----------------------------------------------------------------
 
 func (o *Orchestrator) CreateQuote(ctx context.Context, customerID string, meterID uuid.UUID, amountMinor int64, pref DeliveryPreference) (*tx.Quote, error) {
-	if amountMinor < o.cfg.MinAmountMinor || amountMinor > o.cfg.MaxAmountMinor {
-		return nil, fmt.Errorf("%w: %d–%d kobo", ErrAmountOutOfRange, o.cfg.MinAmountMinor, o.cfg.MaxAmountMinor)
-	}
-	m, err := o.Meters.Authorize(ctx, customerID, meterID, meters.PermPurchase)
-	if err != nil {
-		return nil, err
-	}
-	options := []tx.DeliveryMethod{tx.MethodToken}
-	remoteOK := o.remote != nil && m.Capabilities.RemoteCreditUsable()
-	if remoteOK {
-		options = append([]tx.DeliveryMethod{tx.MethodRemote}, options...)
-	}
-	method := tx.MethodToken
-	switch pref {
-	case PrefRemote:
-		if !remoteOK {
-			return nil, ErrNotEligible
-		}
-		method = tx.MethodRemote
-	case PrefAuto, "":
-		if remoteOK {
-			method = tx.MethodRemote
-		}
-	case PrefToken:
-	default:
-		return nil, fmt.Errorf("%w %q", ErrInvalidPreference, pref)
-	}
-	amt := money.New(amountMinor, money.NGN)
-	fee := money.New(o.cfg.FeeMinor, money.NGN)
-	total, _ := amt.Add(fee)
-	now := o.Now()
-	q := &tx.Quote{ID: uuid.New(), CustomerID: customerID, MeterID: meterID, Amount: amt, Fee: fee, Total: total,
-		DeliveryMethod: method, DeliveryOptions: options, ExpiresAt: now.Add(o.cfg.QuoteTTL), CreatedAt: now}
-	if err := o.st.Repos().Quotes().Create(ctx, q); err != nil {
-		return nil, err
-	}
-	return q, nil
+	return o.IssueQuote(ctx, QuoteSpec{CustomerID: customerID, MeterID: meterID, AmountMinor: amountMinor, Pref: pref})
 }
 
 func (o *Orchestrator) GetQuote(ctx context.Context, customerID string, id uuid.UUID) (*tx.Quote, error) {

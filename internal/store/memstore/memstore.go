@@ -106,6 +106,7 @@ type Store struct {
 	ownership         map[string]households.Ownership // meterID:userID
 	remoteCohorts     map[uuid.UUID]meters.RemoteCohort
 	readingSamples    map[uuid.UUID][]meters.ReadingSample
+	lowUnitAlerts     map[string]lowUnitAlert
 }
 
 func New() *Store {
@@ -115,6 +116,7 @@ func New() *Store {
 		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
 		authSessions:   map[string]identity.Session{},
 		readingSamples: map[uuid.UUID][]meters.ReadingSample{},
+		lowUnitAlerts:  map[string]lowUnitAlert{},
 		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
@@ -255,6 +257,7 @@ func (r *repos) Households() store.HouseholdRepo                         { retur
 func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
 func (r *repos) Auth() store.AuthRepo                                    { return r }
 func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
+func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -392,6 +395,19 @@ func (r meterRepo) ListForUser(_ context.Context, userID string) ([]meters.Liste
 	for _, g := range r.s.grants {
 		if g.UserID == userID && g.RevokedAt == nil {
 			out = append(out, meters.Listed{Meter: *cloneMeter(r.s.meters[g.MeterID]), Label: g.Label, Permission: g.Permission})
+		}
+	}
+	return out, nil
+}
+
+func (r meterRepo) ListActiveUserIDs(_ context.Context, meterID uuid.UUID) ([]string, error) {
+	defer r.lock()()
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range r.s.grants {
+		if g.MeterID == meterID && g.RevokedAt == nil && !seen[g.UserID] {
+			seen[g.UserID] = true
+			out = append(out, g.UserID)
 		}
 	}
 	return out, nil

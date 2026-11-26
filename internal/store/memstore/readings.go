@@ -58,3 +58,18 @@ func (r readingRepo) ListSamples(_ context.Context, meterID uuid.UUID, since tim
 	}
 	return out, nil
 }
+
+func (r readingRepo) ListDistinctMeterIDs(_ context.Context, since time.Time) ([]uuid.UUID, error) {
+	defer r.lock()()
+	out := make([]uuid.UUID, 0, len(r.s.readingSamples))
+	for id, list := range r.s.readingSamples {
+		for _, s := range list {
+			if since.IsZero() || !s.ReadAt.Before(since) {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out, nil
+}

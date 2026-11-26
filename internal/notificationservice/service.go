@@ -147,6 +147,13 @@ func (s *Service) HandleEvent(ctx context.Context, e events.Event) error {
 		return s.st.InTx(ctx, func(r store.Repos) error {
 			return s.enqueueAutoPowerInRepos(ctx, r, e)
 		})
+	case "meter":
+		if r, ok := store.ReposFromContext(ctx); ok {
+			return s.enqueueMeterLowUnitsInRepos(ctx, r, e)
+		}
+		return s.st.InTx(ctx, func(r store.Repos) error {
+			return s.enqueueMeterLowUnitsInRepos(ctx, r, e)
+		})
 	default:
 		return nil
 	}
@@ -218,6 +225,67 @@ func (s *Service) enqueueAutoPowerInRepos(ctx context.Context, r store.Repos, e 
 		pd := &notifications.Delivery{
 			EventID:         e.ID,
 			TransactionID:   txnID,
+			UserID:          userID,
+			RecipientKind:   notifications.RecipientPurchaser,
+			Channel:         ch,
+			DestinationHMAC: destHMAC,
+			TemplateID:      spec.ID,
+			TemplateVersion: spec.Version,
+			Locale:          notifications.LocaleEN,
+			Status:          status,
+			NextAttemptAt:   now,
+			LastErrorCode:   errCode,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+		inserted, err := r.Notifications().CreateDelivery(ctx, pd)
+		if err != nil {
+			return err
+		}
+		if inserted && status == notifications.StatusSuppressed {
+			s.metrics.IncNotificationDelivery(string(ch), string(notifications.StatusSuppressed))
+		}
+	}
+	return nil
+}
+
+func (s *Service) enqueueMeterLowUnitsInRepos(ctx context.Context, r store.Repos, e events.Event) error {
+	spec, ok := notifications.LowUnitTemplateSpecFor(e)
+	if !ok {
+		return nil
+	}
+	userID, _ := e.Payload["user_id"].(string)
+	if userID == "" {
+		return nil
+	}
+	contacts, err := r.Users().Contacts(ctx, userID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	prefs, err := r.Notifications().GetPreferences(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		prefs = notifications.DefaultPreferences()
+	} else if err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	for _, ch := range []notifications.Channel{notifications.SMS, notifications.Email, notifications.WhatsApp} {
+		destHMAC := contactHMACForChannel(contacts, ch)
+		if destHMAC == "" || !prefs.Enabled(ch) {
+			continue
+		}
+		status := notifications.StatusPending
+		errCode := ""
+		optedOut, err := r.Notifications().IsOptedOut(ctx, destHMAC, ch)
+		if err != nil {
+			return err
+		}
+		if optedOut {
+			status = notifications.StatusSuppressed
+			errCode = "RECIPIENT_OPTED_OUT"
+		}
+		pd := &notifications.Delivery{
+			EventID:         e.ID,
 			UserID:          userID,
 			RecipientKind:   notifications.RecipientPurchaser,
 			Channel:         ch,
