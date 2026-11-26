@@ -36,6 +36,7 @@ var (
 	ErrClonedKey         = errors.New("identity: passkey sign count did not increase")
 	ErrNoPasskeys        = errors.New("identity: passkeys are not configured")
 	ErrSession           = errors.New("identity: session expired or unknown")
+	ErrLastPasskey       = errors.New("identity: cannot delete the last passkey")
 )
 
 type CredentialView struct {
@@ -78,12 +79,16 @@ type Challenge struct {
 }
 
 type Session struct {
-	ID        uuid.UUID
-	UserID    string
-	TokenHMAC string
-	ExpiresAt time.Time
-	RevokedAt *time.Time
-	CreatedAt time.Time
+	ID         uuid.UUID
+	UserID     string
+	TokenHMAC  string
+	IPHMAC     string
+	UAHMAC     string
+	ExpiresAt  time.Time
+	RevokedAt  *time.Time
+	StepUpAt   *time.Time
+	LastSeenAt time.Time
+	CreatedAt  time.Time
 }
 
 func NextStep(current string) (string, error) {

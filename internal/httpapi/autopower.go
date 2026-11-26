@@ -44,6 +44,9 @@ func (s *Server) savePaymentMethod(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
 		return
 	}
+	if !s.requireAction(w, r, "SAVE_CARD") {
+		return
+	}
 	pm, err := s.O.SavePaymentMethod(r.Context(), orchestrator.SavePaymentMethodParams{
 		UserID:        userID(r),
 		TransactionID: txnID,

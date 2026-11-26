@@ -1,13 +1,13 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-26, after PR #16 (household + token-send UI) merged and batch 3 (cohort desk + credit-on-meter receipt) on `arena/7cc28241-meterly`.
+> **Last updated:** 2026-11-26, after restyle merge (PR #21) and the customer security engine on `arena/7cc28241-meterly`.
 
 ## 0. Start here (new session / new developer)
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
 2. Branch: `arena/7cc28241-meterly`. `origin/main` includes PR #15 (credit-on-meter plane) and PR #16 (household + token-send UI).
-3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, token send, and cohort/receipt UI are in code. Left is **hosting, live sandboxes, a real AMI/HES partner, legal flags**.
+3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, token send, cohort/receipt UI, restyle, and the customer **security engine** (step-up, sessions, events) are in code. Left is **hosting, live sandboxes, a real AMI/HES partner, legal flags**.
 4. **Selling point (product, not a fake AMI):** credit lands on the meter. Compatible smart meters get a remote push; we only call it delivered when the meter confirms (`ACCEPTED ≠ CONFIRMED`). Keypad meters get STS token fallback. Do **not** invent AMI/HES APIs, Benin Electric `serviceID`, or native apps. Mock HES (`700…` meters) is the demo path until a partner document exists.
 5. Do **not** commit secrets. Render keys stay in the dashboard.
 
@@ -46,6 +46,7 @@ Backend: Go modular monolith. Frontend: Next.js 15 in `web/`. Spec mapped in `do
 | **FR-008 households / verified ownership** | ✅ this branch | `FEATURE_HOUSEHOLDS`, never mints `MANAGE` |
 | **FR-007 token send** SMS/email/WhatsApp | ✅ this branch | share endpoint + notification worker |
 | Hosting: Vercel `web/` | ✅ live | `meterly-iota.vercel.app` |
+| **Customer security engine** | ✅ this branch | `internal/security`, `/v1/security/*`, `/security`, migration `0021` |
 | **Credit-on-meter plane** | ✅ merged | PR #15 cohorts/`heshttp`/webhook; PR #16 household UI; this branch: admin cohort desk + receipt |
 | Hosting: Render API + Supabase | ⏳ **blocked on dashboard paste** | `docs/DEPLOY.md` |
 
@@ -254,6 +255,10 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 ---
 
 ## 11. Session log (newest first)
+
+- **2026-11-26: Customer security engine.** `internal/security` evaluates TOKEN_READ / SAVE_CARD / DELETE_PASSKEY / REVOKE_OTHERS. Passkey sessions need a 15-minute step-up; last passkey cannot be deleted; dev/OIDC bearers are not gated. HTTP `/v1/security/*`, web `/security`, migration `0021_security.sql`. Events store action/outcome/reason/IP HMAC only. Verified: `go test` security/identity/httpapi/orchestrator/app; `npm run typecheck`. PG suite skipped (no DATABASE_URL).
+
+- **2026-11-26: PR #21 merged; restyle.** Ink/paper/volt across remaining surfaces. Auto-renew stays coming-soon.
 
 - **2026-11-26: PR #17 merged; Redis rate limits.** Shared token buckets when `REDIS_URL` is set; compose runs Redis 7. Fail-open if Redis dies after startup. No extra Go module (tiny RESP client).
 

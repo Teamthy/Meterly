@@ -3,10 +3,12 @@ package memstore
 import (
 	"context"
 	"encoding/hex"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/identity"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 )
 
@@ -163,4 +165,88 @@ func (r *repos) RevokeSession(_ context.Context, id uuid.UUID, at time.Time) err
 		}
 	}
 	return store.ErrNotFound
+}
+
+func (r *repos) GetSession(_ context.Context, id uuid.UUID) (identity.Session, error) {
+	defer r.lock()()
+	for _, s := range r.s.authSessions {
+		if s.ID == id {
+			return s, nil
+		}
+	}
+	return identity.Session{}, store.ErrNotFound
+}
+
+func (r *repos) ListSessions(_ context.Context, userID string) ([]identity.Session, error) {
+	defer r.lock()()
+	out := []identity.Session{}
+	for _, s := range r.s.authSessions {
+		if s.UserID == userID {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r *repos) RevokeOtherSessions(_ context.Context, userID string, keep uuid.UUID, at time.Time) error {
+	defer r.lock()()
+	for k, s := range r.s.authSessions {
+		if s.UserID == userID && s.ID != keep && s.RevokedAt == nil {
+			s.RevokedAt = &at
+			r.s.authSessions[k] = s
+		}
+	}
+	return nil
+}
+
+func (r *repos) MarkSessionStepUp(_ context.Context, id uuid.UUID, at time.Time) error {
+	defer r.lock()()
+	for k, s := range r.s.authSessions {
+		if s.ID == id {
+			s.StepUpAt = &at
+			s.LastSeenAt = at
+			r.s.authSessions[k] = s
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
+func (r *repos) TouchSession(_ context.Context, id uuid.UUID, ipHMAC, uaHMAC string, at time.Time) error {
+	defer r.lock()()
+	for k, s := range r.s.authSessions {
+		if s.ID == id {
+			s.LastSeenAt = at
+			if ipHMAC != "" {
+				s.IPHMAC = ipHMAC
+			}
+			if uaHMAC != "" {
+				s.UAHMAC = uaHMAC
+			}
+			r.s.authSessions[k] = s
+			return nil
+		}
+	}
+	return store.ErrNotFound
+}
+
+func (r *repos) InsertSecurityEvent(_ context.Context, e security.Event) error {
+	defer r.lock()()
+	r.s.securityEvents = append(r.s.securityEvents, e)
+	return nil
+}
+
+func (r *repos) ListSecurityEvents(_ context.Context, userID string, limit int) ([]security.Event, error) {
+	defer r.lock()()
+	if limit <= 0 {
+		limit = 20
+	}
+	out := []security.Event{}
+	for i := len(r.s.securityEvents) - 1; i >= 0 && len(out) < limit; i-- {
+		if r.s.securityEvents[i].UserID == userID {
+			out = append(out, r.s.securityEvents[i])
+		}
+	}
+	return out, nil
 }
