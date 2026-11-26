@@ -135,6 +135,7 @@ func (r *repos) AutoPower() store.AutoPowerRepo                          { retur
 func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
 func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
 func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
+func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

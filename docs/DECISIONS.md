@@ -8,7 +8,7 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **No key escrow.** Operators decrypt only if the customer wrapped the conversation key to their published staff public key. Switching browsers loses old human transcripts — that is the E2E tradeoff, and the UI says so.
 - **SYSTEM notices are server-sealed, not E2E** (“you're now talking to a person”) so both sides can read the handshake without a key.
 - **`FEATURE_SUPPORT` defaults to true.** This is not a money-pooling feature.
-- **Hosted API stays `MODE=dev` on Render** until a real vending adapter exists; config refuses mocks outside dev.
+- **Hosted API may stay `MODE=dev` on Render** until VTpass + Paystack keys are pasted; config still refuses mocks outside dev. Set `VENDING_PROVIDER=vtpass` and `PAYMENT_PROVIDER=paystack` (with `REMOTE_PROVIDER=none`) to run `MODE=staging`.
 
 ## Persistence (M1)
 
@@ -47,6 +47,19 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Webhooks:** HMAC-SHA512 over the raw body, compared in constant time. Only `charge.success` triggers processing; other events are acknowledged and ignored. The body is never trusted: we always call verify. Paystack's IP allowlist is not enforced in the app; it belongs at the edge (WAF or load balancer).
 - **Key safety:** config only accepts `sk_test_` keys outside `MODE=production` and `sk_live_` keys in production, and `PROVIDER_ENVIRONMENT` must match.
 - **Email is required to create a transaction.** Paystack needs it, and checking it in the API before anything is created avoids leaving a half-created transaction the client can't retry with the same Idempotency-Key.
+
+## VTpass electricity vending
+
+Public docs only: [authentication](https://www.vtpass.com/documentation/authentication/), [request_id](https://www.vtpass.com/documentation/how-to-generate-request-id/), [response codes](https://www.vtpass.com/documentation/response-codes/), per-DisCo electricity pages (IKEDC, EKEDC, AEDC, IBEDC, EEDC, PHED, KEDCO, KAEDCO, JED, YEDC).
+
+- **Auth:** POST `api-key` + `secret-key` headers. Sandbox base `https://sandbox.vtpass.com/api`; live `https://vtpass.com/api`.
+- **request_id** is generated at vend-claim (`NewVendKey`) as Africa/Lagos `YYYYMMDDHHII` + alphanumeric suffix of `vend:{txnUUID}`, persisted on `vending_records.idempotency_key`, and reused for pay + requery. Never re-dated on retry (that would double-vend).
+- **code 000 is not success.** Inspect `content.transactions.status`: `delivered` → succeeded (prepaid token from `purchased_code` / `token` / extras); `pending`/`initiated`/unknown → PENDING; `099`/`089` → PENDING. Prepaid `delivered` without a token stays PENDING for requery.
+- **code 014** (request id exists) → requery, not a second pay. **015** on requery → `NOT_FOUND` (safe to retry). Documented failure codes (`016`, `091`, `085`, `087`, …) return `VendFailed` with **nil error** so the orchestrator does not treat them as UNKNOWN.
+- **5xx, timeout, empty or unparseable body** → `ErrAmbiguous`. The stateful fake applies the pay then returns 500 so Resume can requery the token.
+- **Amount** is whole naira (`minor/100`). **Phone** is `VTPASS_DEFAULT_PHONE` (required); VTpass pay needs an MSISDN.
+- **DisCo codes** map only to documented `serviceID`s. Unknown codes are rejected locally.
+- **AMI/HES is still `none`.** No undocumented remote-credit API is invented.
 
 ## Auth, admin and audit (M4)
 
@@ -101,6 +114,13 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - Only a purchaser may report a `COPY` action for a confirmed vend whose token has been released via the token path. Recording the action is not evidence that a clipboard operation or recipient delivery occurred. Unsupported channels are rejected; no SMS, email or WhatsApp is sent.
 - Each copy record contains only actor, vending record, channel and time. It is committed alongside a redacted audit event, an outbox metadata event and an idempotency reservation, with the transaction row locked. Retried requests return the original record within the configured idempotency window; requests with the same key for a different transaction conflict. No token or recipient destination is stored in this record or event. Token reads remain separately authorised and audited.
 - The history endpoint returns up to 200 most recent records. External notification and destination handling require separate consent, encrypted contact storage, and delivery reconciliation.
+
+## Token send (FR-007)
+
+- `POST /v1/electricity/transactions/{id}/token/shares` with `channel` `SMS`, `EMAIL` or `WHATSAPP` enqueues a token-bearing `notification_deliveries` row (`recipient_kind=TOKEN_SHARE`). The HTTP handler never decrypts or transmits the STS token.
+- Empty `destination` sends to the purchaser's verified OIDC contact for that channel. A different destination is a third-party share and requires `FEATURE_GIFT_SMS` (same NDPA gate as gift-recipient SMS), re-checked at send time.
+- Destination ciphertext is AES-GCM bound to `token-share-dest:<share UUID>`; only HMAC and a masked form are listed. Opt-outs are honoured at enqueue and send. Token-bearing UNKNOWN is never auto-resent. Cap: 5 sends per purchaser per Africa/Lagos day.
+- WhatsApp uses in-window free-form text when `HasActiveWhatsAppWindow` is true, otherwise the approved `meterly_offline_token_v1` template. Recording a send is not proof of receipt or meter credit.
 
 
 ## Gift contact storage (M5, partial)

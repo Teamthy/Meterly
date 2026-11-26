@@ -239,6 +239,10 @@ func NewVending() *Vending { return &Vending{vends: map[string]providers.VendRes
 
 func (v *Vending) Name() string { return "mockvend" }
 
+func (v *Vending) NewVendKey(transactionID string, _ time.Time) string {
+	return "vend:" + transactionID
+}
+
 func (v *Vending) ValidateMeter(_ context.Context, req providers.MeterValidationRequest) (providers.MeterValidationResult, error) {
 	n := req.MeterNumber
 	if len(n) < 11 || len(n) > 13 || strings.HasPrefix(n, "0") || !digits(n) {

@@ -22,7 +22,7 @@ SELECT t.id, t.customer_id::text, t.meter_id, t.quote_id, t.is_gift, coalesce(g.
        t.amount_minor, t.fee_minor, t.total_minor, t.currency, t.funding_source,
        t.payment_status, t.vending_status, t.delivery_status, t.delivery_method,
        coalesce(pp.name, ''), coalesce(p.provider_reference, ''), coalesce(p.checkout_url, ''),
-       coalesce(vp.name, ''), coalesce(v.provider_reference, ''), v.token_ciphertext,
+       coalesce(vp.name, ''), coalesce(v.provider_reference, ''), coalesce(v.idempotency_key, ''), v.token_ciphertext,
        coalesce(v.token_key_version, ''), coalesce(v.units_kwh::text, ''),
        coalesce(dp.name, ''), coalesce(d.provider_reference, ''),
        coalesce(t.failure_code, ''), coalesce(NULLIF(rf.reason, ''), t.refund_reason, ''),
@@ -47,7 +47,7 @@ func (r txnRepo) load(ctx context.Context, where string, arg any) (*tx.Transacti
 		&t.Amount.Minor, &t.Fee.Minor, &t.Total.Minor, &cur, &fundingSrc,
 		&t.Payment, &t.Vending, &t.Delivery, &t.DeliveryMethod,
 		&t.PaymentProviderName, &t.PaymentProviderRef, &t.CheckoutURL,
-		&t.VendProviderName, &t.VendProviderRef, &t.TokenCiphertext,
+		&t.VendProviderName, &t.VendProviderRef, &t.VendIdempotencyKey, &t.TokenCiphertext,
 		&t.TokenKeyVersion, &t.UnitsKWh,
 		&t.DeliveryProviderName, &t.DeliveryProviderRef,
 		&t.FailureCode, &t.RefundReason, &t.RefundProviderRef, &t.RefundAmount.Minor,
@@ -175,6 +175,10 @@ func (r txnRepo) saveChildren(ctx context.Context, db DB, t *tx.Transaction) err
 		if err != nil {
 			return err
 		}
+		vendKey := t.VendIdempotencyKey
+		if vendKey == "" {
+			vendKey = "vend:" + t.ID.String()
+		}
 		if _, err := db.Exec(ctx, `
 			INSERT INTO vending_records (transaction_id, provider_id, idempotency_key, provider_reference, status,
 			                             token_ciphertext, token_key_version, units_kwh, confirmed_at)
@@ -185,7 +189,7 @@ func (r txnRepo) saveChildren(ctx context.Context, db DB, t *tx.Transaction) err
 			    token_ciphertext = EXCLUDED.token_ciphertext, token_key_version = EXCLUDED.token_key_version,
 			    units_kwh = EXCLUDED.units_kwh,
 			    confirmed_at = coalesce(vending_records.confirmed_at, EXCLUDED.confirmed_at)`,
-			t.ID, vid, "vend:"+t.ID.String(), t.VendProviderRef, t.Vending,
+			t.ID, vid, vendKey, t.VendProviderRef, t.Vending,
 			nilIfEmpty(t.TokenCiphertext), t.TokenKeyVersion, t.UnitsKWh); err != nil {
 			return mapErr(err)
 		}

@@ -1,7 +1,8 @@
 # Meterly API on Render, Postgres on Supabase.
 #
-# Vending/AMI are still mocks, so this Blueprint runs MODE=dev (AUTH_MODE=dev,
-# in-process worker). Replace mocks + MODE=staging before taking real money.
+# Blueprint runs MODE=dev (AUTH_MODE=dev, in-process worker) until you paste
+# Paystack + VTpass keys and set VENDING_PROVIDER=vtpass / PAYMENT_PROVIDER=paystack.
+# Config refuses mocks outside dev. AMI/HES stays none without partner docs.
 #
 # One-click: https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
 #

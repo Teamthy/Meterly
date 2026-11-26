@@ -148,4 +148,6 @@ export const DISCOS = [
   { code: "PHED", name: "Port Harcourt Electric (PHED)" },
   { code: "KEDCO", name: "Kano Electricity (KEDCO)" },
   { code: "KAEDCO", name: "Kaduna Electric (KAEDCO)" },
+  { code: "JED", name: "Jos Electricity (JED)" },
+  { code: "YEDC", name: "Yola Electricity (YEDC)" },
 ] as const;

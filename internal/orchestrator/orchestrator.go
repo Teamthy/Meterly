@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,6 +98,11 @@ var (
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
+
+	ErrTokenShareContact     = errors.New("no verified contact for this channel")
+	ErrTokenShareDisabled    = errors.New("sending a token to another destination is not enabled")
+	ErrTokenShareRateLimited = errors.New("daily token send limit reached")
+	ErrTokenShareOptedOut    = errors.New("destination has opted out of this channel")
 )
 
 // errSkip aborts a mutate without writing: the transaction is already past
@@ -113,6 +119,7 @@ type Orchestrator struct {
 	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
 	readings       providers.MeterReadingProvider // nil if no remote balance reading
 	notifProviders []string
+	featureGiftSMS bool
 	metrics        *observability.Registry
 	log            *slog.Logger
 	Now            func() time.Time
@@ -145,6 +152,11 @@ func (o *Orchestrator) RegisterNotificationProviders(names ...string) {
 		}
 	}
 }
+
+// SetFeatureGiftSMS gates third-party token-bearing SMS/email/WhatsApp shares
+// (the same NDPA control as gift-recipient SMS). Self-send to the purchaser's
+// own verified contact is always allowed.
+func (o *Orchestrator) SetFeatureGiftSMS(v bool) { o.featureGiftSMS = v }
 
 func (o *Orchestrator) pctx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, o.cfg.ProviderTimeout)
@@ -529,6 +541,16 @@ func (o *Orchestrator) advance(ctx context.Context, id uuid.UUID) (*tx.Transacti
 func vendKey(id uuid.UUID) string   { return "vend:" + id.String() }
 func creditKey(id uuid.UUID) string { return "credit:" + id.String() }
 
+func (o *Orchestrator) vendIdempotencyKey(t *tx.Transaction) string {
+	if t != nil && strings.TrimSpace(t.VendIdempotencyKey) != "" {
+		return t.VendIdempotencyKey
+	}
+	if t == nil {
+		return ""
+	}
+	return vendKey(t.ID)
+}
+
 // vend claims the vending step (NOT_STARTED -> PENDING) and calls the provider.
 func (o *Orchestrator) vend(ctx context.Context, id uuid.UUID) (*tx.Transaction, error) {
 	if err := o.requireEnabled(ctx, o.vending.Name()); err != nil {
@@ -541,6 +563,9 @@ func (o *Orchestrator) vend(ctx context.Context, id uuid.UUID) (*tx.Transaction,
 			return errSkip
 		}
 		t.VendProviderName = o.vending.Name()
+		if strings.TrimSpace(t.VendIdempotencyKey) == "" {
+			t.VendIdempotencyKey = o.vending.NewVendKey(t.ID.String(), o.Now())
+		}
 		if err := t.SetVending(tx.VendPending, "vend requested via "+o.vending.Name()); err != nil {
 			return err
 		}
@@ -568,7 +593,8 @@ func (o *Orchestrator) callVend(ctx context.Context, t *tx.Transaction) (*tx.Tra
 	}
 	pctx, cancel := o.pctx(ctx)
 	res, err := o.vending.Vend(pctx, providers.VendRequest{
-		TransactionID: t.ID.String(), MeterNumber: number, DiscoCode: m.DiscoCode, Amount: t.Amount, IdempotencyKey: vendKey(t.ID),
+		TransactionID: t.ID.String(), MeterNumber: number, DiscoCode: m.DiscoCode, Amount: t.Amount,
+		IdempotencyKey: o.vendIdempotencyKey(t), MeterType: m.MeterType,
 	})
 	cancel()
 	if err != nil {

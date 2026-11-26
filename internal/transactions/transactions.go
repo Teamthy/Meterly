@@ -127,6 +127,9 @@ type Transaction struct {
 	CheckoutURL          string       `json:"checkout_url,omitempty"`
 	VendProviderName     string       `json:"-"`
 	VendProviderRef      string       `json:"-"`
+	// VendIdempotencyKey is the provider-facing vend key recorded at claim
+	// time (VTpass request_id, mock "vend:{uuid}"). Stable across retries.
+	VendIdempotencyKey string `json:"-"`
 	DeliveryProviderName string       `json:"-"`
 	DeliveryProviderRef  string       `json:"-"`
 	TokenCiphertext      []byte       `json:"-"`

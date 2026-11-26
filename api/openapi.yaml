@@ -460,7 +460,7 @@ paths:
     post:
       operationId: recordTokenCopyShare
       tags: [Electricity]
-      summary: Record a purchaser-reported local COPY action for an STS token (metadata only)
+      summary: Record a COPY action or send the STS token via SMS, email or WhatsApp
       security:
         - bearerAuth: []
       parameters:
@@ -473,7 +473,7 @@ paths:
               $ref: "#/components/schemas/RecordTokenShareRequest"
       responses:
         "201":
-          description: Copy metadata recorded.
+          description: Copy metadata recorded, or token send accepted (delivery is separate).
           content:
             application/json:
               schema:
@@ -488,12 +488,14 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
         "429":
           $ref: "#/components/responses/RateLimited"
     get:
       operationId: listTokenCopyShares
       tags: [Electricity]
-      summary: List purchaser-reported local COPY actions for a transaction
+      summary: List purchaser COPY and token-send metadata for a transaction
       security:
         - bearerAuth: []
       responses:
@@ -2059,6 +2061,268 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /v1/households:
+    get:
+      operationId: listHouseholds
+      tags: [Households]
+      summary: List households the caller belongs to or is invited to
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Households.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createHousehold
+      tags: [Households]
+      summary: Create a household; caller becomes OWNER
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: Household created.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/households/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+    get:
+      operationId: getHousehold
+      tags: [Households]
+      summary: Household members and meters
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Household.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/households/{id}/meters:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+    post:
+      operationId: addHouseholdMeter
+      tags: [Households]
+      summary: Attach a meter the caller has verified ownership of
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [meter_id]
+              properties:
+                meter_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Meter attached.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/households/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+    post:
+      operationId: inviteHouseholdMember
+      tags: [Households]
+      summary: Invite a user by internal user_id or external_id
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                user_id: { type: string, format: uuid }
+                external_id: { type: string }
+                role: { type: string, enum: [ADMINISTRATOR, MEMBER, VIEWER, RECIPIENT] }
+      responses:
+        "201":
+          description: Invite created.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/households/{id}/members/me/accept:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+    post:
+      operationId: acceptHouseholdInvite
+      tags: [Households]
+      summary: Accept a pending household invite
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Membership active.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/households/{id}/members/me/decline:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+    post:
+      operationId: declineHouseholdInvite
+      tags: [Households]
+      summary: Decline a pending household invite
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Invite declined.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/households/{id}/members/{uid}:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/ResourceUUIDPath"
+      - $ref: "#/components/parameters/MemberUIDPath"
+    delete:
+      operationId: revokeHouseholdMember
+      tags: [Households]
+      summary: Revoke an active or invited member (not the owner)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Member revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/meters/{meter_id}/ownership:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/MeterIDPath"
+    get:
+      operationId: listMeterOwnership
+      tags: [Households]
+      summary: List verified owners of a meter
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Ownership records.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/meters/{meter_id}/ownership/verify:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/MeterIDPath"
+    post:
+      operationId: verifyMeterOwnership
+      tags: [Households]
+      summary: Verify ownership by matching DisCo customer_name to verified display name
+      security:
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Ownership verified.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /v1/admin/meters/{meter_id}/ownership:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - $ref: "#/components/parameters/MeterIDPath"
+    post:
+      operationId: adminAttestMeterOwnership
+      tags: [Admin]
+      summary: Operator attestation of meter ownership
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, reason]
+              properties:
+                user_id: { type: string, format: uuid }
+                reason: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        "201":
+          description: Ownership attested.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/orgs:
     post:
       operationId: createOrg
@@ -3456,7 +3720,10 @@ components:
       properties:
         channel:
           type: string
-          enum: [COPY]
+          enum: [COPY, SMS, EMAIL, WHATSAPP]
+        destination:
+          type: string
+          description: Optional E.164 phone or email. Omitted sends to the purchaser's verified contact for the channel. Required for a third-party share.
 
     TokenShare:
       type: object
@@ -3471,10 +3738,13 @@ components:
           format: uuid
         channel:
           type: string
-          enum: [COPY]
+          enum: [COPY, SMS, EMAIL, WHATSAPP]
         recorded_at:
           type: string
           format: date-time
+        destination_masked:
+          type: string
+          description: Masked destination for send channels. Never a raw phone, email or token.
 
     RecordTokenShareResponse:
       type: object

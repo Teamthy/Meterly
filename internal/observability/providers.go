@@ -106,6 +106,10 @@ func WrapVendingProvider(p providers.VendingProvider, reg *Registry, tr *Tracer)
 
 func (w *vendingWrapper) Name() string { return w.inner.Name() }
 
+func (w *vendingWrapper) NewVendKey(transactionID string, at time.Time) string {
+	return w.inner.NewVendKey(transactionID, at)
+}
+
 func (w *vendingWrapper) ValidateMeter(ctx context.Context, req providers.MeterValidationRequest) (providers.MeterValidationResult, error) {
 	return observeCall(ctx, w.reg, w.tr, w.inner.Name(), "validate_meter", func(c context.Context) (providers.MeterValidationResult, error) {
 		return w.inner.ValidateMeter(c, req)

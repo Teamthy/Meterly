@@ -17,6 +17,7 @@ import (
 	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
+	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
@@ -93,6 +94,10 @@ type Store struct {
 	supportThreads    map[uuid.UUID]*support.Thread
 	supportMessages   map[uuid.UUID]*support.Message
 	supportWraps      map[string]*support.WrappedKey // threadID + ":" + holder
+	households        map[uuid.UUID]households.Household
+	hhMembers         map[string]households.Member // householdID:userID
+	hhMeters          map[string]households.MeterLink // householdID:meterID
+	ownership         map[string]households.Ownership // meterID:userID
 }
 
 func New() *Store {
@@ -139,6 +144,10 @@ func New() *Store {
 		supportThreads:    map[uuid.UUID]*support.Thread{},
 		supportMessages:   map[uuid.UUID]*support.Message{},
 		supportWraps:      map[string]*support.WrappedKey{},
+		households:        map[uuid.UUID]households.Household{},
+		hhMembers:         map[string]households.Member{},
+		hhMeters:          map[string]households.MeterLink{},
+		ownership:         map[string]households.Ownership{},
 	}
 }
 
@@ -229,6 +238,7 @@ func (r *repos) AutoPower() store.AutoPowerRepo                          { retur
 func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
 func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
 func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
+func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -743,9 +753,16 @@ func (r providerRepo) SetEnabled(_ context.Context, name, _ string, enabled bool
 
 type shareRepo struct{ *repos }
 
+func cloneShare(s tokenshares.Share) tokenshares.Share {
+	if len(s.DestCipher) > 0 {
+		s.DestCipher = append([]byte(nil), s.DestCipher...)
+	}
+	return s
+}
+
 func (r shareRepo) AddCopy(_ context.Context, share tokenshares.Share) error {
 	defer r.lock()()
-	r.s.tokenShares = append(r.s.tokenShares, share)
+	r.s.tokenShares = append(r.s.tokenShares, cloneShare(share))
 	r.onUndo(func() { r.s.tokenShares = r.s.tokenShares[:len(r.s.tokenShares)-1] })
 	return nil
 }
@@ -754,8 +771,8 @@ func (r shareRepo) ListCopies(_ context.Context, id uuid.UUID, user string) ([]t
 	result := []tokenshares.Share{}
 	for i := len(r.s.tokenShares) - 1; i >= 0 && len(result) < 200; i-- {
 		s := r.s.tokenShares[i]
-		if s.TransactionID == id && s.UserID == user {
-			result = append(result, s)
+		if s.TransactionID == id && s.UserID == user && s.Channel == tokenshares.Copy {
+			result = append(result, cloneShare(s))
 		}
 	}
 	return result, nil
@@ -764,11 +781,53 @@ func (r shareRepo) ListCopies(_ context.Context, id uuid.UUID, user string) ([]t
 func (r shareRepo) GetCopy(_ context.Context, shareID, txnID uuid.UUID, user string) (tokenshares.Share, error) {
 	defer r.lock()()
 	for _, s := range r.s.tokenShares {
-		if s.ID == shareID && s.TransactionID == txnID && s.UserID == user {
-			return s, nil
+		if s.ID == shareID && s.TransactionID == txnID && s.UserID == user && s.Channel == tokenshares.Copy {
+			return cloneShare(s), nil
 		}
 	}
 	return tokenshares.Share{}, store.ErrNotFound
+}
+
+func (r shareRepo) AddShare(_ context.Context, share tokenshares.Share) error {
+	defer r.lock()()
+	r.s.tokenShares = append(r.s.tokenShares, cloneShare(share))
+	r.onUndo(func() { r.s.tokenShares = r.s.tokenShares[:len(r.s.tokenShares)-1] })
+	return nil
+}
+
+func (r shareRepo) GetShare(_ context.Context, shareID uuid.UUID) (tokenshares.Share, error) {
+	defer r.lock()()
+	for _, s := range r.s.tokenShares {
+		if s.ID == shareID {
+			return cloneShare(s), nil
+		}
+	}
+	return tokenshares.Share{}, store.ErrNotFound
+}
+
+func (r shareRepo) ListShares(_ context.Context, id uuid.UUID, user string) ([]tokenshares.Share, error) {
+	defer r.lock()()
+	result := []tokenshares.Share{}
+	for i := len(r.s.tokenShares) - 1; i >= 0 && len(result) < 200; i-- {
+		s := r.s.tokenShares[i]
+		if s.TransactionID == id && s.UserID == user {
+			out := cloneShare(s)
+			out.DestCipher = nil
+			result = append(result, out)
+		}
+	}
+	return result, nil
+}
+
+func (r shareRepo) CountSends(_ context.Context, userID string, start, end time.Time) (int, error) {
+	defer r.lock()()
+	n := 0
+	for _, s := range r.s.tokenShares {
+		if s.UserID == userID && tokenshares.IsSendChannel(s.Channel) && !s.SharedAt.Before(start) && s.SharedAt.Before(end) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 type giftRepo struct{ *repos }

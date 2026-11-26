@@ -32,6 +32,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/providers/paystack"
+	"github.com/teamthy/meterly/internal/providers/vtpass"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
@@ -153,7 +154,22 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 
 	var rawVend providers.VendingProvider = opts.VendingProvider
 	if rawVend == nil {
-		rawVend = mock.NewVending()
+		switch cfg.VendingProvider {
+		case "vtpass":
+			vp, err := vtpass.New(vtpass.Config{
+				APIKey:       cfg.VTPassAPIKey,
+				SecretKey:    cfg.VTPassSecretKey,
+				PublicKey:    cfg.VTPassPublicKey,
+				BaseURL:      cfg.VTPassBaseURL,
+				DefaultPhone: cfg.VTPassDefaultPhone,
+			})
+			if err != nil {
+				return fail(err)
+			}
+			rawVend = vp
+		default:
+			rawVend = mock.NewVending()
+		}
 	}
 	vend := observability.WrapVendingProvider(rawVend, a.Metrics, a.Tracer)
 
@@ -189,6 +205,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	a.Orch = orchestrator.New(cfg.Orchestrator, a.Store, reg, box, a.payments, vend, remote, log)
 	a.Orch.SetMetrics(a.Metrics)
 	a.Orch.SetMeterReadingProvider(readings)
+	a.Orch.SetFeatureGiftSMS(cfg.FeatureGiftSMS)
 
 	notifProvs := map[notifications.Channel]notifications.Provider{}
 	inboundVers := map[string]notifications.InboundVerifier{}
@@ -392,6 +409,7 @@ func (a *App) Handler() http.Handler {
 		USSDDisabled:       !a.Cfg.FeatureUSSD,
 		WhatsAppDisabled:   !a.Cfg.FeatureWhatsApp,
 		SupportDisabled:    !a.Cfg.FeatureSupport,
+		HouseholdsDisabled: !a.Cfg.FeatureHouseholds,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}

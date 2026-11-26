@@ -29,6 +29,7 @@ func (s *Server) adminRoutes(mux *patternMux) {
 	mux.Handle("POST /v1/admin/providers/{name}/enable", admin(s.adminSetProvider(true)))
 	mux.Handle("POST /v1/admin/providers/{name}/disable", admin(s.adminSetProvider(false)))
 	mux.Handle("POST /v1/admin/unit-meters/{id}/verify", op(s.adminVerifyUnitMeter))
+	mux.Handle("POST /v1/admin/meters/{meter_id}/ownership", op(s.adminAttestOwnership))
 	s.adminSupportRoutes(mux)
 }
 
@@ -214,4 +215,30 @@ func (s *Server) adminSetProvider(enabled bool) http.HandlerFunc {
 		}
 		writeJSON(w, 200, map[string]any{"name": name, "enabled": enabled})
 	}
+}
+
+func (s *Server) adminAttestOwnership(w http.ResponseWriter, r *http.Request) {
+	if s.HouseholdsDisabled {
+		writeErr(w, http.StatusNotFound, "FEATURE_DISABLED", "households are not enabled")
+		return
+	}
+	mid, ok := parsePathUUID(w, r, "meter_id")
+	if !ok {
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+		UserID string `json:"user_id"`
+	}
+	if !decode(r, &body) || len(body.Reason) < 5 || len(body.Reason) > 500 || body.UserID == "" {
+		writeErr(w, 400, "INVALID_REQUEST", "user_id and a reason (5–500 characters) are required")
+		return
+	}
+	actor := audit.Actor{UserID: userID(r), Type: audit.ActorOperator, Reason: body.Reason, CorrelationID: audit.CorrelationFrom(r.Context())}
+	own, err := s.O.AttestOwnership(r.Context(), actor, mid, body.UserID)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 201, own)
 }
