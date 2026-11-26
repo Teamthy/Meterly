@@ -1,3 +1,52 @@
+export type SupportMode = "AGENT" | "HUMAN";
+export type SupportStatus =
+  | "OPEN"
+  | "WAITING_HUMAN"
+  | "ASSIGNED"
+  | "RESOLVED"
+  | "CLOSED";
+export type SupportSender = "CUSTOMER" | "OPERATOR" | "AGENT" | "SYSTEM";
+
+export interface SupportIdentityKey {
+  user_id: string;
+  public_key: string;
+  algorithm: string;
+  staff: boolean;
+}
+
+export interface SupportThread {
+  id: string;
+  customer_id: string;
+  mode: SupportMode;
+  status: SupportStatus;
+  assigned_operator_id?: string;
+  e2e: boolean;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
+}
+
+export interface SupportMessage {
+  id: string;
+  thread_id: string;
+  sender_id: string;
+  sender_kind: SupportSender;
+  e2e: boolean;
+  ciphertext?: string;
+  nonce?: string;
+  body?: string;
+  created_at: string;
+}
+
+export interface SupportThreadDetail {
+  thread: SupportThread;
+  wrapped_keys?: Array<{ holder_user_id: string; wrapped_key: string; nonce: string }>;
+  me?: string;
+  customer_public_key?: string;
+  assigned_operator_public_key?: string;
+  message?: SupportMessage;
+}
+
 export interface Capability {
   supported: boolean;
   authorised: boolean;

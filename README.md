@@ -4,7 +4,7 @@ Electricity, recharged from anywhere. Meterly lets people in Nigeria buy electri
 
 This repository holds the backend platform: a Go modular monolith built around a transaction engine that tracks **payment, vending and delivery as three separate, auditable steps**.
 
-> **Status:** persistence (PostgreSQL) and crash-safe background processing are done. Providers are still **mocks**, and auth is a dev stub. Production also needs real provider adapters, OIDC, and the legal and DisCo agreements listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Design choices are recorded in [`docs/DECISIONS.md`](docs/DECISIONS.md). **Current state, next steps and session context: [`docs/HANDOFF.md`](docs/HANDOFF.md).**
+> **Status:** M1–M11 and the Next.js `web/` app are on `main`. Providers are still **mocks** (so hosted API runs `MODE=dev`). Production still needs real vending/AMI adapters, OIDC, and the legal/DisCo agreements in [`docs/ROADMAP.md`](docs/ROADMAP.md). Hosted stack: Vercel (`web/`) + Render (`cmd/api`) + Supabase (Postgres). See [`docs/DEPLOY.md`](docs/DEPLOY.md). **Handoff: [`docs/HANDOFF.md`](docs/HANDOFF.md).**
 
 ## Quick start
 
@@ -116,7 +116,11 @@ cd web && npm install
 METERLY_API_ORIGIN=http://127.0.0.1:8080 npm run dev
 ```
 
-For **Vercel** deployment, set the project **Root Directory** to `web` and set `METERLY_API_ORIGIN` to your hosted Go API base URL (e.g. `https://api.meterly.ng`). Browser code uses relative `/v1/*` paths exclusively and never calls `localhost` directly.
+For **Vercel** deployment, set the project **Root Directory** to `web` and set `METERLY_API_ORIGIN` to your hosted Go API base URL (e.g. `https://meterly-api.onrender.com`). Browser code uses relative `/v1/*` paths exclusively and never calls `localhost` directly.
+
+**Render + Supabase (current hosting):** `render.yaml` builds the API Docker image, runs `/migrate` against Supabase, and serves `/healthz`. Paste `DATABASE_URL` (Supabase session pooler, port 5432), `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex chars each) in the Render dashboard. One-click: https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
+
+**Support chat:** `/support` talks to the Meterly Agent (server-side, can look up *your* purchases) or escalates to a person. Person-to-person messages are end-to-end encrypted (P-256 ECDH + AES-GCM) on the device; Meterly cannot read them. Operators use `/admin/support`.
 
 ### Mock meter behaviour
 

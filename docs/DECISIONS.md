@@ -2,6 +2,14 @@
 
 Defaults chosen where the spec left room, or where a decision depends on a commercial or legal call. Each one can be revisited; most are configuration.
 
+## Support chat (agent + E2E human)
+
+- **Two modes, labelled honestly.** Agent messages are processed by Meterly so the agent can look up the caller's own purchases (never anyone else's) and never include STS tokens. Human messages are end-to-end encrypted: P-256 ECDH + HKDF-SHA256 + AES-GCM in the browser; the API stores ciphertext, nonce and wrapped conversation keys only. Private keys never leave the device (`localStorage`).
+- **No key escrow.** Operators decrypt only if the customer wrapped the conversation key to their published staff public key. Switching browsers loses old human transcripts — that is the E2E tradeoff, and the UI says so.
+- **SYSTEM notices are server-sealed, not E2E** (“you're now talking to a person”) so both sides can read the handshake without a key.
+- **`FEATURE_SUPPORT` defaults to true.** This is not a money-pooling feature.
+- **Hosted API stays `MODE=dev` on Render** until a real vending adapter exists; config refuses mocks outside dev.
+
 ## Persistence (M1)
 
 - **pgx v5, hand-written SQL; no sqlc yet.** The repositories are small and the SQL is easier to review inline. Adopt sqlc if the query count grows.

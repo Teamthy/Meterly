@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M11 ([PR #11](https://github.com/Teamthy/Meterly/pull/11)) and the `web/` Next.js frontend.
+> **Last updated:** 2026-11-26, after E2E support chat + Render/Supabase deploy docs.
 
 ## 1. What Meterly is
 
@@ -23,7 +23,9 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ merged | [PR #9](https://github.com/Teamthy/Meterly/pull/9) |
 | M10: F4 Landlord Power Desk (orgs, unit meters, `LANDLORD_BULK` pots, statements) | ✅ merged | [PR #10](https://github.com/Teamthy/Meterly/pull/10) |
 | M11: F5 Meterly Offline (USSD & WhatsApp purchase channels) | ✅ merged | [PR #11](https://github.com/Teamthy/Meterly/pull/11) |
-| Web Frontend (`web/`): Next.js 15 app across Consumer, Guest `/p/[code]` & `/pots/[code]`, AutoPower, Power Desk, Offline Simulator & Ops Console | ✅ complete on `arena/7cc28241-meterly` | PR #12 |
+| Web Frontend (`web/`): Next.js 15 app across Consumer, Guest `/p/[code]` & `/pots/[code]`, AutoPower, Power Desk, Offline Simulator & Ops Console | ✅ merged | [PR #12](https://github.com/Teamthy/Meterly/pull/12) |
+| Support chat: Meterly Agent + E2E human operators | ✅ on `arena/7cc28241-meterly` | `/support`, `/admin/support`, `FEATURE_SUPPORT` |
+| Hosting: Vercel (`web/`) + Render Blueprint (`render.yaml`) + Supabase Postgres | ⏳ Vercel live; Render needs dashboard paste of `DATABASE_URL` | [`docs/DEPLOY.md`](DEPLOY.md) |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -59,7 +61,8 @@ internal/conversation   channel-agnostic USSD & WhatsApp purchase state machine,
 internal/channels/ussd  Africa's Talking USSD HTTP adapter (+ussdtest simulator; IP allowlist + HMAC, <= 182 chars)
 internal/offline        USSD & WhatsApp store-to-orchestrator wiring, phone OTP linking & audited token resends
 internal/observability  stdlib Prometheus 0.0.4 registry + W3C TraceContext / OTLP/HTTP JSON spans + provider wrappers
-internal/httpapi        /v1 REST + /v1/admin + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/orgs/* + /v1/properties/* + /v1/units/* + /v1/channels/* + /v1/notifications/inbound/{provider}
+internal/support        Meterly Agent + E2E human support threads (ciphertext only for HUMAN)
+internal/httpapi        /v1 REST + /v1/admin + /v1/support + /v1/admin/support + /v1/payment-requests + /v1/public/pay/* + /v1/pots + /v1/public/pots/* + /v1/me/payment-methods + /v1/autopower/* + /v1/orgs/* + /v1/properties/* + /v1/units/* + /v1/channels/* + /v1/notifications/inbound/{provider}
 api/openapi.yaml        OpenAPI 3.1 spec verified against Server.RegisteredPatterns() + writeErr AST codes
 Dockerfile              multi-stage non-root distroless targets: api, worker, migrate
 internal/auth           DevAuth + OIDC (stdlib JWT/JWKS, verified contact capture), roles, MFA gate
@@ -127,7 +130,9 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 7. What's next
 
-**All M1–M11 core platform & flagship product milestones (F1–F5) are implemented and verified.** Next engineering focus: first real Nigerian DisCo/aggregator vending adapter, AMI/HES remote-credit adapter, and live provider sandbox verification.
+**All M1–M11 core platform & flagship product milestones (F1–F5) are implemented and verified**, plus the Next.js web app and E2E support chat. Next engineering focus: first real Nigerian DisCo/aggregator vending adapter, AMI/HES remote-credit adapter, live provider sandbox verification, and flipping Render from `MODE=dev` once mocks are gone.
+
+**Hosting (for now):** Vercel serves `web/`. Render should serve `cmd/api` (`render.yaml`, `MODE=dev` because mock providers are refused outside dev) against the existing Supabase project `Meterly` (`wiqfbscyppgsolvmereh`). Render is not an Arena-connected app — deploy via https://render.com/deploy?repo=https://github.com/Teamthy/Meterly and paste `DATABASE_URL` / `TOKEN_ENC_KEY` / `METER_HMAC_KEY`. Then set Vercel `METERLY_API_ORIGIN` to the Render URL. Details in `docs/DEPLOY.md`.
 
 **Blocked on the founder or partners (not code):**
 - **M11 USSD founder blocker — NCC/aggregator USSD shortcode:** provisioning a dedicated or shared Nigerian USSD shortcode (e.g. `*xxx#` via Africa's Talking + NCC/telco approval), configuring aggregator source CIDR ranges (`USSD_ALLOWED_IPS`) and `USSD_SHARED_SECRET`, and setting `FEATURE_USSD=true`
@@ -139,6 +144,8 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 - choice of identity provider (Auth0, Clerk, Keycloak, Cognito…) with `email_verified` / `phone_number_verified` claims, a roles claim and MFA for staff
 
 ## 8. Session log (newest first)
+
+- **2026-11-26: Support chat + Render/Supabase hosting.** Added E2E human support (`migrations/0014_support_chat.sql`, `internal/support`, `/v1/support/*`, `/v1/admin/support/*`, `/support`, `/admin/support`). Agent answers are server-side and can look up the caller's own purchases; human messages are ciphertext only. `render.yaml` + `docs/DEPLOY.md` target Render (`MODE=dev` while vending is mocked) and the existing Supabase project `wiqfbscyppgsolvmereh`. Render is not an Arena connector — deploy from GitHub and paste `DATABASE_URL` / encryption keys. Vercel `METERLY_API_ORIGIN` still needs the Render URL.
 
 - **2026-11-23 (latest): Next.js 15 web frontend (`web/`) built and verified against the live Go `/v1` API (M11 merged in PR #11).**
   - Built `web/` (Next.js 15 App Router, TypeScript, Tailwind CSS v4, Vercel-ready `web/vercel.json` + `next.config.mjs` proxying `/v1/:path*`, `/healthz`, and `/readyz` to `METERLY_API_ORIGIN` so browser code never calls `localhost` directly).

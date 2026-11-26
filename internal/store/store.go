@@ -27,6 +27,7 @@ import (
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -88,6 +89,7 @@ type Repos interface {
 	AutoPower() AutoPowerRepo
 	PowerDesk() PowerDeskRepo
 	Offline() OfflineRepo
+	Support() SupportRepo
 }
 
 type AuditRepo interface {
@@ -385,4 +387,26 @@ type OfflineRepo interface {
 
 	RecordTokenResend(ctx context.Context, r *conversation.TokenResend) error
 	CountTokenResends(ctx context.Context, userID string, startUTC, endUTC time.Time) (int, error)
+}
+
+// SupportRepo persists E2E support threads. HUMAN ciphertext is opaque;
+// AGENT/SYSTEM bodies are stored already sealed by the HTTP layer.
+type SupportRepo interface {
+	UpsertIdentityKey(ctx context.Context, k support.IdentityKey) error
+	GetIdentityKey(ctx context.Context, userID string) (support.IdentityKey, error)
+	ListStaffKeys(ctx context.Context) ([]support.IdentityKey, error)
+
+	CreateThread(ctx context.Context, t *support.Thread) error
+	GetThread(ctx context.Context, id uuid.UUID) (*support.Thread, error)
+	GetThreadForUpdate(ctx context.Context, id uuid.UUID) (*support.Thread, error)
+	UpdateThread(ctx context.Context, t *support.Thread) error
+	ListThreadsForCustomer(ctx context.Context, customerID string) ([]*support.Thread, error)
+	ListThreadsForStaff(ctx context.Context, status support.ThreadStatus, limit int) ([]*support.Thread, error)
+
+	AddMessage(ctx context.Context, m *support.Message) error
+	ListMessages(ctx context.Context, threadID uuid.UUID, after time.Time, limit int) ([]*support.Message, error)
+
+	UpsertWrappedKey(ctx context.Context, w support.WrappedKey) error
+	ListWrappedKeys(ctx context.Context, threadID uuid.UUID) ([]support.WrappedKey, error)
+	GetWrappedKey(ctx context.Context, threadID uuid.UUID, holderUserID string) (support.WrappedKey, error)
 }

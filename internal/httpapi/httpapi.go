@@ -62,6 +62,7 @@ type Server struct {
 	PowerDeskDisabled  bool
 	USSDDisabled       bool
 	WhatsAppDisabled   bool
+	SupportDisabled    bool
 	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
@@ -177,6 +178,7 @@ func (s *Server) Routes() http.Handler {
 
 	s.powerDeskRoutes(mux, user, write)
 	s.offlineRoutes(mux, write)
+	s.supportRoutes(mux, user, write)
 
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
 	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))

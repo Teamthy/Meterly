@@ -101,8 +101,10 @@ type Config struct {
 	FeaturePowerDesk bool
 
 	// Meterly Offline USSD & WhatsApp purchase channels (M11).
-	FeatureUSSD                    bool
-	FeatureWhatsApp                bool
+	FeatureUSSD     bool
+	FeatureWhatsApp bool
+	// Support chat (agent + E2E human operators).
+	FeatureSupport                 bool
 	USSDSharedSecret               string
 	USSDAllowedIPs                 []string
 	OfflineReverifyAfter           time.Duration
@@ -335,6 +337,15 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("WHATSAPP_APP_SECRET and WHATSAPP_VERIFY_TOKEN are required when FEATURE_WHATSAPP=true outside dev"))
 		}
 	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_SUPPORT"))) {
+	case "", "true", "1":
+		c.FeatureSupport = true
+	case "false", "0":
+		c.FeatureSupport = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_SUPPORT: must be true or false"))
+	}
+
 	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)
 	c.OfflineUnverifiedDailyMaxMinor = integer("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR", conversation.DefaultUnverifiedDailyCapMinor)
 	c.OfflineVerifiedDailyMaxMinor = integer("OFFLINE_VERIFIED_DAILY_MAX_MINOR", conversation.DefaultVerifiedDailyCapMinor)

@@ -37,6 +37,8 @@ tags:
     description: Meterly Offline USSD (`*xxx#`) and WhatsApp purchase channels, webhook authentication, and SMS OTP phone linking.
   - name: Webhooks
     description: Signature-verified payment provider webhooks.
+  - name: Support
+    description: Meterly Agent plus end-to-end encrypted human support chat. Agent messages are processed by Meterly; human messages are ciphertext the server cannot read.
   - name: Admin
     description: Operator and administrator investigation, reconciliation, audited token reveal, refunds and provider switches (OIDC + MFA required outside dev).
 
@@ -704,6 +706,476 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/RateLimited"
+
+  /v1/support/keys:
+    put:
+      operationId: putSupportKey
+      tags: [Support]
+      summary: Publish this device's P-256 ECDH public key for E2E support chat
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutSupportKeyRequest"
+      responses:
+        "200":
+          description: Stored public key metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportIdentityKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/support/keys/me:
+    get:
+      operationId: getMySupportKey
+      tags: [Support]
+      summary: Fetch the caller's published support public key
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Caller's public key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportIdentityKey"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/support/roster:
+    get:
+      operationId: listSupportRoster
+      tags: [Support]
+      summary: List staff P-256 public keys so a customer can wrap a conversation key
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Staff identity keys (public only).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportRosterResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/support/threads:
+    get:
+      operationId: listSupportThreads
+      tags: [Support]
+      summary: List the authenticated customer's support threads
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Customer's threads newest-first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThreadList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createSupportThread
+      tags: [Support]
+      summary: Open a new Meterly Agent support thread
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "201":
+          description: Thread plus the agent welcome message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThreadCreated"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/support/threads/{thread_id}:
+    get:
+      operationId: getSupportThread
+      tags: [Support]
+      summary: Get a support thread the caller owns, plus their wrapped conversation key
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      responses:
+        "200":
+          description: Thread and caller-held wrapped key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThreadDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/support/threads/{thread_id}/messages:
+    get:
+      operationId: listSupportMessages
+      tags: [Support]
+      summary: List messages in a thread the caller owns
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Messages in created_at order. HUMAN rows are ciphertext only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportMessageList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: postSupportMessage
+      tags: [Support]
+      summary: Send an agent (plaintext) or human (E2E ciphertext) message
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostSupportMessageRequest"
+      responses:
+        "201":
+          description: Stored customer message and, in agent mode, the agent reply.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostSupportMessageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/support/threads/{thread_id}/escalate:
+    post:
+      operationId: escalateSupportThread
+      tags: [Support]
+      summary: Switch a thread to E2E human support and optionally wrap the conversation key
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EscalateSupportThreadRequest"
+      responses:
+        "200":
+          description: Thread is now WAITING_HUMAN.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThreadDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/support/threads/{thread_id}/keys:
+    post:
+      operationId: putSupportThreadKey
+      tags: [Support]
+      summary: Store a wrapped conversation key for a holder (opaque to the server)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WrapSupportKeyRequest"
+      responses:
+        "200":
+          description: Wrap stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/support/threads/{thread_id}/close:
+    post:
+      operationId: closeSupportThread
+      tags: [Support]
+      summary: Close a support thread the caller owns
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      responses:
+        "200":
+          description: Closed thread.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThread"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/admin/support/threads:
+    get:
+      operationId: adminListSupportThreads
+      tags: [Admin]
+      summary: Operator inbox of support threads
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, WAITING_HUMAN, ASSIGNED, RESOLVED, CLOSED]
+      responses:
+        "200":
+          description: Staff-visible threads.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThreadList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/support/threads/{thread_id}:
+    get:
+      operationId: adminGetSupportThread
+      tags: [Admin]
+      summary: Operator view of a support thread
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      responses:
+        "200":
+          description: Thread plus the operator's wrapped key if any.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThreadDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/support/threads/{thread_id}/messages:
+    get:
+      operationId: adminListSupportMessages
+      tags: [Admin]
+      summary: Operator message list (HUMAN rows remain ciphertext)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Messages. Agent history is readable; human messages are not.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportMessageList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: adminPostSupportMessage
+      tags: [Admin]
+      summary: Send an E2E ciphertext reply as the assigned operator
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostSupportE2EMessageRequest"
+      responses:
+        "201":
+          description: Ciphertext stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostSupportMessageResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/admin/support/threads/{thread_id}/claim:
+    post:
+      operationId: adminClaimSupportThread
+      tags: [Admin]
+      summary: Claim a WAITING_HUMAN thread (reason required, audited)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Thread assigned to the operator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThread"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/support/threads/{thread_id}/resolve:
+    post:
+      operationId: adminResolveSupportThread
+      tags: [Admin]
+      summary: Resolve a support thread (reason required, audited)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/ThreadIDPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Thread resolved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportThread"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /v1/admin/transactions:
     get:
@@ -2379,6 +2851,13 @@ components:
         type: string
         minLength: 26
         maxLength: 26
+    ThreadIDPath:
+      name: thread_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     AutoPowerIDPath:
       name: id
       in: path
@@ -5038,4 +5517,222 @@ components:
           type: string
           enum: [otp_sent, verified]
         phone_masked:
+          type: string
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+
+    PutSupportKeyRequest:
+      type: object
+      required: [public_key]
+      additionalProperties: false
+      properties:
+        public_key:
+          type: string
+          description: Standard-base64 P-256 SPKI public key. The private key never leaves the device.
+        algorithm:
+          type: string
+          enum: [P-256]
+          default: P-256
+
+    SupportIdentityKey:
+      type: object
+      required: [user_id, public_key, algorithm, staff]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        public_key:
+          type: string
+        algorithm:
+          type: string
+          enum: [P-256]
+        staff:
+          type: boolean
+
+    SupportRosterResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupportIdentityKey"
+
+    SupportThread:
+      type: object
+      required: [id, customer_id, mode, status, e2e]
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum: [AGENT, HUMAN]
+        status:
+          type: string
+          enum: [OPEN, WAITING_HUMAN, ASSIGNED, RESOLVED, CLOSED]
+        assigned_operator_id:
+          type: string
+        e2e:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_message_at:
+          type: string
+          format: date-time
+
+    SupportThreadList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupportThread"
+
+    SupportWrappedKey:
+      type: object
+      required: [holder_user_id, wrapped_key, nonce]
+      properties:
+        holder_user_id:
+          type: string
+          format: uuid
+        wrapped_key:
+          type: string
+        nonce:
+          type: string
+
+    SupportThreadDetail:
+      type: object
+      properties:
+        thread:
+          $ref: "#/components/schemas/SupportThread"
+        wrapped_keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupportWrappedKey"
+        me:
+          type: string
+          format: uuid
+        message:
+          $ref: "#/components/schemas/SupportMessage"
+        customer_public_key:
+          type: string
+        assigned_operator_public_key:
+          type: string
+
+    SupportThreadCreated:
+      type: object
+      required: [thread, messages]
+      properties:
+        thread:
+          $ref: "#/components/schemas/SupportThread"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupportMessage"
+
+    SupportMessage:
+      type: object
+      required: [id, thread_id, sender_kind, e2e, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        thread_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+        sender_kind:
+          type: string
+          enum: [CUSTOMER, OPERATOR, AGENT, SYSTEM]
+        e2e:
+          type: boolean
+          description: When true, only ciphertext/nonce are present. The server cannot read HUMAN messages.
+        ciphertext:
+          type: string
+        nonce:
+          type: string
+        body:
+          type: string
+          description: Present only for AGENT/SYSTEM messages (processed by Meterly, not E2E).
+        created_at:
+          type: string
+          format: date-time
+
+    SupportMessageList:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/SupportMessage"
+
+    PostSupportMessageRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        body:
+          type: string
+          maxLength: 2000
+        ciphertext:
+          type: string
+        nonce:
+          type: string
+
+    PostSupportE2EMessageRequest:
+      type: object
+      required: [ciphertext, nonce]
+      additionalProperties: false
+      properties:
+        ciphertext:
+          type: string
+        nonce:
+          type: string
+
+    PostSupportMessageResponse:
+      type: object
+      properties:
+        message:
+          $ref: "#/components/schemas/SupportMessage"
+        agent_message:
+          $ref: "#/components/schemas/SupportMessage"
+        suggest_human:
+          type: boolean
+
+    EscalateSupportThreadRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        wrapped_keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/WrapSupportKeyRequest"
+
+    WrapSupportKeyRequest:
+      type: object
+      required: [holder_user_id, wrapped_key, nonce]
+      additionalProperties: false
+      properties:
+        holder_user_id:
+          type: string
+          format: uuid
+        wrapped_key:
+          type: string
+        nonce:
           type: string
