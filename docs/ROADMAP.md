@@ -45,6 +45,7 @@ This maps the *Electricity Technology Platform: Product Requirements, Architectu
 13. ~~Credit-on-meter delivery plane (cohorts, `heshttp` adapter, confirmation webhook, hide STS token while remote)~~ (batch 1). Partner-specific Hexing/Conlog/Mojec translator **only with real partner docs**. Live sandbox verification of Paystack / VTpass / Africa’s Talking / Resend / WhatsApp.
 14. ~~Support chat (Meterly Agent + E2E human operators)~~ (`FEATURE_SUPPORT`, `/support`, `/admin/support`, device-local P-256 ECDH). Hosted API on Render against Supabase still waits on a Render dashboard deploy (`docs/DEPLOY.md`).
 15. ~~Web UI for households and token send~~ (batch 2: `/households`, ownership verify, invite/accept, STS send SMS/email/WhatsApp).
+16. ~~Web UI for credit-on-meter receipt + operator cohort desk~~ (batch 3: Buy Power ACCEPTED≠CONFIRMED / hide STS while remote; `/admin` attest/revoke `remote_credit_cohorts`. Partner translator still needs PDF).
 
 ## Not engineering problems (blocking for production)
 

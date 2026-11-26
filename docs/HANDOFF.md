@@ -1,13 +1,13 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-23, after VTpass + households (FR-008) + token send (FR-007) on `arena/7cc28241-meterly`.
+> **Last updated:** 2026-11-26, after PR #16 (household + token-send UI) merged and batch 3 (cohort desk + credit-on-meter receipt) on `arena/7cc28241-meterly`.
 
 ## 0. Start here (new session / new developer)
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
-2. Branch: `arena/7cc28241-meterly` at `318b81c` (plus this handoff commit). Base is `origin/main` @ `90e0078` (PR #13 merged).
-3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, and token send are in code. Left is **hosting, live sandboxes, a real AMI/HES partner, legal flags**.
+2. Branch: `arena/7cc28241-meterly`. `origin/main` includes PR #15 (credit-on-meter plane) and PR #16 (household + token-send UI).
+3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, token send, and cohort/receipt UI are in code. Left is **hosting, live sandboxes, a real AMI/HES partner, legal flags**.
 4. **Selling point (product, not a fake AMI):** credit lands on the meter. Compatible smart meters get a remote push; we only call it delivered when the meter confirms (`ACCEPTED ≠ CONFIRMED`). Keypad meters get STS token fallback. Do **not** invent AMI/HES APIs, Benin Electric `serviceID`, or native apps. Mock HES (`700…` meters) is the demo path until a partner document exists.
 5. Do **not** commit secrets. Render keys stay in the dashboard.
 
@@ -15,13 +15,13 @@
 
 | # | What | Who | Blocker |
 |---|---|---|---|
-| 1 | Merge the PR from this branch | GitHub | review |
+| 1 | ~~Merge household + token-send UI~~ | GitHub | PR #16 merged |
 | 2 | **Render dashboard paste** so the hosted API exists | Human | Render is not an Arena connector. Paste session-pooler `DATABASE_URL` **port 5432**, `TOKEN_ENC_KEY`, `METER_HMAC_KEY`. See `docs/DEPLOY.md`. |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | step 2 |
 | 4 | After keys: `MODE=staging`, `VENDING_PROVIDER=vtpass`, `PAYMENT_PROVIDER=paystack`, `REMOTE_PROVIDER=none` | Human | VTpass + Paystack sandbox keys |
 | 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
 | 6 | ~~Web UI for households + token send~~ | Eng | `/households` + STS send on Buy Power |
-| 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook are in |
+| 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook + admin cohort UI are in |
 | 8 | Distributed rate limits (Redis) | Eng | only if >1 API replica |
 | 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
 
@@ -46,6 +46,7 @@ Backend: Go modular monolith. Frontend: Next.js 15 in `web/`. Spec mapped in `do
 | **FR-008 households / verified ownership** | ✅ this branch | `FEATURE_HOUSEHOLDS`, never mints `MANAGE` |
 | **FR-007 token send** SMS/email/WhatsApp | ✅ this branch | share endpoint + notification worker |
 | Hosting: Vercel `web/` | ✅ live | `meterly-iota.vercel.app` |
+| **Credit-on-meter plane** | ✅ merged | PR #15 cohorts/`heshttp`/webhook; PR #16 household UI; this branch: admin cohort desk + receipt |
 | Hosting: Render API + Supabase | ⏳ **blocked on dashboard paste** | `docs/DEPLOY.md` |
 
 CI (`.github/workflows/ci.yml`): gofmt, vet, `go test -race` against PostgreSQL 16; fails if PG subtests were skipped.
@@ -73,8 +74,8 @@ internal/tokenshares    COPY metadata + send channels (no raw tokens)
 internal/notificationservice   outbox → deliveries; TOKEN_SHARE send path
 internal/httpapi        /v1 REST + admin + public pay/pots + channels + households
 api/openapi.yaml        OpenAPI 3.1 vs mux + writeErr AST
-web/                    Next.js 15 (`/households` + token send on Buy Power)
-migrations/             0001 … 0016_token_share_send.sql
+web/                    Next.js 15 (`/households`, token send, admin cohort desk)
+migrations/             0001 … 0017_remote_credit_cohorts.sql
 ```
 
 Purchase flow: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` → webhook/sweeper → `checkPayment` (PSP verify) → `vend` (VTpass `request_id` stored at **claim**, never regenerated) → `deliver` → refund only on definitive vend failure.
@@ -216,7 +217,6 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 
 - Render deploy + Vercel origin (human paste).
 - Live sandbox runs: Paystack `sk_test_`, VTpass sandbox keys, AT, Resend, WhatsApp, a real OIDC issuer.
-- `web/` screens for households, ownership verify, token send (API is ready; UI is not).
 - Optional: Redis rate limits if Render scales to >1 instance.
 
 ### Engineering, blocked on documents / partners
@@ -254,6 +254,8 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 ---
 
 ## 11. Session log (newest first)
+
+- **2026-11-26: PR #16 merged; batch 3 credit-on-meter UI.** Household + STS send on `main`. This branch: admin remote-credit cohort desk (attest/revoke), Buy Power hides STS while `REMOTE`, ACCEPTED≠CONFIRMED copy, poll while waiting for meter confirm. No Hexing/Conlog client.
 
 - **2026-11-23: VTpass + FR-008 households + FR-007 token send** (`318b81c` on `arena/7cc28241-meterly`).
   - VTpass: verify/pay/requery, documented DisCo map, 000/099 mapping, Lagos `request_id` persisted at claim (`VendIdempotencyKey`), `vtpasstest` fake. Wired in `app.go` / config. **Not called against live VTpass.**

@@ -2,8 +2,8 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthContext";
-import { apiFetch, formatNaira, formatSTSToken } from "@/lib/api";
-import { TransactionView } from "@/lib/types";
+import { apiFetch, DISCOS, formatNaira, formatSTSToken } from "@/lib/api";
+import { RemoteCohort, TransactionView } from "@/lib/types";
 import { StatusPill, ThreeDimensionStatus } from "@/components/StatusBadges";
 import {
   ShieldAlert,
@@ -12,12 +12,14 @@ import {
   Eye,
   RotateCcw,
   Sliders,
+  Radio,
 } from "lucide-react";
 
 export default function AdminConsolePage() {
   const { token, setPersonaById } = useAuth();
   const isStaff =
     token.startsWith("operator:") || token.startsWith("admin:");
+  const isAdmin = token.startsWith("admin:");
 
   const [reviewOnly, setReviewOnly] = useState(false);
   const [txns, setTxns] = useState<TransactionView[]>([]);
@@ -40,6 +42,15 @@ export default function AdminConsolePage() {
   const [banner, setBanner] = useState<{ type: "ok" | "err"; text: string } | null>(
     null
   );
+
+  const [cohorts, setCohorts] = useState<RemoteCohort[]>([]);
+  const [cohortDisco, setCohortDisco] = useState("IKEDC");
+  const [cohortPrefix, setCohortPrefix] = useState("62");
+  const [cohortMfr, setCohortMfr] = useState("");
+  const [cohortEvidence, setCohortEvidence] = useState(
+    "MAP letter March 2026 Hexing AMI — demo attestation"
+  );
+  const [cohortBusy, setCohortBusy] = useState(false);
 
   const loadList = useCallback(async () => {
     if (!isStaff) return;
@@ -67,9 +78,23 @@ export default function AdminConsolePage() {
     }
   }, [isStaff, reviewOnly, token]);
 
+  const loadCohorts = useCallback(async () => {
+    if (!isStaff) return;
+    try {
+      const res = await apiFetch<{ data: RemoteCohort[] }>(
+        "/v1/admin/remote-credit/cohorts",
+        { token }
+      );
+      setCohorts(res.data || []);
+    } catch {
+      setCohorts([]);
+    }
+  }, [isStaff, token]);
+
   useEffect(() => {
     loadList();
-  }, [loadList]);
+    loadCohorts();
+  }, [loadList, loadCohorts]);
 
   const loadDetail = useCallback(
     async (id: string) => {
@@ -171,6 +196,80 @@ export default function AdminConsolePage() {
             ? err.message
             : "Switch to Segun (Admin) to toggle providers",
       });
+    }
+  };
+
+  const handleCreateCohort = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const prefix = cohortPrefix.trim();
+    if (!/^\d{1,13}$/.test(prefix)) {
+      setBanner({
+        type: "err",
+        text: "Number prefix must be 1–13 digits. Never a glob, never a 7… shortcut.",
+      });
+      return;
+    }
+    if (cohortEvidence.trim().length < 5) {
+      setBanner({
+        type: "err",
+        text: "Evidence (5–500 chars) is required. This is an attestation, not a HES client.",
+      });
+      return;
+    }
+    setCohortBusy(true);
+    try {
+      await apiFetch("/v1/admin/remote-credit/cohorts", {
+        method: "POST",
+        token,
+        body: {
+          disco: cohortDisco,
+          number_prefix: prefix,
+          manufacturer: cohortMfr.trim() || undefined,
+          evidence: cohortEvidence.trim(),
+        },
+      });
+      await loadCohorts();
+      setBanner({
+        type: "ok",
+        text: `Attested ${cohortDisco} prefix ${prefix}. Supported ≠ authorised — live HES CheckEligibility still required.`,
+      });
+    } catch (err) {
+      setBanner({
+        type: "err",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Cohort create failed (admin role required)",
+      });
+    } finally {
+      setCohortBusy(false);
+    }
+  };
+
+  const handleRevokeCohort = async (id: string) => {
+    if (reason.trim().length < 5) {
+      setBanner({
+        type: "err",
+        text: "Audit reason (5–500 chars) is mandatory to revoke a cohort.",
+      });
+      return;
+    }
+    setCohortBusy(true);
+    try {
+      await apiFetch(`/v1/admin/remote-credit/cohorts/${id}`, {
+        method: "DELETE",
+        token,
+        body: { reason: reason.trim() },
+      });
+      await loadCohorts();
+      setBanner({ type: "ok", text: "Cohort revoked (audited)." });
+    } catch (err) {
+      setBanner({
+        type: "err",
+        text: err instanceof Error ? err.message : "Revoke failed",
+      });
+    } finally {
+      setCohortBusy(false);
     }
   };
 
@@ -317,7 +416,12 @@ export default function AdminConsolePage() {
                   </div>
                   <p className="mt-1 font-mono text-[11px] text-stone-500">
                     {t.transaction_id.slice(0, 12)}… • Pay:{t.payment_status} •
-                    Vend:{t.vending_status}
+                    Vend:{t.vending_status} • {t.delivery_method}
+                    {t.credit_on_meter
+                      ? " • on meter"
+                      : t.delivery_status
+                        ? ` • ${t.delivery_status}`
+                        : ""}
                   </p>
                 </button>
               ))}
@@ -368,6 +472,99 @@ export default function AdminConsolePage() {
               Approve & Audit Unit Meter Ownership
             </button>
           </form>
+
+          <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2.5">
+            <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
+              <Radio className="h-4 w-4 text-emerald-600" />
+              Remote-credit cohorts
+            </h3>
+            <p className="text-[11px] text-stone-500">
+              Attest DisCo + digit prefix after a MAP/DisCo letter. This marks{" "}
+              <span className="font-mono">supported</span>, not a live HES
+              session. Do not treat meter prefix 7 as production AMI. Manufacturer
+              is a label only — no Hexing/Conlog client is invented here.
+            </p>
+            {isAdmin ? (
+              <form onSubmit={handleCreateCohort} className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={cohortDisco}
+                    onChange={(e) => setCohortDisco(e.target.value)}
+                    className="rounded-xl border border-stone-300 bg-white px-2.5 py-1.5 text-xs"
+                  >
+                    {DISCOS.map((d) => (
+                      <option key={d.code} value={d.code}>
+                        {d.code}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    value={cohortPrefix}
+                    onChange={(e) => setCohortPrefix(e.target.value)}
+                    placeholder="Digit prefix (e.g. 62)"
+                    className="rounded-xl border border-stone-300 px-2.5 py-1.5 font-mono text-xs"
+                    inputMode="numeric"
+                  />
+                </div>
+                <input
+                  value={cohortMfr}
+                  onChange={(e) => setCohortMfr(e.target.value)}
+                  placeholder="Manufacturer label (optional)"
+                  className="w-full rounded-xl border border-stone-300 px-2.5 py-1.5 text-xs"
+                />
+                <input
+                  value={cohortEvidence}
+                  onChange={(e) => setCohortEvidence(e.target.value)}
+                  placeholder="Evidence 5–500 chars"
+                  className="w-full rounded-xl border border-stone-300 px-2.5 py-1.5 text-xs"
+                />
+                <button
+                  type="submit"
+                  disabled={cohortBusy}
+                  className="w-full rounded-xl bg-emerald-800 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  Attest cohort (admin)
+                </button>
+              </form>
+            ) : (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                Operators can list. Switch to Segun (Admin) to attest or revoke.
+              </p>
+            )}
+            <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+              {cohorts.length === 0 ? (
+                <li className="text-[11px] text-stone-400">No cohorts yet.</li>
+              ) : (
+                cohorts.map((c) => (
+                  <li
+                    key={c.id}
+                    className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-[11px]"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-mono">
+                        {c.disco} · {c.number_prefix}…
+                        {c.manufacturer ? ` · ${c.manufacturer}` : ""}
+                        {c.revoked_at ? " · REVOKED" : c.authorised ? " · live" : ""}
+                      </div>
+                      {isAdmin && !c.revoked_at && (
+                        <button
+                          type="button"
+                          disabled={cohortBusy}
+                          onClick={() => handleRevokeCohort(c.id)}
+                          className="text-rose-800 font-semibold hover:underline disabled:opacity-50"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-stone-500 truncate" title={c.evidence}>
+                      {c.evidence}
+                    </p>
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
 
           {/* Provider Switches */}
           {providers.length > 0 && (
@@ -429,6 +626,7 @@ export default function AdminConsolePage() {
                         <p className="text-xs text-stone-500">
                           Total {formatNaira(txObj.total_minor)} • Method:{" "}
                           {txObj.delivery_method}
+                          {txObj.credit_on_meter ? " • on the meter" : ""}
                         </p>
                       </div>
                       <StatusPill status={txObj.status} />
@@ -452,8 +650,10 @@ export default function AdminConsolePage() {
                       </button>
                       <button
                         type="button"
+                        disabled={txObj.delivery_status !== "FAILED"}
                         onClick={() => runAdminAction("fallback-to-token")}
-                        className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50"
+                        title="Only after confirmed remote failure — never while ACCEPTED"
+                        className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Fallback to Token
                       </button>
