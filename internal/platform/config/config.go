@@ -109,9 +109,9 @@ type Config struct {
 	FeatureUSSD     bool
 	FeatureWhatsApp bool
 	// Support chat (agent + E2E human operators).
-	FeatureSupport                 bool
+	FeatureSupport bool
 	// Households: verified ownership + membership (FR-008).
-	FeatureHouseholds bool
+	FeatureHouseholds              bool
 	USSDSharedSecret               string
 	USSDAllowedIPs                 []string
 	OfflineReverifyAfter           time.Duration

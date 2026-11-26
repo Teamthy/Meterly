@@ -95,7 +95,7 @@ type Store struct {
 	supportMessages   map[uuid.UUID]*support.Message
 	supportWraps      map[string]*support.WrappedKey // threadID + ":" + holder
 	households        map[uuid.UUID]households.Household
-	hhMembers         map[string]households.Member // householdID:userID
+	hhMembers         map[string]households.Member    // householdID:userID
 	hhMeters          map[string]households.MeterLink // householdID:meterID
 	ownership         map[string]households.Ownership // meterID:userID
 }

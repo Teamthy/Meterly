@@ -73,13 +73,13 @@ type Config struct {
 }
 
 type Client struct {
-	apiKey  string
-	secret  string
-	public  string
-	base    string
-	phone   string
-	http    *http.Client
-	now     func() time.Time
+	apiKey string
+	secret string
+	public string
+	base   string
+	phone  string
+	http   *http.Client
+	now    func() time.Time
 }
 
 func New(cfg Config) (*Client, error) {

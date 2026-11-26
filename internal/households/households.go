@@ -18,11 +18,11 @@ type MemberStatus string
 type OwnershipMethod string
 
 const (
-	RoleOwner          Role = "OWNER"
-	RoleAdministrator  Role = "ADMINISTRATOR"
-	RoleMember         Role = "MEMBER"
-	RoleViewer         Role = "VIEWER"
-	RoleRecipient      Role = "RECIPIENT"
+	RoleOwner         Role = "OWNER"
+	RoleAdministrator Role = "ADMINISTRATOR"
+	RoleMember        Role = "MEMBER"
+	RoleViewer        Role = "VIEWER"
+	RoleRecipient     Role = "RECIPIENT"
 
 	StatusInvited  MemberStatus = "INVITED"
 	StatusActive   MemberStatus = "ACTIVE"
@@ -55,15 +55,15 @@ type Household struct {
 }
 
 type Member struct {
-	ID         uuid.UUID    `json:"member_id"`
-	HouseholdID uuid.UUID   `json:"household_id"`
-	UserID     string       `json:"user_id"`
-	Role       Role         `json:"role"`
-	Status     MemberStatus `json:"status"`
-	InvitedBy  string       `json:"invited_by,omitempty"`
-	InvitedAt  time.Time    `json:"invited_at"`
-	AcceptedAt *time.Time   `json:"accepted_at,omitempty"`
-	RevokedAt  *time.Time   `json:"revoked_at,omitempty"`
+	ID          uuid.UUID    `json:"member_id"`
+	HouseholdID uuid.UUID    `json:"household_id"`
+	UserID      string       `json:"user_id"`
+	Role        Role         `json:"role"`
+	Status      MemberStatus `json:"status"`
+	InvitedBy   string       `json:"invited_by,omitempty"`
+	InvitedAt   time.Time    `json:"invited_at"`
+	AcceptedAt  *time.Time   `json:"accepted_at,omitempty"`
+	RevokedAt   *time.Time   `json:"revoked_at,omitempty"`
 }
 
 type MeterLink struct {
@@ -74,21 +74,21 @@ type MeterLink struct {
 }
 
 type Ownership struct {
-	ID         uuid.UUID        `json:"ownership_id"`
-	MeterID    uuid.UUID        `json:"meter_id"`
-	UserID     string           `json:"user_id"`
-	Method     OwnershipMethod  `json:"method"`
-	Reason     string           `json:"reason,omitempty"`
-	VerifiedBy string           `json:"verified_by"`
-	VerifiedAt time.Time        `json:"verified_at"`
-	RevokedAt  *time.Time       `json:"revoked_at,omitempty"`
+	ID         uuid.UUID       `json:"ownership_id"`
+	MeterID    uuid.UUID       `json:"meter_id"`
+	UserID     string          `json:"user_id"`
+	Method     OwnershipMethod `json:"method"`
+	Reason     string          `json:"reason,omitempty"`
+	VerifiedBy string          `json:"verified_by"`
+	VerifiedAt time.Time       `json:"verified_at"`
+	RevokedAt  *time.Time      `json:"revoked_at,omitempty"`
 }
 
 type View struct {
-	Household Household  `json:"household"`
-	Members   []Member   `json:"members"`
-	Meters    []MeterLink `json:"meters"`
-	MyRole    Role       `json:"my_role,omitempty"`
+	Household Household    `json:"household"`
+	Members   []Member     `json:"members"`
+	Meters    []MeterLink  `json:"meters"`
+	MyRole    Role         `json:"my_role,omitempty"`
 	MyStatus  MemberStatus `json:"my_status,omitempty"`
 }
 
