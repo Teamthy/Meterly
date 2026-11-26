@@ -58,6 +58,7 @@ func (s *Server) requireAction(w http.ResponseWriter, r *http.Request, action st
 		UserID:   uid,
 		Session:  s.passkeySession(r),
 		Passkeys: s.passkeyCount(r, uid),
+		IP:       s.clientIP(r),
 	})
 	if d.Outcome == security.OutcomeAllow {
 		return true
@@ -215,6 +216,12 @@ func (s *Server) securityStepUpFinish(w http.ResponseWriter, r *http.Request) {
 		as = body.AssertionResponse
 	}
 	if err := s.Identity.FinishStepUp(r.Context(), requestOrigin(r, body.Origin), userID(r), as); err != nil {
+		if s.authFails != nil {
+			if ok, wait := s.authFails.Allow(s.clientIP(r)); !ok {
+				tooMany(w, wait)
+				return
+			}
+		}
 		s.mapErr(w, r, err)
 		return
 	}

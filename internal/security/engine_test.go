@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/identity"
+	"github.com/teamthy/meterly/internal/secure"
 )
 
 type mem struct {
@@ -93,6 +94,29 @@ func TestEvaluatePasskeySessionNeedsStepUp(t *testing.T) {
 	})
 	if d.Outcome != OutcomeAllow {
 		t.Fatalf("fresh step-up got %s", d.Outcome)
+	}
+}
+
+func TestEvaluateIPMismatchRequiresStepUp(t *testing.T) {
+	box, err := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{Box: box}
+	ip := e.HashIP("1.2.3.4")
+	at := time.Now()
+	sess := &identity.Session{ID: uuid.New(), UserID: "u", IPHMAC: ip, StepUpAt: &at}
+	d := e.Evaluate(context.Background(), Request{
+		Action: ActionTokenRead, UserID: "u", Session: sess, Passkeys: 1, IP: "9.9.9.9",
+	})
+	if d.Outcome != OutcomeStepUp {
+		t.Fatalf("want STEP_UP on IP change, got %s", d.Outcome)
+	}
+	d = e.Evaluate(context.Background(), Request{
+		Action: ActionTokenRead, UserID: "u", Session: sess, Passkeys: 1, IP: "1.2.3.4",
+	})
+	if d.Outcome != OutcomeAllow {
+		t.Fatalf("same IP should allow after step-up, got %s", d.Outcome)
 	}
 }
 

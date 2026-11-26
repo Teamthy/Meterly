@@ -61,6 +61,11 @@ func (e *Engine) Evaluate(_ context.Context, req Request) Decision {
 	if !sensitive(req.Action) {
 		return Decision{Outcome: OutcomeAllow, Reason: "not a gated action", Action: req.Action}
 	}
+	if e != nil && req.Session.IPHMAC != "" && req.IP != "" {
+		if got := e.HashIP(req.IP); got != "" && got != req.Session.IPHMAC {
+			return Decision{Outcome: OutcomeStepUp, Reason: "session moved to a new network", Action: req.Action}
+		}
+	}
 	fresh := req.Session.StepUpAt != nil && e.now().Sub(req.Session.StepUpAt.UTC()) < e.stepUpAfter()
 	if fresh {
 		return Decision{Outcome: OutcomeAllow, Reason: "recent passkey step-up", Action: req.Action}
@@ -157,6 +162,13 @@ func (e *Engine) HashIP(ip string) string {
 		return ""
 	}
 	return e.Box.Hash("security-ip:" + ip)
+}
+
+func (e *Engine) HashUA(ua string) string {
+	if e == nil || e.Box == nil || ua == "" {
+		return ""
+	}
+	return e.Box.Hash("security-ua:" + ua)
 }
 
 func itoa(n int) string {
