@@ -258,6 +258,7 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
+- **2026-11-26: 100 edge cases.** `docs/EDGE_CASES.md` — IN / OPS / GAP. Build order is quote gates, one in-flight buy, digit normalise — not 100 tickets.
 - **2026-11-26: Operating pack.** Catch-22 (supply must be on), first 200 = Ikeja/IE Energy Lagos Mojec, 2am runbook, fraud, fee leak, legal drafts `/legal/*`, Lagos entity rename, feature freeze (later), no kill date.
 - **2026-11-26: North star = no-keypad + OPay-style auto-recharge.** Token is fallback. First partner call is one Disco AMI/MAP, then VTpass + Paystack.
 - **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.

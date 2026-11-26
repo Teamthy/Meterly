@@ -78,3 +78,5 @@ Chargeback: do not vend again. If already vended, fight with Paystack evidence (
 | Customer abuse | Document, do not argue units off a meter |
 
 Founder owns all of these until a hire. No “the intern will watch Slack.”
+
+Likely failures (100) and what is already IN vs GAP: `docs/EDGE_CASES.md`.
