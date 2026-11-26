@@ -2,8 +2,10 @@
 .github
 bin/
 dist/
+web/
 coverage*
 *.test
 *.out
 .env
 .env.*
+

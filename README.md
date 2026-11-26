@@ -104,6 +104,20 @@ curl -s $B/v1/electricity/transactions/<transaction_id> -H "$AUTH"
 
 If you skip the webhook in step 4, the worker still finds the payment by asking the provider once the transaction has been idle for `RESUME_STALE_AFTER`.
 
+### Running the Web Frontend (`web/`)
+
+```bash
+# Terminal 1: Start the Go API in dev mode (enabling feature flags as desired)
+MODE=dev FEATURE_PAY_FOR_ME=true FEATURE_SPLIT_METER=true FEATURE_AUTOPOWER=true \
+  FEATURE_POWER_DESK=true FEATURE_USSD=true FEATURE_WHATSAPP=true go run ./cmd/api
+
+# Terminal 2: Start the Next.js web app (proxies /v1/*, /healthz, /readyz to METERLY_API_ORIGIN)
+cd web && npm install
+METERLY_API_ORIGIN=http://127.0.0.1:8080 npm run dev
+```
+
+For **Vercel** deployment, set the project **Root Directory** to `web` and set `METERLY_API_ORIGIN` to your hosted Go API base URL (e.g. `https://api.meterly.ng`). Browser code uses relative `/v1/*` paths exclusively and never calls `localhost` directly.
+
 ### Mock meter behaviour
 
 | Meter number | Behaviour |
@@ -146,6 +160,7 @@ internal/
   platform/config/        environment configuration, validated at startup
   platform/migrate/       migration runner
 api/openapi.yaml          OpenAPI 3.1 specification for all production routes
+web/                      Next.js 15 + TypeScript + Tailwind CSS frontend (consumer, guest links, Power Desk, Ops Console)
 Dockerfile                multi-stage non-root distroless targets (api, worker, migrate)
 migrations/               SQL migrations (embedded into the binaries)
 docs/                     roadmap and decisions
