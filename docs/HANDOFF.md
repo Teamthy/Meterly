@@ -26,12 +26,14 @@
 
 ## 1. What Meterly is
 
-A Nigerian electricity platform. People buy prepaid units from anywhere, for their own meter or someone else's.
+**North star (founder, 2026-11-26): OPay for electricity.** Pay → units appear **on the meter** (no keypad). Then **auto-recharge** like airtime/data: amount and/or “when units hit X kWh.” Token typing is fallback, not the product.
 
-- **Today in production-shaped code:** pay via CBN-licensed PSP (Paystack adapter), vend via aggregator (VTpass adapter, sandbox-fake tested), keypad **STS token** fallback.
-- **Credit-on-meter:** licensed vend still happens first; a Head-End System (HES) injects that token/credit into a compatible smart meter. We only call it delivered when the **meter confirms**.
+OPay airtime works because every phone has a **network account** the telco can credit by API. Most Nigerian prepaid meters do **not**: the balance lives on the box, and the only input is a 20-digit STS token. The electricity equivalent of “airtime API” is the **AMI/HES** that already talks to **smart** meters. Meterly does not install hardware.
+
+- **Code today:** Paystack (money) + VTpass (licensed vend / meter verify) + remote-credit plane (`heshttp`, cohorts, confirmation). AutoPower **engine** exists; UI is **coming soon** (prefs in localStorage, `FEATURE_AUTOPOWER=false`, no live charge).
+- **Blocked for the north star:** one Disco + that Disco’s MAP/AMI **API docs** + a witnessed test on a real smart meter. Until then do not market “no token.”
 - Frontend: Next.js `web/` on Vercel (`https://meterly-iota.vercel.app`).
-- API: Go modular monolith. Hosted API is **not live** until Render + Supabase keys are pasted.
+- Hosted API is **not live** until Render + Supabase keys are pasted.
 
 ---
 
@@ -209,27 +211,32 @@ If a document is missing, leave `REMOTE_PROVIDER=none` and keep STS.
 
 ---
 
-## 12. Who to partner with (not “every meter factory”)
+## 12. Who to partner with (OPay-for-power)
 
-You do **not** need to partner with every company that *builds* meters.
+You do **not** partner with every meter factory. You partner with whoever can **credit a meter the way MTN credits a SIM**.
 
-| Goal | Who | Why |
+| Layer (like OPay) | Electricity equivalent | Who to call |
 |---|---|---|
-| Take payment | **CBN-licensed PSP** (Paystack today) | Card/transfer; Meterly never holds PAN. |
-| Mint an STS token | **Vending aggregator** (VTpass) **or** a **DisCo vending API** | Token is what keypad meters need. One aggregator can cover many DisCos. |
-| Units appear **without typing a token** | Whoever runs the **HES / AMI** for that meter cohort | Usually a **MAP** (meter asset provider), the **DisCo’s AMI team**, or an OEM **only if they operate the head-end** (Hexing, Conlog, Mojec, etc.). |
-| Confirm “on the meter” | Same HES, plus a confirmation webhook or status API | This is the difference between ACCEPTED and CONFIRMED. |
-| USSD | **Telco + NCC shortcode**, Africa’s Talking or similar | Not a meter company. |
-| WhatsApp | **Meta WABA** | Not a meter company. |
+| Wallet / card | Pay | **Paystack** |
+| “Is this number real?” | Meter name/address | **VTpass** `merchant-verify` (already coded). Not a Disco API. |
+| Licensed units | STS vend | **VTpass** `pay` (still required even for no-keypad: we mint, then inject) |
+| **Airtime lands on the phone** | **Units land on the meter, no keypad** | **One Disco + that Disco’s MAP / AMI / HES operator** |
+| “Buy ₦2,000 data when I hit 100MB” | Auto-recharge ₦X or when kWh ≤ Y | Same HES **plus** Paystack saved card. Engine is AutoPower; live charge stays off until legal + AMI. |
 
-**Practical sequence**
+**Reach out, in this order**
 
-1. Ship **token vending** with VTpass + Paystack (no meter OEM required).
-2. Pick **one** remote-credit partner for **one** DisCo + one meter brand/cohort (e.g. IKEDC + Hexing via that DisCo’s MAP).
-3. Get their HES docs → implement a translator behind `heshttp` → attest the cohort in `/admin` → test on a real meter.
-4. Repeat per cohort. Never advertise “no tokens” globally.
+1. **Ikeja Electric (IKEDC) commercial / vendor / AMI** — *one* Disco. Ask: *who operates your prepaid **smart-meter HES**? We need remote credit push + confirmation + (for auto-recharge) a balance/reading API. We will vend through a licensed aggregator.* Historically IKEDC MAPs have included **Mojec**, **CIG/Conlog**, **New Hampshire**. Do not guess which one runs AMI today — ask Ikeja.
+2. **That MAP’s integrations / HES team** (whoever Ikeja names). Ask for the API PDF: auth, push credit, status, meter-confirmed webhook, errors, sandbox meters. This is the OPay pipe.
+3. **VTpass** — merchant + electricity keys. Meter verify + licensed token. Still needed.
+4. **Paystack** — merchant + `sk_test_` then live. Money + later saved-card mandates for auto-recharge.
 
-Meter manufacturers matter **only** as the operator of (or gateway into) the HES. DisCos matter for **authorising** you to vend and, if they own AMI, for remote credit. MAPs often sit in between.
+**Do not call yet:** Hexing/Conlog/Mojec sales (unless the Disco/MAP says they run the HES), Benin Electric, every other Disco, telcos, Meta.
+
+**No hardware.** Customers already have meters. MAPs already installed AMI where it exists. Meterly is software on top.
+
+**Honest coverage:** no-keypad + auto-recharge like OPay only works on **AMI-connected** meters. Keypad-only STS meters cannot receive a silent credit — there is no radio. Product copy: “works on compatible smart meters,” never “all meters, no token.”
+
+Sequence: get Ikeja (or one Disco) HES docs → translator behind `heshttp` → attest cohort in `/admin` → witnessed real-meter test → then auto-recharge on that cohort. Repeat per Disco.
 
 ---
 
@@ -250,6 +257,7 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
+- **2026-11-26: North star = no-keypad + OPay-style auto-recharge.** Token is fallback. First partner call is one Disco AMI/MAP, then VTpass + Paystack.
 - **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.
 - **2026-11-26: PR #21 merged.** Restyle + coming-soon Auto-renew + consoles.
 - **2026-11-26: PR #20** and earlier — identity, packs, Redis, credit-on-meter plane. See git history.
