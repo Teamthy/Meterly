@@ -63,6 +63,7 @@ type Config struct {
 	VerifiedDailyCapMinor   int64
 	ReverifyAfter           time.Duration
 	PhoneMsgsPerMinute      int
+	PhoneLimiter            ratelimit.Limiter
 	Now                     func() time.Time
 	Log                     *slog.Logger
 }
@@ -116,6 +117,10 @@ func New(cfg Config) (*Service, error) {
 	if ecfg.VerifiedDailyCapMinor <= 0 {
 		ecfg.VerifiedDailyCapMinor = conversation.DefaultVerifiedDailyCapMinor
 	}
+	phoneLim := cfg.PhoneLimiter
+	if phoneLim == nil {
+		phoneLim = ratelimit.New(perMin, max(10, perMin/2))
+	}
 	s := &Service{
 		st:           cfg.Store,
 		orch:         cfg.Orch,
@@ -125,7 +130,7 @@ func New(cfg Config) (*Service, error) {
 		ussdAdp:      cfg.USSDAdapter,
 		waParser:     cfg.WhatsAppParser,
 		engineCfg:    ecfg,
-		phoneLimiter: ratelimit.New(perMin, max(10, perMin/2)),
+		phoneLimiter: phoneLim,
 		now:          nowFn,
 		log:          log,
 	}

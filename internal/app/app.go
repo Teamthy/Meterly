@@ -34,6 +34,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/providers/paystack"
 	"github.com/teamthy/meterly/internal/providers/vtpass"
+	"github.com/teamthy/meterly/internal/ratelimit"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
@@ -76,6 +77,7 @@ type App struct {
 	remoteRaw    providers.RemoteCreditProvider
 	authn        auth.Authenticator
 	wrapPublic   func(http.Handler) http.Handler
+	redis        *ratelimit.Client
 
 	closeOnce sync.Once
 }
@@ -94,6 +96,9 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	}
 	fail := func(err error) (*App, error) {
 		_ = a.Tracer.Shutdown(context.Background())
+		if a.redis != nil {
+			a.redis.Close()
+		}
 		if a.pool != nil {
 			a.pool.Close()
 		}
@@ -211,6 +216,15 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	} else {
 		log.Warn("using dev authentication: the bearer token is the user; operator:/admin: prefixes grant staff roles")
 		a.authn = auth.DevAuth{}
+	}
+
+	if cfg.RedisURL != "" {
+		rc, err := ratelimit.Dial(cfg.RedisURL)
+		if err != nil {
+			return fail(fmt.Errorf("REDIS_URL: %w", err))
+		}
+		a.redis = rc
+		log.Info("rate limits shared via redis")
 	}
 
 	reg := registry.New(a.Store, box, vend, remote)
@@ -343,6 +357,10 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	}
 	a.Notifications = ns
 
+	var phoneLim ratelimit.Limiter
+	if a.redis != nil {
+		phoneLim = a.redis.Limiter("offline-phone", 30, 15)
+	}
 	offSvc, err := offline.New(offline.Config{
 		Store:                   a.Store,
 		Orch:                    a.Orch,
@@ -357,6 +375,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		UnverifiedDailyCapMinor: cfg.OfflineUnverifiedDailyMaxMinor,
 		VerifiedDailyCapMinor:   cfg.OfflineVerifiedDailyMaxMinor,
 		ReverifyAfter:           cfg.OfflineReverifyAfter,
+		PhoneLimiter:            phoneLim,
 		Log:                     log,
 	})
 	if err != nil {
@@ -425,6 +444,9 @@ func (a *App) Handler() http.Handler {
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		Remote:             a.remoteRaw,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
+	}
+	if a.redis != nil {
+		s.NewLimiter = a.redis.Limiter
 	}
 	h := s.Routes()
 	if a.wrapPublic != nil {
@@ -769,6 +791,9 @@ func (a *App) Shutdown(ctx context.Context) {
 			if err := a.Tracer.Shutdown(ctx); err != nil {
 				a.Log.Warn("tracer shutdown incomplete", "err", err)
 			}
+		}
+		if a.redis != nil {
+			a.redis.Close()
 		}
 		if a.Store != nil {
 			a.Store.Close()

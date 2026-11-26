@@ -125,6 +125,9 @@ type Config struct {
 	RateAuthFailuresPerMin int
 	RateWebhooksPerMin     int
 	ClientIPHeader         string
+	// RedisURL, when set (redis:// or rediss://), shares rate-limit buckets
+	// across API replicas. Empty keeps in-process token buckets.
+	RedisURL string
 
 	Orchestrator   orchestrator.Config
 	ResumeInterval time.Duration
@@ -411,6 +414,7 @@ func Load(getenv func(string) string) (Config, error) {
 	c.RatePublicPayPerMin = int(integer("RATE_LIMIT_PUBLIC_PAY_PER_MIN", 60))
 	c.RatePublicLinkPerMin = int(integer("RATE_LIMIT_PUBLIC_LINK_PER_MIN", 10))
 	c.ClientIPHeader = getenv("CLIENT_IP_HEADER")
+	c.RedisURL = strings.TrimSpace(getenv("REDIS_URL"))
 
 	o := orchestrator.DefaultConfig()
 	o.FeeMinor = integer("FEE_MINOR", o.FeeMinor)
