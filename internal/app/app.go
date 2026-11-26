@@ -391,6 +391,7 @@ func (a *App) Handler() http.Handler {
 		PowerDeskDisabled:  !a.Cfg.FeaturePowerDesk,
 		USSDDisabled:       !a.Cfg.FeatureUSSD,
 		WhatsAppDisabled:   !a.Cfg.FeatureWhatsApp,
+		SupportDisabled:    !a.Cfg.FeatureSupport,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}

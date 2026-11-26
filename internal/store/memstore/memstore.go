@@ -27,6 +27,7 @@ import (
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
 	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -88,6 +89,10 @@ type Store struct {
 	processedMsgs     map[string]time.Time // "<channel>:<message_id>"
 	offlinePurchases  map[uuid.UUID]*conversation.OfflinePurchase
 	tokenResends      []*conversation.TokenResend
+	supportKeys       map[string]*support.IdentityKey
+	supportThreads    map[uuid.UUID]*support.Thread
+	supportMessages   map[uuid.UUID]*support.Message
+	supportWraps      map[string]*support.WrappedKey // threadID + ":" + holder
 }
 
 func New() *Store {
@@ -130,6 +135,10 @@ func New() *Store {
 		convSessionByProv: map[string]uuid.UUID{},
 		processedMsgs:     map[string]time.Time{},
 		offlinePurchases:  map[uuid.UUID]*conversation.OfflinePurchase{},
+		supportKeys:       map[string]*support.IdentityKey{},
+		supportThreads:    map[uuid.UUID]*support.Thread{},
+		supportMessages:   map[uuid.UUID]*support.Message{},
+		supportWraps:      map[string]*support.WrappedKey{},
 	}
 }
 
@@ -219,6 +228,7 @@ func (r *repos) Pots() store.PotRepo                                     { retur
 func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
 func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
 func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
+func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 

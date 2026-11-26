@@ -24,6 +24,7 @@ ENTRYPOINT ["/worker"]
 
 FROM gcr.io/distroless/static-debian12:nonroot AS api
 COPY --from=build /out/api /api
+COPY --from=build /out/migrate /migrate
 USER nonroot:nonroot
 EXPOSE 8080 9090
 ENTRYPOINT ["/api"]

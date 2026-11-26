@@ -13,6 +13,8 @@ import {
   Smartphone,
   ShieldAlert,
   UserCheck,
+  MessageCircle,
+  Headphones,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -22,12 +24,18 @@ const NAV_ITEMS = [
   { href: "/autopower", label: "AutoPower", icon: CalendarClock },
   { href: "/power-desk", label: "Power Desk", icon: Building2 },
   { href: "/offline", label: "Offline *347#", icon: Smartphone },
+  { href: "/support", label: "Support", icon: MessageCircle },
+  { href: "/admin/support", label: "Support Inbox", icon: Headphones },
   { href: "/admin", label: "Ops Console", icon: ShieldAlert },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { token, activePersona, setPersonaById, setCustomToken } = useAuth();
+  const isStaff = token.startsWith("operator:") || token.startsWith("admin:");
+  const navItems = NAV_ITEMS.filter(
+    (item) => item.href !== "/admin/support" || isStaff
+  );
   const [ready, setReady] = useState<boolean | null>(null);
   const [showCustomAuth, setShowCustomAuth] = useState(false);
   const [draftTok, setDraftTok] = useState("");
@@ -144,7 +152,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav className="border-t border-white/10 bg-[#0E2620]">
           <div className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-4 py-1.5 sm:px-6">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               const active =
                 item.href === "/"

@@ -21,6 +21,9 @@ func TestDevDefaults(t *testing.T) {
 	if !c.FeaturePayForMe || c.PublicBaseURL != "https://meterly.ng" {
 		t.Fatalf("unexpected M7 dev defaults: FeaturePayForMe=%v PublicBaseURL=%q", c.FeaturePayForMe, c.PublicBaseURL)
 	}
+	if !c.FeatureSupport {
+		t.Fatal("FEATURE_SUPPORT must default to true")
+	}
 }
 
 func TestModeRequired(t *testing.T) {
@@ -290,5 +293,15 @@ func TestOfflineChannelsConfig(t *testing.T) {
 	}
 	if _, err := Load(env(map[string]string{"MODE": "dev", "USSD_ALLOWED_IPS": "not-an-ip"})); err == nil || !strings.Contains(err.Error(), "USSD_ALLOWED_IPS") {
 		t.Fatalf("invalid USSD_ALLOWED_IPS must fail: %v", err)
+	}
+}
+
+func TestSupportConfig(t *testing.T) {
+	off, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_SUPPORT": "false"}))
+	if err != nil || off.FeatureSupport {
+		t.Fatalf("expected FEATURE_SUPPORT=false: %v %+v", err, off)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_SUPPORT": "maybe"})); err == nil || !strings.Contains(err.Error(), "FEATURE_SUPPORT") {
+		t.Fatalf("invalid FEATURE_SUPPORT must fail: %v", err)
 	}
 }
