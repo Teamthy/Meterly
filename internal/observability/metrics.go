@@ -107,6 +107,10 @@ type Registry struct {
 	notifDeliveries map[notifDelivKey]uint64
 
 	resumeEscalations atomic.Uint64
+
+	vendingWalletMinor atomic.Int64
+	vendingPaused      atomic.Int64
+	readyDegraded      atomic.Int64
 }
 
 func NewRegistry() *Registry {
@@ -203,6 +207,23 @@ func (r *Registry) IncResumeEscalations() {
 		return
 	}
 	r.resumeEscalations.Add(1)
+}
+
+func (r *Registry) SetVendingHealth(walletMinor int64, paused bool) {
+	if r == nil {
+		return
+	}
+	if walletMinor < 0 {
+		walletMinor = 0
+	}
+	r.vendingWalletMinor.Store(walletMinor)
+	if paused {
+		r.vendingPaused.Store(1)
+		r.readyDegraded.Store(1)
+		return
+	}
+	r.vendingPaused.Store(0)
+	r.readyDegraded.Store(0)
 }
 
 func (r *Registry) IncNotificationDelivery(channel, status string) {
@@ -350,6 +371,16 @@ func (r *Registry) Render() string {
 	for _, k := range nKeys {
 		fmt.Fprintf(&b, "notification_deliveries_total{channel=%q,status=%q} %d\n", k.channel, k.status, r.notifDeliveries[k])
 	}
+
+	b.WriteString("# HELP vending_wallet_minor Last observed vending-provider wallet balance in kobo.\n")
+	b.WriteString("# TYPE vending_wallet_minor gauge\n")
+	fmt.Fprintf(&b, "vending_wallet_minor %d\n", r.vendingWalletMinor.Load())
+	b.WriteString("# HELP vending_paused 1 when electricity vending is paused (wallet below floor).\n")
+	b.WriteString("# TYPE vending_paused gauge\n")
+	fmt.Fprintf(&b, "vending_paused %d\n", r.vendingPaused.Load())
+	b.WriteString("# HELP ready_degraded 1 when /readyz is serving degraded.\n")
+	b.WriteString("# TYPE ready_degraded gauge\n")
+	fmt.Fprintf(&b, "ready_degraded %d\n", r.readyDegraded.Load())
 
 	return b.String()
 }

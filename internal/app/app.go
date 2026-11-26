@@ -253,6 +253,9 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	a.Orch.SetMetrics(a.Metrics)
 	a.Orch.SetMeterReadingProvider(readings)
 	a.Orch.SetFeatureGiftSMS(cfg.FeatureGiftSMS)
+	if wp, ok := rawVend.(providers.WalletProvider); ok {
+		a.Orch.SetWallet(wp, cfg.VTPassWalletMinMinor)
+	}
 
 	notifProvs := map[notifications.Channel]notifications.Provider{}
 	inboundVers := map[string]notifications.InboundVerifier{}

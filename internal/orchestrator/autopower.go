@@ -1937,8 +1937,9 @@ func (o *Orchestrator) pollSingleRule(ctx context.Context, ruleID uuid.UUID, pol
 			MeterID: rl.MeterID, MilliKWh: milliKWh, ReadAt: obsAt, Provider: o.readings.Name(),
 		})
 
+		staleReading := now.Sub(obsAt) > autopower.LowBalanceMaxReadingAge
 		cooldownOK := rl.LastLowBalanceTriggered == nil || !now.Before(rl.LastLowBalanceTriggered.Add(autopower.LowBalanceCooldown))
-		if milliKWh <= rl.LowBalanceMilliKWh && cooldownOK {
+		if milliKWh <= rl.LowBalanceMilliKWh && cooldownOK && !staleReading {
 			recent, err := r.AutoPower().ListRunsForRule(ctx, rl.ID, 5)
 			if err != nil {
 				return err

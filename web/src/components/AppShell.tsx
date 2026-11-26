@@ -66,6 +66,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { token, activePersona, setPersonaById, setCustomToken } = useAuth();
   const isStaff = token.startsWith("operator:") || token.startsWith("admin:");
   const [ready, setReady] = useState<boolean | null>(null);
+  const [vendingPaused, setVendingPaused] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [showCustomAuth, setShowCustomAuth] = useState(false);
   const [draftTok, setDraftTok] = useState("");
@@ -73,11 +74,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     fetch("/readyz", { cache: "no-store" })
-      .then((r) => {
-        if (!cancelled) setReady(r.ok);
+      .then(async (r) => {
+        if (cancelled) return;
+        setReady(r.ok);
+        if (!r.ok) {
+          setVendingPaused(false);
+          return;
+        }
+        const data = (await r.json().catch(() => ({}))) as {
+          status?: string;
+          vending?: string;
+        };
+        setVendingPaused(data.status === "degraded" || data.vending === "paused");
       })
       .catch(() => {
-        if (!cancelled) setReady(false);
+        if (!cancelled) {
+          setReady(false);
+          setVendingPaused(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -190,13 +204,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <span
               className={`hidden h-1.5 w-1.5 rounded-full sm:inline-block ${
-                ready === true
+                ready === true && !vendingPaused
                   ? "bg-volt"
                   : ready === false
                     ? "bg-rose-400"
                     : "bg-amber-400"
               }`}
-              title={ready === true ? "API ready" : ready === false ? "API offline" : "Checking"}
+              title={
+                vendingPaused
+                  ? "Vending paused"
+                  : ready === true
+                    ? "API ready"
+                    : ready === false
+                      ? "API offline"
+                      : "Checking"
+              }
             />
             {!isPublicGuestPage && (
               <select
@@ -272,6 +294,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 text-paper sm:px-6 sm:py-8">
+        {vendingPaused ? (
+          <div
+            role="status"
+            className="mb-4 rounded-xl border border-amber-400/40 bg-amber-400/12 px-4 py-3 text-sm text-amber-100"
+          >
+            Electricity vending is paused. Do not pay — Disco top-up is temporarily
+            unavailable.
+          </div>
+        ) : null}
         {children}
       </main>
 

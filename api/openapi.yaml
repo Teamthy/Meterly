@@ -3958,6 +3958,8 @@ components:
         - METER_NOT_ELIGIBLE
         - NAME_NOT_CONFIRMED
         - PURCHASE_IN_FLIGHT
+        - ACCOUNT_SUSPENDED
+        - VENDING_PAUSED
         - QUOTE_EXPIRED
         - TRANSACTION_NOT_FOUND
         - PAYMENT_UNCONFIRMED
@@ -4025,6 +4027,9 @@ components:
       properties:
         status:
           type: string
+        vending:
+          type: string
+          description: On /readyz, "ok" or "paused" when Disco top-up is unavailable.
 
     MoneyAmount:
       type: object

@@ -48,6 +48,7 @@ type Config struct {
 	VTPassPublicKey      string
 	VTPassBaseURL        string
 	VTPassDefaultPhone   string
+	VTPassWalletMinMinor int64
 	RemoteProvider       string // mock | none | http
 	RemoteHESBaseURL     string
 	RemoteHESHMACSecret  string
@@ -422,6 +423,10 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	c.RateWritesPerMin = int(integer("RATE_LIMIT_WRITES_PER_MIN", 30))
 	c.RateAuthFailuresPerMin = int(integer("RATE_LIMIT_AUTH_FAILURES_PER_MIN", 20))
+	c.VTPassWalletMinMinor = integer("VTPASS_WALLET_MIN_MINOR", 0)
+	if c.VendingProvider == "vtpass" && strings.TrimSpace(getenv("VTPASS_WALLET_MIN_MINOR")) == "" {
+		c.VTPassWalletMinMinor = 5_000_000 // ₦50,000
+	}
 	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
 	c.RatePublicPayPerMin = int(integer("RATE_LIMIT_PUBLIC_PAY_PER_MIN", 60))
 	c.RatePublicLinkPerMin = int(integer("RATE_LIMIT_PUBLIC_LINK_PER_MIN", 10))

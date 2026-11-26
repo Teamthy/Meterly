@@ -208,3 +208,39 @@ func TestPollLowUnitsIdempotent(t *testing.T) {
 		}
 	})
 }
+
+func TestQuoteRefusesWhenVendingWalletLow(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		uid := e.user(t, "ada")
+		m, err := e.o.Meters.Register(e.ctx, uid, "45011115555", "IKEDC", "Home")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.vend.SetWalletMinor(0)
+		e.o.SetWallet(e.vend, 50_000)
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: m.ID, AmountMinor: 500000, Pref: orchestrator.PrefToken,
+		}); !errors.Is(err, orchestrator.ErrVendingPaused) {
+			t.Fatalf("wallet empty: %v", err)
+		}
+	})
+}
+
+func TestChargeDisputePausesPurchaser(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		paid := e.buy(t, "ada", "45011116666", orchestrator.PrefToken)
+		if err := e.o.HandleChargeDispute(e.ctx, paid.PaymentProviderRef); err != nil {
+			t.Fatal(err)
+		}
+		uid := e.user(t, "ada")
+		other, err := e.o.Meters.Register(e.ctx, uid, "45011117777", "IKEDC", "Other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: other.ID, AmountMinor: 500000, Pref: orchestrator.PrefToken,
+		}); !errors.Is(err, orchestrator.ErrAccountSuspended) {
+			t.Fatalf("suspended: %v", err)
+		}
+	})
+}

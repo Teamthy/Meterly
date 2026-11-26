@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,6 +101,8 @@ var (
 	ErrInvalidPack       = errors.New("unknown amount pack")
 	ErrInFlight          = errors.New("a purchase for this meter is already in progress")
 	ErrNameNotConfirmed  = errors.New("confirm the disco account name before paying")
+	ErrAccountSuspended  = errors.New("purchases are paused on this account")
+	ErrVendingPaused     = errors.New("electricity vending is paused")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
@@ -128,6 +131,14 @@ type Orchestrator struct {
 	metrics        *observability.Registry
 	log            *slog.Logger
 	Now            func() time.Time
+
+	wallet    providers.WalletProvider
+	walletMin int64
+	walletTTL time.Duration
+	walletMu  sync.Mutex
+	walletAt  time.Time
+	walletBal int64
+	walletOK  bool
 }
 
 func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
@@ -266,8 +277,14 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 	if err := gifts.Validate(req.IsGift, req.RecipientPhone, req.NotifyRecipient); err != nil {
 		return nil, false, err
 	}
+	if err := o.ensureVendingOpen(ctx); err != nil {
+		return nil, false, err
+	}
 	now := o.Now()
 	err = o.st.InTx(ctx, func(r store.Repos) error {
+		if err := o.ensurePurchaserActive(ctx, r, req.CustomerID); err != nil {
+			return err
+		}
 		if req.IdempotencyKey != "" {
 			existing, err := r.Idempotency().Reserve(ctx, idempotency.Record{
 				Scope: req.CustomerID, Operation: opCreateTransaction, Key: req.IdempotencyKey, RequestHash: req.RequestHash,

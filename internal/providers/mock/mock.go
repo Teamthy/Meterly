@@ -246,12 +246,31 @@ func (p *Payments) ParseWebhook(h http.Header, body []byte) (providers.WebhookEv
 // ---- Vending ---------------------------------------------------------------
 
 type Vending struct {
-	mu    sync.Mutex
-	vends map[string]providers.VendResult // by idempotency key
-	Calls int
+	mu          sync.Mutex
+	vends       map[string]providers.VendResult // by idempotency key
+	Calls       int
+	walletMinor int64
+	walletSet   bool
 }
 
 func NewVending() *Vending { return &Vending{vends: map[string]providers.VendResult{}} }
+
+func (v *Vending) SetWalletMinor(minor int64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.walletSet = true
+	v.walletMinor = minor
+}
+
+func (v *Vending) WalletBalance(_ context.Context) (providers.WalletBalance, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	minor := v.walletMinor
+	if !v.walletSet {
+		minor = 1_000_000_000 // ₦10m
+	}
+	return providers.WalletBalance{Minor: minor}, nil
+}
 
 func (v *Vending) Name() string { return "mockvend" }
 
@@ -451,6 +470,17 @@ func (m *MeterReadings) SetReading(meterNumber string, kWh float64, at time.Time
 		at = time.Now().UTC()
 	}
 	m.readings[meterNumber] = readingEntry{kWh: kWh, at: at.UTC(), kwhPerHour: 0.35}
+}
+
+// SetReadingFrozen stores kWh and at without demo drain, so AutoPower can
+// see a stale timestamp.
+func (m *MeterReadings) SetReadingFrozen(meterNumber string, kWh float64, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	m.readings[meterNumber] = readingEntry{kWh: kWh, at: at.UTC(), kwhPerHour: 0}
 }
 
 func (m *MeterReadings) LatestReading(_ context.Context, meterNumber string) (float64, time.Time, error) {

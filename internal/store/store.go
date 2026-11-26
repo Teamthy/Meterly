@@ -150,6 +150,12 @@ type TxnFilter struct {
 	Limit      int
 }
 
+const (
+	UserActive    = "ACTIVE"
+	UserSuspended = "SUSPENDED"
+	UserClosed    = "CLOSED"
+)
+
 type UserRepo interface {
 	// EnsureByExternalID maps an identity-provider subject to an internal
 	// user ID (UUID string), creating the user on first sight.
@@ -157,6 +163,10 @@ type UserRepo interface {
 	// LockForUpdate acquires a transaction-scoped row lock on the user so
 	// per-user spend caps serialize across concurrent AutoPower rules.
 	LockForUpdate(ctx context.Context, userID string) error
+	// Status is ACTIVE, SUSPENDED or CLOSED. Missing row is ErrNotFound.
+	Status(ctx context.Context, userID string) (string, error)
+	// SetStatus updates ACTIVE/SUSPENDED/CLOSED. Chargebacks suspend.
+	SetStatus(ctx context.Context, userID, status string) error
 	// UpsertContacts updates encrypted verified contact fields on an existing
 	// user. Non-empty fields replace existing values; empty fields leave the
 	// stored value untouched.

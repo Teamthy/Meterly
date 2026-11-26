@@ -33,13 +33,13 @@ If a row says GAP, the build is the **smallest** thing in the last column — no
 | 6 | Abandoned checkout | Dangling PayPending | **IN** expiry sweeper marks unpaid FAILED only if PSP says unpaid |
 | 7 | Paystack timeout after debit | We think unpaid, they charged | **IN** ambiguous → UNKNOWN; verify by ref; never new ref for same attempt |
 | 8 | `send_otp` / 3DS on saved card | AutoPower hangs | **IN** ChargeSaved pending → VerifyPayment; **OFF** live AutoPower |
-| 9 | Chargeback after token typed | We lost naira, they have light | **OPS** evidence pack; do not re-vend; **GAP** Paystack `charge.dispute` → pause user |
+| 9 | Chargeback after token typed | We lost naira, they have light | **OPS** evidence pack; do not re-vend; **IN** Paystack `charge.dispute.*` pauses the purchaser |
 | 10 | Card-testing (₦500 × 20 meters) | Stolen card | **IN** write rate limit; **GAP** velocity cap: N new meters / day / card |
 | 11 | Bank transfer T+1, user retries | Two payments | **IN** one txn one pay record; second init is new txn only with new key |
 | 12 | Kobo vs naira | 100× overcharge | **IN** money.Minor; VTpass amount is naira at adapter edge |
 | 13 | Refund while vend UNKNOWN | Double: refund + token | **IN** refund only if VendFailed definitive; review otherwise |
 | 14 | Email missing | Paystack init 400, half txn | **IN** API requires email before create |
-| 15 | Settlement weekend, wallet empty | Monday vends fail | **OPS** Friday float ≥ 2 days GMV; **GAP** alert when VTpass balance < threshold |
+| 15 | Settlement weekend, wallet empty | Monday vends fail | **OPS** Friday float ≥ 2 days GMV; **IN** wallet gauge + warn when below `VTPASS_WALLET_MIN_MINOR` |
 
 ---
 
@@ -54,11 +54,11 @@ If a row says GAP, the build is the **smallest** thing in the last column — no
 | 20 | Code `015` requery NOT_FOUND | Stuck forever | **IN** safe to retry pay with **new** key only then |
 | 21 | `099` for hours | Customer in dark | **IN** backoff → MANUAL_REVIEW; **OPS** tell them wait, don’t pay twice |
 | 22 | Delivered, empty `purchased_code` | No token, we mark success | **IN** prepaid delivered without token stays PENDING |
-| 23 | VTpass wallet 0 | All vends fail | **OPS** E; **GAP** `/readyz` degrade + banner “vending paused” |
+| 23 | VTpass wallet 0 | All vends fail | **OPS** E; **IN** `/readyz` degraded + banner “vending paused”; quotes 503 |
 | 24 | Unknown Disco / Benin | Invented serviceID | **IN** local map only; reject ACME |
-| 25 | `Can_Vend=no` | Pay then fail | **GAP** plumb verify `Can_Vend` into quote 422 before pay |
-| 26 | Min purchase (e.g. ₦500/₦1000) | Pay ₦400, vend reject | **GAP** use verify `Min_Purchase_Amount` on quote |
-| 27 | Arrears taken from amount | User thought ₦5k units, got debt | **GAP** show arrears on confirm (VTpass field exists) |
+| 25 | `Can_Vend=no` | Pay then fail | **IN** quote 422 `METER_CANNOT_VEND` |
+| 26 | Min purchase (e.g. ₦500/₦1000) | Pay ₦400, vend reject | **IN** quote uses verify `Min_Purchase_Amount` |
+| 27 | Arrears taken from amount | User thought ₦5k units, got debt | **IN** arrears on confirm screen |
 | 28 | Prepaid vs postpaid mix | Wrong variation_code | **IN** verify tries both; persist `MeterType` |
 | 29 | Meter blocked / 016 | Definitive fail after pay | **IN** VendFailed + refund path |
 | 30 | Requery storm | Rate-limit / ban | **IN** Resume backoff 30s–30m, max 12 then review |
@@ -84,7 +84,7 @@ If a row says GAP, the build is the **smallest** thing in the last column — no
 | 43 | Cohort prefix too wide | Keypad meters marked remote | **OPS** attest with evidence; **GAP** require MAP list not just digits |
 | 44 | Radio down, supply on | ACCEPTED stuck | **IN** Resume; then fallback after failure confirmed |
 | 45 | Confirm 6 hours later | User already refunded | **IN** we do not refund ACCEPTED; **OPS** never refund maybe |
-| 46 | Customer pays twice because dark | Two credits when feeder back | **OPS** “do not pay twice”; **GAP** block second buy on same meter while REMOTE pending |
+| 46 | Customer pays twice because dark | Two credits when feeder back | **OPS** “do not pay twice”; **IN** one in-flight paid buy per meter |
 | 47 | Mock HES in staging | False “no keypad” ads | **IN** `REMOTE_PROVIDER=none` outside docs; **OPS** launch rule |
 | 48 | Partner idempotency weaker than ours | Double push | **IN** our key `credit:<uuid>`; **GAP** translator must send it |
 | 49 | Meter firmware rejects inject | FAILED remote | **IN** FAILED + operator token fallback |
@@ -98,16 +98,16 @@ If a row says GAP, the build is the **smallest** thing in the last column — no
 |---|---|---|---|
 | 51 | Typo one digit | Neighbour gets units | **IN** verify shows Disco name; **OPS** cannot pull back |
 | 52 | Right number, wrong Disco | Verify fail or wrong biller | **IN** serviceID from Disco code; invalid meter |
-| 53 | 11 vs 13 digits / leading zero | Hash mismatch, duplicate meters | **GAP** normalise digits-only before hash |
-| 54 | Meter replaced, old number still vends | Money on dead box | **GAP** re-verify before each pay (stale ValidatedAt) |
+| 53 | 11 vs 13 digits / leading zero | Hash mismatch, duplicate meters | **IN** normalise digits-only before hash |
+| 54 | Meter replaced, old number still vends | Money on dead box | **IN** re-verify on every quote |
 | 55 | Postpaid account vs prepaid meter | Wrong product | **IN** type loop; persist type |
 | 56 | Tenant buys landlord meter | Allowed (product) / abuse | **IN** PURCHASE grant ≠ ownership; households |
 | 57 | Household member without role | 403 or IDOR | **IN** grants; never mint MANAGE |
 | 58 | Self-register MANAGE | Fake owner | **IN** self ≤ PURCHASE |
 | 59 | Same meter two users | Fight over token reveal | **IN** token = purchaser only |
-| 60 | Sandbox meter `1111111111111` in prod | Fake success | **GAP** reject known sandbox numbers when `PROVIDER_ENVIRONMENT=LIVE` |
-| 61 | Verify prepaid, later postpaid | Wrong variation | **GAP** re-verify if ValidatedAt > 7d |
-| 62 | Name “TEST METER” ignored | Fat-finger | **IN** confirm UI; **GAP** require tap “this is my name” |
+| 60 | Sandbox meter `1111111111111` in prod | Fake success | **IN** reject known sandbox numbers when `PROVIDER_ENVIRONMENT=PRODUCTION` |
+| 61 | Verify prepaid, later postpaid | Wrong variation | **IN** re-verify on every quote |
+| 62 | Name “TEST METER” ignored | Fat-finger | **IN** confirm UI + tap “this is my meter” |
 
 ---
 
@@ -134,11 +134,11 @@ If a row says GAP, the build is the **smallest** thing in the last column — no
 |---|---|---|---|
 | 73 | Low kWh glitch fires twice | Double charge | **IN** 24h cooldown; unique (rule, scheduled_for) |
 | 74 | Tick race two workers | Double ChargeSaved | **IN** pre-commit `apchg:<run_id>` then verify, never second charge |
-| 75 | THRESHOLD + schedule same night | Two buys | **IN** rule mode; **GAP** one in-flight txn per meter |
+| 75 | THRESHOLD + schedule same night | Two buys | **IN** rule mode; **IN** one in-flight txn per meter |
 | 76 | 3× card fail | Angry customer | **IN** pause 3-strike; heads-up 12h + skip |
 | 77 | Skip after charge dispatched | Too late | **IN** skip only unstarted SCHEDULED |
 | 78 | Cap hit | Surprise skip | **IN** SKIPPED_CAP; notify |
-| 79 | Reading 48h stale | Buy with 80 kWh left | **IN** confirmed remote reading required; **GAP** max age on reading |
+| 79 | Reading 48h stale | Buy with 80 kWh left | **IN** confirmed remote reading required; **IN** skip AutoPower if reading > 48h |
 | 80 | Auto while feeder dead | Charged, still dark | **OFF** + catch-22 policy; don’t fire if last remote unread |
 | 81 | Meter access revoked | Still charging | **IN** pause on RemoveSavedMeter / card delete |
 | 82 | Consent text changed | Legal | **IN** consent_version stored; new save required |
@@ -188,12 +188,12 @@ If a row says GAP, the build is the **smallest** thing in the last column — no
 
 Do **not** start 100 tickets. This order:
 
-1. **Quote gates** — `Can_Vend`, `Min_Purchase_Amount`, arrears on confirm (25–27). Stops paying for a vend that cannot happen.
-2. **One in-flight buy per meter** (46, 75). Stops panic double-pay in the dark.
-3. **Normalise meter digits** + reject live sandbox numbers (53, 60).
-4. **Re-verify stale meters** (54, 61).
-5. **VTpass wallet / Paystack dispute hooks** (15, 9, 23).
-6. **Confirm-name tap** (62).
-7. AutoPower gaps only when the flag turns on (79–80).
+1. **Quote gates** — **IN** `Can_Vend`, `Min_Purchase_Amount`, arrears on confirm (25–27).
+2. **One in-flight buy per meter** — **IN** (46, 75).
+3. **Normalise meter digits** + reject live sandbox numbers — **IN** (53, 60).
+4. **Re-verify stale meters** — **IN** (54, 61).
+5. **VTpass wallet / Paystack dispute hooks** — **IN** (15, 9, 23).
+6. **Confirm-name tap** — **IN** (62).
+7. AutoPower reading age — **IN** (79). Live AutoPower stays **OFF** (80) until AMI + legal.
 
 Everything else is **already IN** or **OPS**. Building more product instead of (1)–(3) is how we fail the first live night.

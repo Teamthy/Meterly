@@ -38,6 +38,8 @@ type Fake struct {
 	*httptest.Server
 	APIKey    string
 	SecretKey string
+	// BalanceNaira is the sandbox wallet in naira (GET /balance).
+	BalanceNaira float64
 
 	mu             sync.Mutex
 	nextID         int64
@@ -50,6 +52,7 @@ func New(apiKey, secretKey string) *Fake {
 	f := &Fake{
 		APIKey:         apiKey,
 		SecretKey:      secretKey,
+		BalanceNaira:   100000,
 		nextID:         1700000000000,
 		byRequest:      map[string]*record{},
 		failAfterApply: map[string]int{},
@@ -116,6 +119,15 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body, &payload)
 
 	switch {
+	case strings.HasSuffix(r.URL.Path, "/balance"):
+		reply(map[string]any{
+			"code": "000",
+			"contents": map[string]any{
+				"currency": "NGN",
+				"balance":  f.BalanceNaira,
+			},
+		})
+		return
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merchant-verify"):
 		meter := stringify(payload["billersCode"])
 		sid := stringify(payload["serviceID"])

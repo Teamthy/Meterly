@@ -69,6 +69,23 @@ func (c client) do(method, path, user string, body any, hdr map[string]string) (
 	return res.StatusCode, out
 }
 
+func TestReadyzDegradesWhenVendingPaused(t *testing.T) {
+	st := memstore.New()
+	box, _ := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "t1")
+	pay, vend, remote := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit()
+	o := orchestrator.New(orchestrator.DefaultConfig(), st, registry.New(st, box, vend, remote), box, pay, vend, remote, slog.Default())
+	vend.SetWalletMinor(0)
+	o.SetWallet(vend, 50_000)
+	s := &httpapi.Server{O: o, Auth: auth.DevAuth{}, Payments: pay, Log: slog.Default()}
+	srv := httptest.NewServer(s.Routes())
+	defer srv.Close()
+	c := client{t, srv}
+	code, body := c.do("GET", "/readyz", "", nil, nil)
+	if code != 200 || body["status"] != "degraded" || body["vending"] != "paused" {
+		t.Fatalf("readyz %d %v", code, body)
+	}
+}
+
 func TestEndToEndPurchase(t *testing.T) {
 	for _, b := range []struct {
 		name string

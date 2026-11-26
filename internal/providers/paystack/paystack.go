@@ -385,18 +385,28 @@ func (c *Client) ParseWebhook(h http.Header, body []byte) (providers.WebhookEven
 	var evt struct {
 		Event string `json:"event"`
 		Data  struct {
-			Reference string `json:"reference"`
+			Reference   string `json:"reference"`
+			Transaction struct {
+				Reference string `json:"reference"`
+			} `json:"transaction"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &evt); err != nil || evt.Event == "" {
 		return providers.WebhookEvent{}, errors.New("paystack: malformed webhook body")
 	}
-	switch evt.Event {
-	case "charge.success":
-		if evt.Data.Reference == "" {
+	ref := strings.TrimSpace(evt.Data.Reference)
+	if ref == "" {
+		ref = strings.TrimSpace(evt.Data.Transaction.Reference)
+	}
+	switch {
+	case evt.Event == "charge.success":
+		if ref == "" {
 			return providers.WebhookEvent{}, errors.New("paystack: charge.success without reference")
 		}
-		return providers.WebhookEvent{Type: evt.Event, Reference: evt.Data.Reference, Relevant: true}, nil
+		return providers.WebhookEvent{Type: evt.Event, Reference: ref, Relevant: true}, nil
+	case strings.HasPrefix(evt.Event, "charge.dispute"):
+		// Pause the buyer. Never treat this as a payment success.
+		return providers.WebhookEvent{Type: evt.Event, Reference: ref, Relevant: true}, nil
 	default:
 		// refund.*, transfer.*, subscription.* and so on: acknowledged, ignored.
 		return providers.WebhookEvent{Type: evt.Event}, nil

@@ -103,6 +103,17 @@ type PaymentProvider interface {
 	ParseWebhook(h http.Header, body []byte) (WebhookEvent, error)
 }
 
+// WalletBalance is the vending aggregator's prepaid wallet in kobo.
+type WalletBalance struct {
+	Minor int64
+}
+
+// WalletProvider is optional. VTpass implements it so we can pause vending
+// before the wallet hits zero.
+type WalletProvider interface {
+	WalletBalance(ctx context.Context) (WalletBalance, error)
+}
+
 // WebhookEvent is the provider-neutral part of a payment webhook.
 type WebhookEvent struct {
 	Type      string

@@ -138,6 +138,34 @@ func TestPaystackEndToEnd(t *testing.T) {
 
 // Paystack created the checkout but the response was lost. The client
 // retries with the same Idempotency-Key and gets a working checkout.
+func TestPaystackDisputePausesBuyer(t *testing.T) {
+	eachStore(t, func(t *testing.T, st store.Store) {
+		e := newPaystackEnv(t, st)
+		code, txn := e.purchase(t, "45012345678", "ps-disp-0123456789ab")
+		if code != 202 {
+			t.Fatalf("create %d %v", code, txn)
+		}
+		id := txn["transaction_id"].(string)
+		ref := e.ref(t, id)
+		e.fake.Pay(ref, 0)
+		if c := e.webhook(t, "charge.success", ref, psSecret); c != 200 {
+			t.Fatalf("pay webhook: %d", c)
+		}
+		if c := e.webhook(t, "charge.dispute.create", ref, psSecret); c != 200 {
+			t.Fatalf("dispute webhook: %d", c)
+		}
+		code, q := e.c.do("POST", "/v1/electricity/quotes", "ada", map[string]any{
+			"meter_id": txn["meter_id"], "amount_minor": 500000, "currency": "NGN", "delivery_preference": "TOKEN",
+		}, nil)
+		if code != 403 {
+			t.Fatalf("quote after dispute %d %v", code, q)
+		}
+		if errObj, _ := q["error"].(map[string]any); errObj["code"] != "ACCOUNT_SUSPENDED" {
+			t.Fatalf("want ACCOUNT_SUSPENDED, got %v", q)
+		}
+	})
+}
+
 func TestPaystackLostInitializeResponse(t *testing.T) {
 	eachStore(t, func(t *testing.T, st store.Store) {
 		e := newPaystackEnv(t, st)

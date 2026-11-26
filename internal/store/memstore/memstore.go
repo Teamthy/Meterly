@@ -41,6 +41,7 @@ type Store struct {
 	users             map[string]string
 	userIDs           map[string]bool
 	userExt           map[string]string
+	userStatus        map[string]string
 	userProfiles      map[string]identity.Profile
 	userContacts      map[string]notifications.UserContacts
 	authChallenges    map[string]identity.Challenge
@@ -114,6 +115,7 @@ type Store struct {
 func New() *Store {
 	return &Store{
 		users: map[string]string{}, userIDs: map[string]bool{}, userExt: map[string]string{},
+		userStatus:   map[string]string{},
 		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
 		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
 		authSessions:   map[string]identity.Session{},
@@ -292,6 +294,39 @@ func (r *repos) LockForUpdate(_ context.Context, userID string) error {
 	if userID == "" || !r.s.userIDs[userID] {
 		return store.ErrNotFound
 	}
+	return nil
+}
+
+func (r *repos) Status(_ context.Context, userID string) (string, error) {
+	defer r.lock()()
+	if userID == "" || !r.s.userIDs[userID] {
+		return "", store.ErrNotFound
+	}
+	if st := r.s.userStatus[userID]; st != "" {
+		return st, nil
+	}
+	return store.UserActive, nil
+}
+
+func (r *repos) SetStatus(_ context.Context, userID, status string) error {
+	defer r.lock()()
+	if userID == "" || !r.s.userIDs[userID] {
+		return store.ErrNotFound
+	}
+	switch status {
+	case store.UserActive, store.UserSuspended, store.UserClosed:
+	default:
+		return errors.New("store: invalid user status")
+	}
+	prev := r.s.userStatus[userID]
+	r.s.userStatus[userID] = status
+	r.onUndo(func() {
+		if prev == "" {
+			delete(r.s.userStatus, userID)
+			return
+		}
+		r.s.userStatus[userID] = prev
+	})
 	return nil
 }
 

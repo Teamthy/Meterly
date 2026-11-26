@@ -169,6 +169,14 @@ func TestWebhookSignature(t *testing.T) {
 	if evt, err := c.ParseWebhook(h3, other); err != nil || evt.Relevant {
 		t.Fatalf("other events are acknowledged but ignored: %+v %v", evt, err)
 	}
+
+	dispute := []byte(`{"event":"charge.dispute.create","data":{"transaction":{"reference":"txn-1.abc"}}}`)
+	h4 := http.Header{}
+	h4.Set("X-Paystack-Signature", paystack.Sign(secret, dispute))
+	evt, err = c.ParseWebhook(h4, dispute)
+	if err != nil || !evt.Relevant || evt.Reference != "txn-1.abc" || evt.Type != "charge.dispute.create" {
+		t.Fatalf("dispute: %+v %v", evt, err)
+	}
 }
 
 func TestChargeSavedAndLostResponseReconciliation(t *testing.T) {

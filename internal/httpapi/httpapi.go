@@ -377,7 +377,15 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]string{"status": "ready"})
+	body := map[string]any{"status": "ready", "vending": "ok"}
+	if s.O != nil {
+		h := s.O.VendingHealth(r.Context())
+		if h.Paused {
+			body["status"] = "degraded"
+			body["vending"] = "paused"
+		}
+	}
+	writeJSON(w, 200, body)
 }
 
 // ---- meters -------------------------------------------------------------------
@@ -743,6 +751,13 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "INVALID_REQUEST", "malformed webhook")
 		return
 	}
+	if strings.HasPrefix(evt.Type, "charge.dispute") {
+		if err := s.O.HandleChargeDispute(r.Context(), evt.Reference); err != nil {
+			s.Log.Warn("dispute webhook", "err", err)
+		}
+		writeJSON(w, 200, map[string]string{"status": "received"})
+		return
+	}
 	if !evt.Relevant {
 		writeJSON(w, 200, map[string]string{"status": "ignored"})
 		return
@@ -889,6 +904,10 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "PURCHASE_IN_FLIGHT", "finish or wait for the open purchase on this meter")
 	case errors.Is(err, orchestrator.ErrNameNotConfirmed):
 		writeErr(w, 422, "NAME_NOT_CONFIRMED", "confirm the disco account name before paying")
+	case errors.Is(err, orchestrator.ErrAccountSuspended):
+		writeErr(w, 403, "ACCOUNT_SUSPENDED", "purchases are paused on this account")
+	case errors.Is(err, orchestrator.ErrVendingPaused):
+		writeErr(w, 503, "VENDING_PAUSED", "electricity vending is paused")
 	case errors.Is(err, meters.ErrNotFound):
 		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
 	case errors.Is(err, meters.ErrForbidden):

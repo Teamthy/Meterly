@@ -237,6 +237,12 @@ func (o *Orchestrator) IssueQuote(ctx context.Context, spec QuoteSpec) (*tx.Quot
 	} else if amountMinor < o.cfg.MinAmountMinor || amountMinor > o.cfg.MaxAmountMinor {
 		return nil, fmt.Errorf("%w: %d–%d kobo", ErrAmountOutOfRange, o.cfg.MinAmountMinor, o.cfg.MaxAmountMinor)
 	}
+	if err := o.ensureVendingOpen(ctx); err != nil {
+		return nil, err
+	}
+	if err := o.ensurePurchaserActive(ctx, o.st.Repos(), spec.CustomerID); err != nil {
+		return nil, err
+	}
 	m, err := o.Meters.Authorize(ctx, spec.CustomerID, spec.MeterID, meters.PermPurchase)
 	if err != nil {
 		return nil, err

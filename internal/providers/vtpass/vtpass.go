@@ -420,6 +420,86 @@ func mapPayEnvelope(raw []byte, requestID, variation string, requery bool) (mapp
 	}
 }
 
+func (c *Client) WalletBalance(ctx context.Context) (providers.WalletBalance, error) {
+	raw, err := c.get(ctx, "/balance")
+	if err != nil {
+		return providers.WalletBalance{}, err
+	}
+	var env struct {
+		Code     string          `json:"code"`
+		Contents json.RawMessage `json:"contents"`
+		Content  json.RawMessage `json:"content"`
+		Balance  json.RawMessage `json:"balance"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return providers.WalletBalance{}, fmt.Errorf("%w: vtpass wallet: unparseable response", providers.ErrAmbiguous)
+	}
+	minor := parseNairaMinor(env.Contents)
+	if minor == 0 {
+		minor = parseWalletObject(env.Contents)
+	}
+	if minor == 0 {
+		minor = parseWalletObject(env.Content)
+	}
+	if minor == 0 {
+		minor = parseNairaMinor(env.Balance)
+	}
+	code := strings.TrimSpace(env.Code)
+	if code != "" && code != "000" && minor == 0 {
+		return providers.WalletBalance{}, &APIError{Code: code, Message: "wallet balance unavailable"}
+	}
+	return providers.WalletBalance{Minor: minor}, nil
+}
+
+func parseWalletObject(raw json.RawMessage) int64 {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var obj struct {
+		Balance json.RawMessage `json:"balance"`
+	}
+	if json.Unmarshal(raw, &obj) != nil {
+		return parseNairaMinor(raw)
+	}
+	return parseNairaMinor(obj.Balance)
+}
+
+func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("api-key", c.apiKey)
+	req.Header.Set("secret-key", c.secret)
+	if c.public != "" {
+		req.Header.Set("public-key", c.public)
+	}
+	req.Header.Set("Accept", "application/json")
+	observability.InjectHTTP(ctx, req.Header)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: vtpass GET %s: %v", providers.ErrAmbiguous, path, err)
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("%w: vtpass read: %v", providers.ErrAmbiguous, err)
+	}
+	if res.StatusCode >= 500 {
+		return nil, fmt.Errorf("%w: vtpass HTTP %d", providers.ErrAmbiguous, res.StatusCode)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		if res.StatusCode >= 400 {
+			return nil, &APIError{HTTPStatus: res.StatusCode, Message: "empty error response"}
+		}
+		return nil, fmt.Errorf("%w: vtpass empty body", providers.ErrAmbiguous)
+	}
+	if res.StatusCode >= 400 {
+		return nil, &APIError{HTTPStatus: res.StatusCode, Message: "wallet request rejected"}
+	}
+	return raw, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, body any) ([]byte, error) {
 	b, err := json.Marshal(body)
 	if err != nil {

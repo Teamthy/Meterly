@@ -282,3 +282,39 @@ func (r userRepo) LockForUpdate(ctx context.Context, userID string) error {
 	var locked uuid.UUID
 	return mapErr(r.db.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, uid).Scan(&locked))
 }
+
+func (r userRepo) Status(ctx context.Context, userID string) (string, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return "", store.ErrNotFound
+	}
+	var st string
+	err = r.db.QueryRow(ctx, `SELECT status FROM users WHERE id = $1`, uid).Scan(&st)
+	if err != nil {
+		return "", mapErr(err)
+	}
+	if st == "" {
+		return store.UserActive, nil
+	}
+	return st, nil
+}
+
+func (r userRepo) SetStatus(ctx context.Context, userID, status string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return store.ErrNotFound
+	}
+	switch status {
+	case store.UserActive, store.UserSuspended, store.UserClosed:
+	default:
+		return errors.New("store: invalid user status")
+	}
+	tag, err := r.db.Exec(ctx, `UPDATE users SET status = $2, updated_at = now() WHERE id = $1`, uid, status)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}

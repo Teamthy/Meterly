@@ -53,6 +53,19 @@ func TestFormatRequestID(t *testing.T) {
 	}
 }
 
+func TestWalletBalance(t *testing.T) {
+	c, f := setup(t)
+	got, err := c.WalletBalance(ctx)
+	if err != nil || got.Minor != 10_000_000 {
+		t.Fatalf("default wallet: %+v %v", got, err)
+	}
+	f.BalanceNaira = 0
+	got, err = c.WalletBalance(ctx)
+	if err != nil || got.Minor != 0 {
+		t.Fatalf("empty wallet: %+v %v", got, err)
+	}
+}
+
 func TestValidatePrepaidAndPostpaid(t *testing.T) {
 	c, _ := setup(t)
 	pre, err := c.ValidateMeter(ctx, providers.MeterValidationRequest{MeterNumber: vtpasstest.PrepaidMeter, DiscoCode: "IKEDC"})
