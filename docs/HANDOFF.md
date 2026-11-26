@@ -1,283 +1,255 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-26, after restyle merge (PR #21) and the customer security engine on `arena/7cc28241-meterly`.
+> **Last updated:** 2026-11-26 after PR **#22** (security engine) merged to `main` (`b623755`). Hardening (IP bind, headers, step-up with no passkeys) follows on this branch.
 
-## 0. Start here (new session / new developer)
+## 0. Start here
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
-2. Branch: `arena/7cc28241-meterly`. `origin/main` includes PR #15 (credit-on-meter plane) and PR #16 (household + token-send UI).
-3. Work left is **not** “build the purchase engine”. M1–M11, web, support chat, VTpass, households, token send, cohort/receipt UI, restyle, and the customer **security engine** (step-up, sessions, events) are in code. Left is **hosting, live sandboxes, a real AMI/HES partner, legal flags**.
-4. **Selling point (product, not a fake AMI):** credit lands on the meter. Compatible smart meters get a remote push; we only call it delivered when the meter confirms (`ACCEPTED ≠ CONFIRMED`). Keypad meters get STS token fallback. Do **not** invent AMI/HES APIs, Benin Electric `serviceID`, or native apps. Mock HES (`700…` meters) is the demo path until a partner document exists.
-5. Do **not** commit secrets. Render keys stay in the dashboard.
+2. Branch: `arena/7cc28241-meterly`. **Do not switch branches.**
+3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, and the customer security engine are in code. Left is **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
+4. Product truth: credit lands **on the meter**. `ACCEPTED ≠ CONFIRMED`. Keypad meters get STS fallback. **Do not invent AMI/HES APIs.**
+5. Do not commit secrets.
 
-### Immediate next work (priority order)
+### Right now (priority)
 
-| # | What | Who | Blocker |
+| # | What | Who | Status |
 |---|---|---|---|
-| 1 | ~~Merge household + token-send UI~~ | GitHub | PR #16 merged |
-| 2 | **Render dashboard paste** so the hosted API exists | Human | Render is not an Arena connector. Paste session-pooler `DATABASE_URL` **port 5432**, `TOKEN_ENC_KEY`, `METER_HMAC_KEY`. See `docs/DEPLOY.md`. |
-| 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | step 2 |
-| 4 | After keys: `MODE=staging`, `VENDING_PROVIDER=vtpass`, `PAYMENT_PROVIDER=paystack`, `REMOTE_PROVIDER=none` | Human | VTpass + Paystack sandbox keys |
-| 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
-| 6 | ~~Web UI for households + token send~~ | Eng | `/households` + STS send on Buy Power |
-| 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook + admin cohort UI are in |
-| 8 | ~~Distributed rate limits (Redis)~~ | Eng | `REDIS_URL` optional; compose runs Redis 7. Empty URL = in-process buckets |
-| 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
+| 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
+| 2 | Render API + apply migrations `0018`–`0021` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`) |
+| 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
+| 4 | Live sandbox keys (Paystack, VTpass, …) | Human | After 2 |
+| 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | See §12 Partners |
+| 6 | Legal sign-off before prod flags | Legal | NDPA / NCC / CBN / NERC |
 
 ---
 
 ## 1. What Meterly is
 
-A Nigerian electricity platform. People buy prepaid electricity from anywhere, for their own meter or someone else's. Delivery is **STS token** today (VTpass). **Remote credit** (AMI/HES, no keypad) is an interface plus mock only — no partner docs.
+A Nigerian electricity platform. People buy prepaid units from anywhere, for their own meter or someone else's.
 
-Backend: Go modular monolith. Frontend: Next.js 15 in `web/`. Spec mapped in `docs/ROADMAP.md`. Decisions in `docs/DECISIONS.md`. Deploy in `docs/DEPLOY.md`.
+- **Today in production-shaped code:** pay via CBN-licensed PSP (Paystack adapter), vend via aggregator (VTpass adapter, sandbox-fake tested), keypad **STS token** fallback.
+- **Credit-on-meter:** licensed vend still happens first; a Head-End System (HES) injects that token/credit into a compatible smart meter. We only call it delivered when the **meter confirms**.
+- Frontend: Next.js `web/` on Vercel (`https://meterly-iota.vercel.app`).
+- API: Go modular monolith. Hosted API is **not live** until Render + Supabase keys are pasted.
 
 ---
 
 ## 2. Current state
 
-| Milestone | Status | Where |
+| Piece | Status | Where |
 |---|---|---|
-| Foundation → M11 (engine, PG, Paystack, OIDC/admin, notifications, OpenAPI, Pay-for-Me, Split the Meter, AutoPower, Power Desk, USSD/WhatsApp) | ✅ merged | PRs #1–#11 |
-| Web frontend | ✅ merged | [PR #12](https://github.com/Teamthy/Meterly/pull/12) |
-| Support chat (agent + E2E human) | ✅ merged | [PR #13](https://github.com/Teamthy/Meterly/pull/13) |
-| **VTpass electricity vending** | ✅ this branch | `internal/providers/vtpass` — **not live-sandbox tested** |
-| **FR-008 households / verified ownership** | ✅ this branch | `FEATURE_HOUSEHOLDS`, never mints `MANAGE` |
-| **FR-007 token send** SMS/email/WhatsApp | ✅ this branch | share endpoint + notification worker |
-| Hosting: Vercel `web/` | ✅ live | `meterly-iota.vercel.app` |
-| **Customer security engine** | ✅ this branch | `internal/security`, `/v1/security/*`, `/security`, migration `0021` |
-| **Credit-on-meter plane** | ✅ merged | PR #15 cohorts/`heshttp`/webhook; PR #16 household UI; this branch: admin cohort desk + receipt |
-| Hosting: Render API + Supabase | ⏳ **blocked on dashboard paste** | `docs/DEPLOY.md` |
+| Purchase engine (pay → vend → deliver, three dimensions) | ✅ `main` | `internal/orchestrator` |
+| Web UI + ink/paper/volt restyle | ✅ `main` (PR #21) | `web/` |
+| Auto-renew | ✅ UI **coming soon** (prefs only, no live charge) | `/autopower` |
+| Security engine | ✅ `main` (PR #22) | `internal/security`, `/security` |
+| VTpass / Paystack adapters | ✅ code, **not live-sandbox tested** | `internal/providers/*` |
+| Households, token send, support E2E, Power Desk, USSD, pots | ✅ code, flags mostly off outside dev | feature flags §7 |
+| Hosted API (Render) + migrations `0018`–`0021` | ⏳ | `docs/DEPLOY.md` |
 
-CI (`.github/workflows/ci.yml`): gofmt, vet, `go test -race` against PostgreSQL 16; fails if PG subtests were skipped.
+**Git:** `origin/main` @ `b623755` (merge #22). This branch may be 1+ hardening commits ahead.
+
+**Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
 ---
 
-## 3. Architecture in one minute
+## 3. Architecture (one minute)
 
 ```
-cmd/api        HTTP API (+ worker loops in-process when RUN_WORKER=true, default in dev)
-cmd/worker     resume sweep + outbox publisher (refuses to run with mock providers)
-cmd/migrate    applies embedded migrations
+cmd/api        HTTP API (+ in-process worker in MODE=dev)
+cmd/worker     resume + outbox (refuses mock providers)
+cmd/migrate    embedded SQL, checksummed, advisory-locked
 
-internal/orchestrator   purchase workflow; Resume = single recovery path   ← core
-internal/store          Store/Repos contracts; InTx = unit of work
-  memstore / pgstore
-internal/registry       meter validation, capabilities, access grants
-                        (+ household perm fallback)
-internal/providers      Payment / Vending / RemoteCredit contracts
-  mock                  deterministic mocks (meter-number behaviour; README)
-  paystack (+paystacktest fake)
-  vtpass  (+vtpasstest fake)   first real vending adapter
-internal/households     FR-008 domain (roles, NamesMatch, PermissionForRole)
-internal/tokenshares    COPY metadata + send channels (no raw tokens)
-internal/notificationservice   outbox → deliveries; TOKEN_SHARE send path
-internal/httpapi        /v1 REST + admin + public pay/pots + channels + households
-api/openapi.yaml        OpenAPI 3.1 vs mux + writeErr AST
-web/                    Next.js 15 (`/households`, token send, admin cohort desk)
-migrations/             0001 … 0017_remote_credit_cohorts.sql
+internal/orchestrator   quote → pay → vend → deliver → refund; Resume
+internal/security       passkey step-up, sessions, event log
+internal/identity       WebAuthn + mls_ sessions
+internal/store          InTx unit of work (memstore / pgstore)
+internal/providers      payment, vending, remote-credit — kept separate
+internal/httpapi        /v1 + admin + public pay/pots + /v1/security
+web/                    Next.js 15 (root directory on Vercel)
+migrations/             0001 … 0021_security.sql
 ```
 
-Purchase flow: quote → `CreateTransaction` (idempotent, one commit) → `EnsurePaymentInitialised` → webhook/sweeper → `checkPayment` (PSP verify) → `vend` (VTpass `request_id` stored at **claim**, never regenerated) → `deliver` → refund only on definitive vend failure.
-
-### New HTTP (this branch)
-
-Households (`FEATURE_HOUSEHOLDS`, default **on in `MODE=dev`**, else off):
-
-- `POST/GET /v1/households`, `GET /v1/households/{id}`
-- `POST /v1/households/{id}/meters`
-- `POST /v1/households/{id}/members` (`user_id` **or** `external_id` + role)
-- `POST …/members/me/accept|decline`, `DELETE …/members/{uid}`
-- `POST/GET /v1/meters/{meter_id}/ownership[/verify]`
-- Admin `POST /v1/admin/meters/{meter_id}/ownership` (reason 5–500)
-
-Token shares (purchaser only, vend confirmed, token path):
-
-- `POST /v1/electricity/transactions/{id}/token/shares`
-  - `{"channel":"COPY"}` — metadata only
-  - `{"channel":"SMS"|"EMAIL"|"WHATSAPP"}` — send to verified contact
-  - `destination` set → third-party; requires `FEATURE_GIFT_SMS`
-- `GET` same path — COPY + sends (masked dest only)
-- Cap: 5 sends / purchaser / Africa/Lagos day. Token decrypted only in worker memory. No auto-resend of token-bearing `UNKNOWN`.
+Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
 
 ---
 
-## 4. Invariants (must hold after every change)
+## 4. Invariants (must hold)
 
-1. No vending until payment is verified server-side and the amount equals the quote total exactly. A mismatch goes to MANUAL_REVIEW.
-2. A timeout or ambiguous error means UNKNOWN, never FAILED. Resolve it by status query; re-send only if the provider confirms it has no record.
-3. Remote ACCEPTED ≠ delivered. Only meter confirmation completes.
-4. Refund only after a definitive vend failure.
-5. Every money movement is a balanced, idempotent ledger posting. PostgreSQL triggers enforce balance and append-only.
-6. No raw tokens or meter numbers in logs, URLs or plaintext columns. Tokens are readable only by the purchaser.
-7. Duplicates and concurrency never double-charge, double-vend or double-credit.
-8. **VTpass `request_id` is stored at vend-claim (`Transaction.VendIdempotencyKey`) and reused on retry.** Do not call `NewVendKey` again on resume.
-9. **Household roles never mint `meters.MANAGE`.** Grants are not proof of ownership. Add-meter requires `ActiveOwnership`.
-10. **Self-registration still grants at most `PURCHASE`.** Legacy `MANAGE` rows are unverified — do not silently downgrade, do not treat as ownership.
+1. No vending until payment is verified server-side and the amount equals the quote total. Mismatch → `MANUAL_REVIEW`.
+2. Timeout / ambiguous error → `UNKNOWN`, never `FAILED`. Re-send only if the provider has **no record**.
+3. Remote `ACCEPTED` ≠ delivered. Only meter confirmation completes.
+4. Refund only after a definitive vend failure. Never auto-refund if electricity may have vended.
+5. Every money movement is a balanced, idempotent ledger posting.
+6. No raw tokens or meter numbers in logs, URLs, or plaintext columns.
+7. Concurrency never double-charges, double-vends, or double-credits.
+8. VTpass `request_id` is stored at vend-claim (`VendIdempotencyKey`) and reused. Never regenerate.
+9. Household roles never mint `meters.MANAGE`. Grants ≠ ownership.
+10. Self-registration grants at most `PURCHASE`.
 
-**How the code enforces them:**
-
-- Every state change goes through `orchestrator.mutate` (lock row → guarded change → save state, history, ledger and outbox in one tx).
-- Guards return `errSkip` when another worker got there first.
-- **Only the worker whose commit claimed a step may call the provider** (`claimed` flag in `vend`, `deliver`, `refund`). Do not infer the claim from resulting state.
+Enforced by `orchestrator.mutate` (lock → guard → state + history + ledger + outbox in one tx). Only the worker whose commit **claimed** a step may call the provider.
 
 ---
 
-## 5. Running things
+## 5. Running
 
 ```bash
-MODE=dev go run ./cmd/api                      # in-memory, mocked payment/vending/AMI
-docker compose up -d && export DATABASE_URL='postgres://meterly:meterly@localhost:5432/meterly?sslmode=disable'
+MODE=dev go run ./cmd/api
+docker compose up -d
+export DATABASE_URL='postgres://meterly:meterly@localhost:5432/meterly?sslmode=disable'
 go run ./cmd/migrate && MODE=dev go run ./cmd/api
-go test -race ./...                            # set DATABASE_URL for the PG suite
+go test -race ./...     # PG suite needs DATABASE_URL
 ```
 
-**Arena sandbox:** default PATH has no `go`; `GOPROXY=off` without the overlay fails uuid.
+Arena sandbox:
 
 ```bash
 export PATH="/tmp/meterly-tools/go-extract/go/bin:$PATH"
 export GOROOT="/tmp/meterly-tools/go-extract/go"
-export GOPROXY=off GOSUMDB=off
-go test -modfile=/tmp/meterly-tools/overlay.mod ./...
+export GOPROXY=direct
+go test -modfile=/tmp/meterly.mod ./internal/security/ ./internal/identity/ ./internal/httpapi/
 ```
-
-No local Postgres in this sandbox → pgstore tests skip. CI runs them.
-
-### PostgreSQL locally (if you have binaries)
-
-See older notes: cluster as `postgres`, `sslmode=disable`. Any new `pgtest` package needs `TestMain` → `pgtest.DropTemplate()`.
 
 ---
 
 ## 6. Mocks vs real adapters
 
-| Provider | Config | Implementation | Tested against | Live sandbox |
-|---|---|---|---|---|
-| Payments | `PAYMENT_PROVIDER=mock\|paystack` | mock / `internal/providers/paystack` | `paystacktest` fake | **No** |
-| Vending | `VENDING_PROVIDER=mock\|vtpass` | mock / `internal/providers/vtpass` | `vtpasstest` fake | **No** |
-| Remote credit (AMI) | `REMOTE_PROVIDER=mock\|none` | mock or disabled | mock only | **No adapter** — no docs |
-| Meter readings | `METER_READING_PROVIDER=mock\|none` | mock or disabled | mock | **No** |
-| SMS | `SMS_PROVIDER=mock\|africastalking\|none` | AT adapter | `africastalkingtest` | **No** |
-| Email | `EMAIL_PROVIDER=mock\|resend\|none` | Resend | `resendtest` | **No** |
-| WhatsApp | `WHATSAPP_PROVIDER=mock\|whatsapp\|none` | Cloud API | `whatsapptest` | **No** |
-| Auth | `AUTH_MODE=dev\|oidc` | DevAuth / OIDC JWKS | in-process JWKS | **No real IdP** |
+| Provider | Config | Live sandbox |
+|---|---|---|
+| Payments | `mock` / `paystack` | **No** |
+| Vending | `mock` / `vtpass` | **No** |
+| Remote credit | `mock` / `none` / `http` (`heshttp`) | **No partner** |
+| SMS / email / WhatsApp | mock or vendor adapters | **No** |
+| Auth | `dev` / `oidc` | **No real IdP** |
 
-`config.UsesMocks()` is true if **any** of payment/vending/remote/readings/sms/email/whatsapp is `mock`. Outside `MODE=dev`, mocks are refused. `cmd/worker` also refuses mocks (state is in-process).
+Outside `MODE=dev`, mocks are refused. `cmd/worker` refuses mocks.
 
-**VTpass facts (do not “fix” without docs):**
-
-- POST `/api/merchant-verify`, `/api/pay`, `/api/requery`
-- Live `https://vtpass.com/api`, sandbox `https://sandbox.vtpass.com/api`
-- Auth: POST headers `api-key` + `secret-key` (not Basic)
-- Amount on pay is **naira**, not kobo
-- `request_id` ≥ 12 chars; first 12 = Africa/Lagos `YYYYMMDDHHII` of **pay day**; **store at claim, never regenerate**
-- `000` is not success — inspect `content.transactions.status` (`delivered` = success); `099` = requery
-- Documented DisCos only: IKEDC, EKEDC, AEDC, IBEDC, EEDC, PHED, KEDCO, KAEDCO, JED, YEDC. **No Benin Electric `serviceID` — do not invent.**
-- Sandbox prepaid `1111111111111`, postpaid `1010101010101`
-
-**Mock vending** still keys behaviour off meter numbers (see README). memstore still will not find txns by **vend** ref (`txnByPayRef` is payment-only).
+VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars = Africa/Lagos `YYYYMMDDHHII` of pay day; documented DisCos only (no invented Benin Electric `serviceID`).
 
 ---
 
 ## 7. Feature flags
 
-| Flag | Default | Notes |
+| Flag | Prod default | Notes |
 |---|---|---|
-| `FEATURE_HOUSEHOLDS` | on in `MODE=dev`, else off | this branch |
-| `FEATURE_GIFT_SMS` | **false everywhere** until legal | also gates **third-party** token send |
-| `FEATURE_PAY_FOR_ME` | on in dev | |
-| `FEATURE_SPLIT_METER` | on in dev | legal |
-| `FEATURE_AUTOPOWER` | false | legal |
+| `FEATURE_GIFT_SMS` | false | NDPA; also third-party token send |
+| `FEATURE_SPLIT_METER` | false | fund-holding legal |
+| `FEATURE_AUTOPOWER` | false | live auto-charge off; UI is coming-soon prefs |
 | `FEATURE_POWER_DESK` | false | legal |
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
-| `FEATURE_SUPPORT` | on in dev | |
-
-Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does **not** need `FEATURE_GIFT_SMS`. Sending to another destination does.
+| `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
 
 ---
 
 ## 8. Gotchas
 
-- **Migrations are immutable** once applied; runner checksums. Add `0017_*.sql`, never edit 0015/0016 after they hit a real DB.
-- **Supabase session pooler must be port 5432**, not transaction-mode 6543 (pgx prepared statements). Project for Render: `wiqfbscyppgsolvmereh` (eu-west-1). Do **not** migrate inactive project `okatwpkovcmipjdnqkys`.
-- **Git:** this session’s branch name is fixed (`arena/7cc28241-meterly`). After a PR merges, `git merge origin/main` — do not rebase/force-push.
-- **Orchestrator time** is `o.Now` (injectable).
-- **Auth:** `AUTH_MODE=dev` only in `MODE=dev`. Bearer token *is* the subject; `operator:` / `admin:` prefixes. `X-Dev-Display-Name`, `X-Dev-Verified-Email`, `X-Dev-Verified-Phone` populate contacts.
-- **Rate limits** are in-memory unless `REDIS_URL` is set (shared token buckets). Redis down after startup fails open.
-- **Email is required** on `POST /v1/electricity/transactions` (Paystack).
-- **Do not restore `internal/households/service.go`** — mutations live on `Orchestrator`.
-- **Render connector is unsupported** in Arena. Dashboard + `render.yaml` only.
-- Missing helpers from older notes: use `internal/secure` (not `box.go`), `observability` `InjectHTTP`.
+- Migrations are **immutable** once applied. Add `0022_*.sql`, never edit applied files.
+- Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
+- Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
+- `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
+- Security engine: **dev/OIDC bearers are not stepped-up**. Passkey sessions must confirm the device (15 min) plus IP HMAC bind for token read / save card / last-passkey delete / revoke-others.
+- Auto-renew UI does **not** call `/v1/autopower/rules` (those routes can still create live rules if something hits the API; flag defaults false).
+- Render is not an Arena connector.
 
 ---
 
-## 9. What's left (honest)
+## 9. What's left
 
-### Engineering, unblocked once hosting/keys exist
+**Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica.
 
-- Render deploy + Vercel origin (human paste).
-- Live sandbox runs: Paystack `sk_test_`, VTpass sandbox keys, AT, Resend, WhatsApp, a real OIDC issuer.
-- Optional: paste `REDIS_URL` on Render if the API scales to >1 instance (compose already runs Redis).
+**Blocked on documents / partners:** HES translator; undocumented DisCos; native apps.
 
-### Engineering, blocked on documents / partners
-
-- Vendor HES translator (Hexing/Conlog/Mojec) — **do not invent**. `REMOTE_PROVIDER=http` (`heshttp`) plus `remote_credit_cohorts` and `POST /v1/webhooks/remote-credit/{provider}` are the production plane. Point them at a partner gateway when docs exist.
-- Benin Electric and any undocumented DisCo.
-- Native mobile apps.
-
-### Not engineering (production blockers)
-
-- Aggregator/DisCo commercial agreement (VTpass code exists; contract does not).
-- Real-meter AMI confirmation before marketing “no tokens” (spec §19).
-- Legal: NERC/state regulators, CBN/PSP money flow, NDPA 2023 before enabling gift SMS / split / AutoPower / Power Desk / USSD / WhatsApp in production.
-- Identity provider choice (Auth0/Clerk/…) with `email_verified` / `phone_number_verified`, roles claim, MFA for staff.
-- NCC/telco USSD shortcode + CIDRs; Meta WABA + approved templates (`meterly_offline_token_v1`, `meterly_token_available_v1`, …).
-
-### Explicitly out of scope unless asked
-
-- Inventing AMI/HES.
-- Legal sign-off.
-- Switching this Arena session to another git branch.
+**Not engineering:** commercial agreements; real-meter AMI before marketing “no tokens”; legal flags; IdP choice; USSD shortcode; Meta templates.
 
 ---
 
 ## 10. Hosting checklist (founder)
 
-1. [ ] Push/merge this branch so `render.yaml` + migrations 0015/0016 are on GitHub.
+1. [ ] `main` has PR #21 + #22 (yes after 2026-11-26).
 2. [ ] https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
-3. [ ] Paste `DATABASE_URL` (Supabase **session** pooler `:5432`, `sslmode=require`).
-4. [ ] Paste `TOKEN_ENC_KEY` and `METER_HMAC_KEY` (64 hex chars each; already generated offline — **not in git**).
-5. [ ] Confirm `GET /healthz` and `GET /readyz`.
-6. [ ] Vercel project `meterly`: `METERLY_API_ORIGIN=https://<render-host>` and redeploy.
-7. [ ] Later, with sandbox keys: `MODE=staging`, `PAYMENT_PROVIDER=paystack`, `VENDING_PROVIDER=vtpass`, `REMOTE_PROVIDER=none`, `METER_READING_PROVIDER=none`. Keep SMS/email/WhatsApp `none` or `mock` until those keys exist.
+3. [ ] `DATABASE_URL` = Supabase session pooler `:5432`, `sslmode=require`.
+4. [ ] `TOKEN_ENC_KEY` + `METER_HMAC_KEY` (64 hex each, not in git).
+5. [ ] Confirm migrate applied **through 0021**.
+6. [ ] `GET /healthz` and `/readyz`.
+7. [ ] Vercel `METERLY_API_ORIGIN=https://<render-host>` and redeploy.
+8. [ ] Later: `MODE=staging`, `PAYMENT_PROVIDER=paystack`, `VENDING_PROVIDER=vtpass`, `REMOTE_PROVIDER=none`.
 
 ---
 
-## 11. Session log (newest first)
+## 11. Documents you still need (from other people)
 
-- **2026-11-26: Customer security engine.** `internal/security` evaluates TOKEN_READ / SAVE_CARD / DELETE_PASSKEY / REVOKE_OTHERS. Passkey sessions need a 15-minute step-up; last passkey cannot be deleted; dev/OIDC bearers are not gated. HTTP `/v1/security/*`, web `/security`, migration `0021_security.sql`. Events store action/outcome/reason/IP HMAC only. Verified: `go test` security/identity/httpapi/orchestrator/app; `npm run typecheck`. PG suite skipped (no DATABASE_URL).
+These are **not** in the repo. Do not invent replacements.
 
-- **2026-11-26: PR #21 merged; restyle.** Ink/paper/volt across remaining surfaces. Auto-renew stays coming-soon.
+### Commercial / access
+1. **VTpass (or other aggregator) contract** — sandbox + live keys, electricity product enabled, SLA, who owns failed vends.
+2. **Paystack (CBN-licensed PSP) merchant agreement** — `sk_test_` then `sk_live_`, webhook secret, settlement account.
+3. **DisCo letters / aggregator coverage** — confirmation that IKEDC, EKEDC, AEDC, … electricity `serviceID`s you vend are authorised for your merchant.
+4. **Remote-credit path (pick one, then get their API PDF):**
+   - Meter Asset Provider (MAP) / AMI operator HES API, **or**
+   - DisCo AMI/HES API, **or**
+   - Meter OEM HES API (Hexing / Conlog / Mojec / similar) **if they actually operate the head-end**.
+5. **Identity provider** (Auth0, Clerk, Keycloak, …) — OIDC discovery, JWKS, `email_verified` / `phone_number_verified`, roles claim, MFA AMR for staff.
 
-- **2026-11-26: PR #17 merged; Redis rate limits.** Shared token buckets when `REDIS_URL` is set; compose runs Redis 7. Fail-open if Redis dies after startup. No extra Go module (tiny RESP client).
+### Legal / regulator
+6. **NDPA 2023** — DPIA, lawful basis, retention, gift-SMS to third parties, encryption at rest (already in code; counsel must sign).
+7. **NERC / state electricity regulator** — whether Meterly is a vendor, a super-agent, or needs a licence to sell units.
+8. **CBN / PSP money flow opinion** — Paystack settlement vs any fund-holding (pots, AutoPower mandates).
+9. **NCC** — USSD short code (`*347*88#` is a product sketch until you own a code) + telco IP CIDRs.
+10. **Meta WhatsApp Business** — WABA, `hub.verify_token`, approved templates (`meterly_offline_token_v1`, etc.).
 
-- **2026-11-26: PR #16 merged; batch 3 credit-on-meter UI.** Household + STS send on `main`. This branch: admin remote-credit cohort desk (attest/revoke), Buy Power hides STS while `REMOTE`, ACCEPTED≠CONFIRMED copy, poll while waiting for meter confirm. No Hexing/Conlog client.
+### Technical (from the HES/MAP/DisCo partner)
+11. Auth scheme (mTLS? HMAC? OAuth?).
+12. How to **push credit / inject STS** for a meter (request + idempotency key).
+13. How to **query status** (accepted vs meter-confirmed).
+14. How the meter **confirms** (webhook vs poll). We will not treat network “accepted” as delivered.
+15. Error catalogue (timeout, duplicate, meter unreachable, already credited).
+16. Sandbox meters and a **witnessed test** on a real meter before any “no token” marketing (spec §19).
 
-- **2026-11-23: VTpass + FR-008 households + FR-007 token send** (`318b81c` on `arena/7cc28241-meterly`).
-  - VTpass: verify/pay/requery, documented DisCo map, 000/099 mapping, Lagos `request_id` persisted at claim (`VendIdempotencyKey`), `vtpasstest` fake. Wired in `app.go` / config. **Not called against live VTpass.**
-  - Households: `migrations/0015_households.sql`, domain `internal/households`, memstore+pgstore, orchestrator, HTTP, registry grant **or** household perm, admin attest, `FEATURE_HOUSEHOLDS`. Tests: name match, never-MANAGE, HTTP ownership → invite → accept → purchase → revoke. OpenAPI paths added.
-  - Token send: `migrations/0016_token_share_send.sql`, share dest ciphertext bound to `token-share-dest:<id>`, `RecipientKind=TOKEN_SHARE`, worker send (self vs gift template), opt-out, 5/day cap, `FEATURE_GIFT_SMS` for third-party. E2E against AT/Resend/WhatsApp fakes; logs must not contain token or E.164.
-  - Verified: `go test -modfile=/tmp/meterly-tools/overlay.mod ./...` (memory). PG skipped (no `DATABASE_URL` in sandbox).
-  - Hosting still waiting on Render paste. AMI still `none`.
+If a document is missing, leave `REMOTE_PROVIDER=none` and keep STS.
 
-- **2026-11-26 (prior): Support chat + Render/Supabase docs** — merged PR #13 @ `90e0078`.
+---
 
-- **Older milestones (M1–M12 web):** see git history PRs #1–#12. Do not treat “Copy metadata / gift contact / held candidates” session notes below as current — M5 notifications and FR-007 send superseded them.
+## 12. Who to partner with (not “every meter factory”)
 
-<details>
-<summary>Archived session notes (pre-M11)</summary>
+You do **not** need to partner with every company that *builds* meters.
 
-Older entries (M5–M10, receipts, copy metadata, gift contact, held candidates) remain in git history of this file before this rewrite. They describe work that is already merged.
+| Goal | Who | Why |
+|---|---|---|
+| Take payment | **CBN-licensed PSP** (Paystack today) | Card/transfer; Meterly never holds PAN. |
+| Mint an STS token | **Vending aggregator** (VTpass) **or** a **DisCo vending API** | Token is what keypad meters need. One aggregator can cover many DisCos. |
+| Units appear **without typing a token** | Whoever runs the **HES / AMI** for that meter cohort | Usually a **MAP** (meter asset provider), the **DisCo’s AMI team**, or an OEM **only if they operate the head-end** (Hexing, Conlog, Mojec, etc.). |
+| Confirm “on the meter” | Same HES, plus a confirmation webhook or status API | This is the difference between ACCEPTED and CONFIRMED. |
+| USSD | **Telco + NCC shortcode**, Africa’s Talking or similar | Not a meter company. |
+| WhatsApp | **Meta WABA** | Not a meter company. |
 
-</details>
+**Practical sequence**
+
+1. Ship **token vending** with VTpass + Paystack (no meter OEM required).
+2. Pick **one** remote-credit partner for **one** DisCo + one meter brand/cohort (e.g. IKEDC + Hexing via that DisCo’s MAP).
+3. Get their HES docs → implement a translator behind `heshttp` → attest the cohort in `/admin` → test on a real meter.
+4. Repeat per cohort. Never advertise “no tokens” globally.
+
+Meter manufacturers matter **only** as the operator of (or gateway into) the HES. DisCos matter for **authorising** you to vend and, if they own AMI, for remote credit. MAPs often sit in between.
+
+---
+
+## 13. Security engine (as shipped)
+
+- Passkey session (`mls_`) + at least one credential: `TOKEN_READ`, `SAVE_CARD`, `DELETE_PASSKEY`, `REVOKE_OTHERS` need a step-up younger than 15 minutes.
+- Last remaining passkey cannot be deleted.
+- Dev/OIDC bearers: **not** stepped-up (sandbox/staff).
+- IP HMAC bind: if the session already has an IP hash and the request IP differs, step-up again.
+- Events: action, outcome, reason, session id, IP HMAC. Never tokens, meters, contacts, raw IPs.
+- API headers: `nosniff`, `DENY` framing, `no-store`, `no-referrer`.
+- Step-up with zero passkeys does not issue a challenge.
+- Failed step-up counts toward the auth-failure rate limit.
+
+UI: **More → Security** (`/security`).
+
+---
+
+## 14. Session log (newest first)
+
+- **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.
+- **2026-11-26: PR #21 merged.** Restyle + coming-soon Auto-renew + consoles.
+- **2026-11-26: PR #20** and earlier — identity, packs, Redis, credit-on-meter plane. See git history.

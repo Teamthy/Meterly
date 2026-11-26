@@ -255,6 +255,11 @@ func (s *Server) withCorrelation(next http.Handler) http.Handler {
 			cid = uuid.New()
 		}
 		w.Header().Set("X-Correlation-ID", cid.String())
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
 		ctx := audit.WithCorrelation(r.Context(), cid)
 		ctx = s.Tracer.ExtractHTTP(ctx, r.Header)
@@ -347,6 +352,14 @@ func (s *Server) authed(role auth.Role, isWrite bool) func(http.HandlerFunc) htt
 				if ok, wait := s.writes.Allow(uid); !ok {
 					tooMany(w, wait)
 					return
+				}
+			}
+			if s.Security != nil && s.Identity != nil {
+				if tok := s.bearerToken(r); strings.HasPrefix(tok, identity.SessionPrefix) {
+					if sess, err := s.Identity.LookupSession(r.Context(), tok); err == nil {
+						_ = s.Security.Store.TouchSession(r.Context(), sess.ID,
+							s.Security.HashIP(s.clientIP(r)), s.Security.HashUA(r.UserAgent()), time.Now().UTC())
+					}
 				}
 			}
 			h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, caller{UserID: uid, Principal: p})))

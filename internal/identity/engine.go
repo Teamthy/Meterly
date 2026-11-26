@@ -443,6 +443,13 @@ func (e *Engine) BeginStepUp(ctx context.Context, origin, userID string) (Public
 	if _, err := io.ReadFull(rand.Reader, ch); err != nil {
 		return PublicKeyOptions{}, err
 	}
+	creds, err := e.Auth.ListCredentials(ctx, userID)
+	if err != nil {
+		return PublicKeyOptions{}, err
+	}
+	if len(creds) == 0 {
+		return PublicKeyOptions{}, ErrNoPasskeys
+	}
 	if err := e.Auth.PutChallenge(ctx, Challenge{
 		ID: uuid.New(), Challenge: ch, Purpose: "step-up", UserID: userID, ExpiresAt: e.now().Add(ChallengeTTL),
 	}); err != nil {
@@ -455,12 +462,10 @@ func (e *Engine) BeginStepUp(ctx context.Context, origin, userID string) (Public
 		RPID:             rpID,
 		PubKeyCredParams: []map[string]any{{"type": "public-key", "alg": coseAlgES256}},
 	}
-	if creds, err := e.Auth.ListCredentials(ctx, userID); err == nil {
-		for _, c := range creds {
-			opt.AllowCredentials = append(opt.AllowCredentials, map[string]any{
-				"type": "public-key", "id": b64u(c.CredentialID),
-			})
-		}
+	for _, c := range creds {
+		opt.AllowCredentials = append(opt.AllowCredentials, map[string]any{
+			"type": "public-key", "id": b64u(c.CredentialID),
+		})
 	}
 	return opt, nil
 }

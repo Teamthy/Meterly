@@ -50,6 +50,9 @@ func TestSecurityConsoleAndStepUpGate(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("console %d %s", rr.Code, rr.Body.String())
 	}
+	if rr.Header().Get("X-Content-Type-Options") != "nosniff" || rr.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("missing security headers: %v", rr.Header())
+	}
 	if !strings.Contains(rr.Body.String(), "This device") {
 		t.Fatalf("console body %s", rr.Body.String())
 	}
