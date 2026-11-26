@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first. Update it at the end of every session (see `CLAUDE.md`).
-> **Last updated:** 2026-11-23, after M11 (F5 Meterly Offline — USSD & WhatsApp purchase channels).
+> **Last updated:** 2026-11-23, after M11 ([PR #11](https://github.com/Teamthy/Meterly/pull/11)) and the `web/` Next.js frontend.
 
 ## 1. What Meterly is
 
@@ -22,7 +22,8 @@ A Nigerian electricity platform. People buy prepaid electricity from anywhere, f
 | M8: F2 Split the Meter (reusable Funding Pot) | ✅ merged | [PR #8](https://github.com/Teamthy/Meterly/pull/8) |
 | M9: F3 AutoPower (scheduled auto-recharge with spend guard) | ✅ merged | [PR #9](https://github.com/Teamthy/Meterly/pull/9) |
 | M10: F4 Landlord Power Desk (orgs, unit meters, `LANDLORD_BULK` pots, statements) | ✅ merged | [PR #10](https://github.com/Teamthy/Meterly/pull/10) |
-| M11: F5 Meterly Offline (USSD & WhatsApp purchase channels) | ✅ complete on `arena/7cc28241-meterly` | PR #11 open to `main` |
+| M11: F5 Meterly Offline (USSD & WhatsApp purchase channels) | ✅ merged | [PR #11](https://github.com/Teamthy/Meterly/pull/11) |
+| Web Frontend (`web/`): Next.js 15 app across Consumer, Guest `/p/[code]` & `/pots/[code]`, AutoPower, Power Desk, Offline Simulator & Ops Console | ✅ complete on `arena/7cc28241-meterly` | PR #12 |
 
 PR #3 is merged. The current session branch was fast-forwarded to `origin/main` before this work; the earlier unrelated foundation was preserved in a Git stash and not reused.
 
@@ -139,7 +140,12 @@ The server can stop between turns, which shows up as "connection refused"; rerun
 
 ## 8. Session log (newest first)
 
-- **2026-11-23 (latest): M11 Meterly Offline (USSD & WhatsApp purchase channels) completed (M10 merged in PR #10).**
+- **2026-11-23 (latest): Next.js 15 web frontend (`web/`) built and verified against the live Go `/v1` API (M11 merged in PR #11).**
+  - Built `web/` (Next.js 15 App Router, TypeScript, Tailwind CSS v4, Vercel-ready `web/vercel.json` + `next.config.mjs` proxying `/v1/:path*`, `/healthz`, and `/readyz` to `METERLY_API_ORIGIN` so browser code never calls `localhost` directly).
+  - Implemented truthful 3-dimension status tracking (`Payment`, `Vending`, `Delivery`, explicitly distinguishing remote `ACCEPTED` from `CONFIRMED` and displaying non-transferability copy on revealed 20-digit STS tokens) across all product surfaces: Consumer Power Hub (`/`), Pay-for-Me links & QR codes (`/pay-for-me`) + unauthenticated guest checkout & token-free status pages (`/p/[code]`, `/p/status/[status_code]`), Split-the-Meter Funding Pots (`/pots`, `/pots/[code]` with contributor initials only), AutoPower rules & saved card mandates (`/autopower`, hiding low-balance mode unless `remote_reading` is confirmed), Landlord Power Desk (`/power-desk`, `LANDLORD_BULK` top-ups + ledger-derived `Africa/Lagos` statements & CSV export), dev-only USSD/WhatsApp simulator (`/offline`, `/api/dev/offline`), and Staff Operator/Admin Console (`/admin`).
+  - Verified with `npm run typecheck`, `npm run build` (all 11 routes clean), and live end-to-end HTTP smoke tests through `:3000`.
+
+- **2026-11-23 (earlier): M11 Meterly Offline (USSD & WhatsApp purchase channels) completed (M10 merged in PR #10).**
   - Engine, USSD & WhatsApp adapters (`internal/conversation`, `internal/channels/ussd`, `internal/offline`, `internal/notifications/whatsapp`, `docs/DECISIONS.md`): built channel-agnostic conversational state machine persisted in `conversation_sessions` (`0013_offline_channels.sql` across `memstore` and `pgstore`), Africa's Talking USSD HTTP adapter + `ussdtest.Simulator` enforcing CIDR allowlist + HMAC-SHA256 (`401` on failure), `<= 182`-character `CON`/`END` responses, and ~180s session TTL (creating zero transactions on mid-flow timeout), and Meta WhatsApp Cloud API inbound `hub.verify_token` + `X-Hub-Signature-256` verification (`401` on failure), duplicate `wamid` + out-of-order timestamp protection, free-form in-chat token delivery inside the 24h customer-service window with automatic fallback to `meterly_offline_token_v1` outside 24h, and `STOP` integration with M5 `opt_outs`.
   - Phone identity, SIM-swap defense, orchestrator wiring & HTTP/OpenAPI (`internal/httpapi/offline.go`, `api/openapi.yaml`): mapped authenticated inbound phones via HMAC (`phone_channel_links`), auto-linked OIDC-verified phones, added `POST /v1/channels/phone/link/{start,verify}` + conversational 6-digit SMS OTP linking (`channel_otps`), enforced SIM-swap inactivity reverification (`OFFLINE_REVERIFY_AFTER`, default `30d`) and unverified vs verified `Africa/Lagos` daily purchase caps, routed all purchases through `orchestrator.Quote` + `CreateTransaction` (`Idempotency-Key = ussd:<sessionId>:<step>` / `whatsapp:<sessionId>:<step>`), added caller-scoped audited `<= 3/day` `"Last token"` resends, hashed session turn inputs so zero raw phones/meters/OTPs/tokens persist in logs or PostgreSQL tables, and gated behind `FEATURE_USSD` and `FEATURE_WHATSAPP` (both default `false`).
 
