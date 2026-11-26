@@ -28,10 +28,10 @@ const PRIMARY = [
 ];
 
 const MORE = [
-  { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2 },
-  { href: "/pots", label: "Split the meter", icon: Users },
-  { href: "/power-desk", label: "Power Desk", icon: Building2 },
-  { href: "/offline", label: "USSD *347#", icon: Smartphone },
+  { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2, later: true },
+  { href: "/pots", label: "Split the meter", icon: Users, later: true },
+  { href: "/power-desk", label: "Power Desk", icon: Building2, later: true },
+  { href: "/offline", label: "USSD *347#", icon: Smartphone, later: true },
   { href: "/onboarding", label: "Setup", icon: UserCheck },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -173,7 +173,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5" />
-                        {item.label}
+                        <span className="flex-1">{item.label}</span>
+                        {"later" in item && item.later ? (
+                          <span className="text-[10px] uppercase tracking-wider text-white/35">
+                            later
+                          </span>
+                        ) : null}
                       </Link>
                     );
                   })}
@@ -272,8 +277,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <footer className="border-t border-white/10 py-4 text-[11px] text-white/40">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 sm:px-6">
-          <p>Units on the meter. Delivered only when the meter confirms.</p>
-          <p className="font-mono">STS is fallback · CBN-licensed PSP</p>
+          <p>Compatible smart meters. Delivered only when the meter confirms. Keypad is fallback.</p>
+          <p className="flex flex-wrap gap-3 font-mono">
+            <Link href="/legal/terms" className="hover:text-paper">
+              Terms
+            </Link>
+            <Link href="/legal/privacy" className="hover:text-paper">
+              Privacy
+            </Link>
+            <span>CBN-licensed PSP</span>
+          </p>
         </div>
       </footer>
     </div>

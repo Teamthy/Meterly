@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-26 after PR **#22** (security engine) merged to `main` (`b623755`). Hardening (IP bind, headers, step-up with no passkeys) follows on this branch.
+> **Last updated:** 2026-11-26. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`.
 
 ## 0. Start here
 
@@ -19,8 +19,9 @@
 | 2 | Render API + apply migrations `0018`–`0021` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`) |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
 | 4 | Live sandbox keys (Paystack, VTpass, …) | Human | After 2 |
-| 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | See §12 Partners |
-| 6 | Legal sign-off before prod flags | Legal | NDPA / NCC / CBN / NERC |
+| 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
+| 6 | Legal sign-off before prod flags | Legal | `docs/LEGAL.md` — NDPA / NCC / CBN / NERC / LASERC |
+| 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
 
 ---
 
@@ -257,6 +258,7 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
+- **2026-11-26: Operating pack.** Catch-22 (supply must be on), first 200 = Ikeja/IE Energy Lagos Mojec, 2am runbook, fraud, fee leak, legal drafts `/legal/*`, Lagos entity rename, feature freeze (later), no kill date.
 - **2026-11-26: North star = no-keypad + OPay-style auto-recharge.** Token is fallback. First partner call is one Disco AMI/MAP, then VTpass + Paystack.
 - **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.
 - **2026-11-26: PR #21 merged.** Restyle + coming-soon Auto-renew + consoles.

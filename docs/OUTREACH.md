@@ -4,7 +4,7 @@ Fill the brackets once, then send **in this order**. Do not wait for Ikeja befor
 
 | # | Who | Why | Send to |
 |---|---|---|---|
-| 1 | Ikeja Electric | Who runs AMI / HES (the no-keypad pipe) | `info@ikejaelectric.com` |
+| 1 | IE Energy Lagos Limited **and** Ikeja Electric Plc | Who runs AMI / HES (the no-keypad pipe) | `info@ikejaelectric.com` |
 | 2 | The MAP Ikeja names | API docs for remote credit + meter reading | they will give you the address |
 | 3 | VTpass | Meter verify + licensed vend | Register first, then email |
 | 4 | Paystack | Collect money + later auto-recharge | Dashboard first, then email |
@@ -22,29 +22,33 @@ Replace:
 
 ---
 
-## 1. Ikeja Electric — ask who runs the smart-meter head-end
+## 1. IE Energy Lagos / Ikeja Electric — ask who runs the smart-meter head-end
 
 **To:** info@ikejaelectric.com  
 **Cc:** vendorregistration@ikejaelectric.com  
-**Subject:** Partnership request — remote credit to IE prepaid smart meters (Meterly)
+**Subject:** Partnership request — remote credit to prepaid smart meters (Meterly × IE Energy Lagos / Ikeja Electric)
 
-If mail bounces, print and take the same letter to **178 Obafemi Awolowo Way, Alausa, Ikeja** (switchboard 0201-7000-250). `vendorregistration@` is IE’s vendor desk; `customercare@` is for customers — do not use that as the only To.
+October 2025: LASERC licensed **IE Energy Lagos Limited** as Ikeja Electric’s successor **in Lagos**. Ikeja Electric Plc may still cover **Ogun**. Same Alausa house until they publish a new domain. Address **both** legal names. Do **not** email random `ienergyltd.com` — different company.
+
+If mail bounces, print and take the same letter to **178 Obafemi Awolowo Way, Alausa, Ikeja** (switchboard 0201-7000-250). `vendorregistration@` is procurement — not the AMI door; Cc only. Not `customercare@` as the only To.
 
 ```
-Dear Ikeja Electric Partnership / AMI team,
+Dear Partnership / AMI team at IE Energy Lagos Limited and Ikeja Electric Plc,
 
 I am [YOUR NAME], [ROLE] of [COMPANY]. We are building Meterly: customers pay for prepaid electricity on their phone and the units appear on the meter, without typing a token — the same way airtime lands on a SIM.
 
-We are not a meter manufacturer. We do not need hardware. We will collect payment through a CBN-licensed PSP (Paystack) and vend through a licensed aggregator (VTpass). What we need from Ikeja Electric is the path that already talks to your prepaid smart meters.
+We are not a meter manufacturer. We do not need hardware. We will collect payment through a CBN-licensed PSP (Paystack) and vend through a licensed aggregator (VTpass). What we need is the path that already talks to prepaid smart meters on your network (your public remote-load page today is Mojec-only and still asks the customer to paste a token).
 
 Please could you tell us:
 
-1. Who operates the head-end / AMI for IE prepaid smart meters today (your AMI team, or a named MAP)?
-2. Can a licensed vendor push credit to those meters and receive confirmation that the meter accepted it?
+1. Who operates the head-end / AMI for prepaid smart meters today (your AMI team, or a named MAP — Mojec, CIG/Conlog, NHC, other)?
+2. Can a licensed vendor push credit to those meters and receive confirmation that the meter accepted it — not only that the head-end queued it?
 3. Can we read remaining units (kWh) for auto-recharge when the customer is low?
-4. Who is the right integrations contact, and what document or NDA do you need from us?
+4. What happens when Disco supply is off at the premises (we will not call that delivered)?
+5. Who is the right integrations contact, and what document or NDA do you need from us?
+6. For Lagos vs Ogun, which legal entity signs?
 
-We would like to start with one meter cohort in the IE network, prove credit on a real meter, and only then talk about scale.
+We would like to start with one meter cohort (Mojec on the Ikeja / IE Energy Lagos network), prove credit on a real meter, and only then talk about scale.
 
 I can meet in Alausa or on a call this week. Phone: [PHONE]. Email: [EMAIL]. Product: [WEBSITE].
 

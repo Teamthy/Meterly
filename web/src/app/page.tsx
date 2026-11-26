@@ -675,7 +675,7 @@ export default function ConsumerHubPage() {
             <p className="mt-3 max-w-md text-sm leading-relaxed text-white/55">
               {selectedUsage?.estimated_hours_remaining != null
                 ? `About ${selectedUsage.estimated_hours_remaining} hours left. We only call it delivered when the meter confirms.`
-                : "We push credit to a compatible smart meter. Network “accepted” is not delivered. Keypad meters still get an STS token."}
+                : "Compatible smart meters only. We push credit; the meter must confirm. If Disco supply is off, units wait — we do not call that delivered. Keypad meters get an STS token."}
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
               <Link
@@ -1111,14 +1111,18 @@ export default function ConsumerHubPage() {
 
               {selectedSupportsRemote && deliveryPref !== "TOKEN" && (
                 <p className="text-[11px] text-ink bg-volt/20 border border-stone-200 rounded-lg px-3 py-2">
-                  This meter can take remote credit. After payment we push units to it.
-                  You will not get a token unless the push fails and an operator falls back.
+                  Compatible smart meter: after payment we push units. Delivered only
+                  when the meter confirms — not when the network says accepted. Disco
+                  supply must be on at the house (UIU in a wall socket, not a generator).
+                  If the feeder is dead, units wait; we can release a token only after
+                  we know the head-end did not already credit.
                 </p>
               )}
               {!selectedSupportsRemote && selectedMeter && (
                 <p className="text-[11px] text-stone-600 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2">
-                  This meter is keypad-only. You will receive a 20-digit STS token to type in.
-                  Smart meters (sandbox numbers starting with 7) skip the keypad.
+                  This meter is keypad-only. You will receive a 20-digit STS token to
+                  type in. No-keypad is only for operator-attested compatible smart
+                  meters, not a number prefix.
                 </p>
               )}
 
@@ -1355,8 +1359,9 @@ export default function ConsumerHubPage() {
                         ) : t.delivery_status === "ACCEPTED" ? (
                           <p>
                             Pushed to the meter network. ACCEPTED ≠ delivered.
-                            Waiting for the meter to confirm (sandbox: use the
-                            button below).
+                            Waiting for the meter to confirm. If the house has no
+                            Disco supply, the push cannot land until it does
+                            (sandbox: use the button below).
                           </p>
                         ) : t.delivery_status === "FAILED" ? (
                           <p>
