@@ -42,28 +42,28 @@ import {
 
 const MOCK_PRESETS = [
   {
-    label: "Standard STSKeypad",
-    meter: "45011112222",
-    disco: "EKEDC",
-    hint: "Token vending -> instant 20-digit STS token",
-  },
-  {
-    label: "Smart Remote Credit",
+    label: "Smart meter (credit on meter)",
     meter: "70011112222",
     disco: "IKEDC",
-    hint: "Remote ACCEPTED -> CONFIRMED once meter settles",
+    hint: "Remote push → ACCEPTED → CONFIRMED when the meter acknowledges. No keypad.",
   },
   {
-    label: "Vend Fails -> Auto Refund",
+    label: "Keypad STS (token fallback)",
+    meter: "45011112222",
+    disco: "EKEDC",
+    hint: "No AMI path — 20-digit STS token you type on the meter",
+  },
+  {
+    label: "Vend fails → refund",
     meter: "45011110000",
     disco: "AEDC",
     hint: "Definitive vend failure triggers automatic PSP refund",
   },
   {
-    label: "Timeout -> UNKNOWN",
+    label: "Timeout → UNKNOWN",
     meter: "45011119999",
     disco: "IBEDC",
-    hint: "Lost vend response -> UNKNOWN -> reconciles safely",
+    hint: "Lost vend response → UNKNOWN → reconcile, never blind retry",
   },
 ];
 
@@ -79,9 +79,9 @@ export default function ConsumerHubPage() {
   );
 
   // Meter registration state
-  const [meterNum, setMeterNum] = useState("45011112222");
-  const [disco, setDisco] = useState("EKEDC");
-  const [meterLabel, setMeterLabel] = useState("Home Prepaid");
+  const [meterNum, setMeterNum] = useState("70011112222");
+  const [disco, setDisco] = useState("IKEDC");
+  const [meterLabel, setMeterLabel] = useState("Home smart meter");
   const [isBeneficiary, setIsBeneficiary] = useState(false);
   const [validation, setValidation] = useState<MeterValidationResult | null>(null);
   const [validating, setValidating] = useState(false);
@@ -89,7 +89,7 @@ export default function ConsumerHubPage() {
   // Purchase flow state
   const [selectedMeterId, setSelectedMeterId] = useState<string>("");
   const [amountNaira, setAmountNaira] = useState<string>("5000");
-  const [deliveryPref, setDeliveryPref] = useState<"TOKEN" | "REMOTE">("TOKEN");
+  const [deliveryPref, setDeliveryPref] = useState<"AUTO" | "TOKEN" | "REMOTE">("AUTO");
   const [buyerEmail, setBuyerEmail] = useState<string>(email);
   const [isGift, setIsGift] = useState(false);
   const [recipientName, setRecipientName] = useState("");
@@ -159,11 +159,9 @@ export default function ConsumerHubPage() {
     selectedMeter?.capabilities?.remote_credit?.reachable !== false;
 
   useEffect(() => {
-    if (selectedSupportsRemote) {
-      setDeliveryPref("REMOTE");
-    } else {
-      setDeliveryPref("TOKEN");
-    }
+    // Selling point: prefer credit-on-meter. AUTO picks REMOTE when the meter
+    // can take it, otherwise STS token. Never force remote on a keypad meter.
+    setDeliveryPref(selectedSupportsRemote ? "AUTO" : "TOKEN");
   }, [selectedSupportsRemote, selectedMeterId]);
 
   const handleValidateMeter = async () => {
@@ -524,13 +522,15 @@ export default function ConsumerHubPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="max-w-2xl space-y-1.5">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-0.5 text-xs font-medium text-emerald-300 border border-emerald-400/25">
-              <Radio className="h-3 w-3" /> Smart Remote Delivery + Verified STS Fallback
+              <Radio className="h-3 w-3" /> Credit on the meter — not a code to type
             </span>
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Buy electricity for any meter, from anywhere.
+              Units land on the meter.
             </h1>
             <p className="text-sm text-stone-300 leading-relaxed">
-              Compatible smart meters receive credit over-the-air with zero keypad entry. Standard prepaid meters receive an encrypted 20-digit STS token. Payment, vending, and physical meter delivery are tracked independently.
+              On a compatible smart meter we push credit remotely. You do not climb a ladder or punch 20 digits.
+              We only say it is delivered when the meter confirms — network &quot;accepted&quot; is not enough.
+              Keypad meters still get an STS token as fallback.
             </p>
           </div>
           <button
@@ -571,7 +571,7 @@ export default function ConsumerHubPage() {
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
                 <Plus className="h-4 w-4 text-emerald-600" />
-                Validate & Save Meter
+                Add a meter
               </h2>
               <span className="text-[11px] font-medium text-stone-500">
                 Grants PURCHASE only
@@ -581,7 +581,7 @@ export default function ConsumerHubPage() {
             {/* Sandbox presets */}
             <div className="mb-4 space-y-1.5">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
-                1-Click Sandbox Meter Presets
+                Try it: smart meter first (sandbox)
               </p>
               <div className="grid grid-cols-2 gap-1.5">
                 {MOCK_PRESETS.map((p) => (
@@ -703,7 +703,7 @@ export default function ConsumerHubPage() {
           <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
             <h2 className="text-base font-bold text-stone-900 flex items-center gap-2 mb-3">
               <Zap className="h-4 w-4 text-emerald-600" />
-              Purchase Electricity
+              Put credit on the meter
             </h2>
 
             <form onSubmit={handleBuyElectricity} className="space-y-3.5">
@@ -763,18 +763,23 @@ export default function ConsumerHubPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Delivery Mode
+                    How credit arrives
                   </label>
                   <select
                     value={deliveryPref}
                     onChange={(e) =>
-                      setDeliveryPref(e.target.value as "TOKEN" | "REMOTE")
+                      setDeliveryPref(e.target.value as "AUTO" | "TOKEN" | "REMOTE")
                     }
                     className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
                   >
-                    <option value="TOKEN">20-Digit STS Token</option>
-                    {selectedSupportsRemote && (
-                      <option value="REMOTE">Smart Remote Credit (No Keypad)</option>
+                    {selectedSupportsRemote ? (
+                      <>
+                        <option value="AUTO">On the meter (recommended)</option>
+                        <option value="REMOTE">Force remote push</option>
+                        <option value="TOKEN">STS token fallback</option>
+                      </>
+                    ) : (
+                      <option value="TOKEN">STS token (this meter has no remote path)</option>
                     )}
                   </select>
                 </div>
@@ -846,16 +851,31 @@ export default function ConsumerHubPage() {
                 )}
               </div>
 
+              {selectedSupportsRemote && deliveryPref !== "TOKEN" && (
+                <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                  This meter can take remote credit. After payment we push units to it.
+                  You will not get a token unless the push fails and an operator falls back.
+                </p>
+              )}
+              {!selectedSupportsRemote && selectedMeter && (
+                <p className="text-[11px] text-stone-600 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2">
+                  This meter is keypad-only. You will receive a 20-digit STS token to type in.
+                  Smart meters (sandbox numbers starting with 7) skip the keypad.
+                </p>
+              )}
+
               <button
                 type="submit"
                 disabled={purchasing || !selectedMeterId}
                 className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
               >
                 {purchasing
-                  ? "Creating Priced Quote..."
-                  : `Quote & Pay (${formatNaira(
-                      Math.round((Number(amountNaira) || 0) * 100) + 10000
-                    )} incl. ₦100 fee)`}
+                  ? "Pricing…"
+                  : selectedSupportsRemote && deliveryPref !== "TOKEN"
+                    ? `Push ₦${Number(amountNaira).toLocaleString()} to the meter`
+                    : `Pay for STS token (${formatNaira(
+                        Math.round((Number(amountNaira) || 0) * 100) + 10000
+                      )} incl. fee)`}
               </button>
             </form>
           </section>
@@ -936,7 +956,7 @@ export default function ConsumerHubPage() {
         <div className="lg:col-span-7 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-stone-900">
-              Transactions & Truthful Status Tracking
+              Is it on the meter yet?
             </h2>
             <span className="font-mono text-xs text-stone-500">
               {txns.length} record{txns.length === 1 ? "" : "s"}
@@ -947,10 +967,10 @@ export default function ConsumerHubPage() {
             <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center space-y-2">
               <Zap className="mx-auto h-8 w-8 text-stone-300" />
               <p className="text-sm font-medium text-stone-700">
-                No electricity purchases yet for this account.
+                No purchases yet.
               </p>
               <p className="text-xs text-stone-500">
-                Save a meter on the left (try both Standard STS and Smart Remote Credit!) and complete a checkout.
+                Save the smart-meter preset (700…) and pay — credit is pushed to the meter, not typed.
               </p>
             </div>
           ) : (
@@ -1111,7 +1131,7 @@ export default function ConsumerHubPage() {
                             onClick={() => handleSettleRemoteDev(t.transaction_id)}
                             className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700"
                           >
-                            Simulate Smart Meter Confirmation
+                            Meter confirmed (sandbox)
                           </button>
                         )}
 

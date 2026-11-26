@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Buy Power", icon: Zap },
+  { href: "/", label: "On the meter", icon: Zap },
   { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2 },
   { href: "/pots", label: "Split the Meter", icon: Users },
   { href: "/autopower", label: "AutoPower", icon: CalendarClock },
@@ -75,7 +75,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </span>
                 </div>
                 <p className="text-[11px] text-stone-300/80 hidden sm:block">
-                  Remote Smart Credit & Verified STS Token Infrastructure
+                  Credit on the meter. Token only if the meter can&apos;t take it.
                 </p>
               </div>
             </Link>
@@ -184,10 +184,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <footer className="border-t border-stone-200 bg-white py-4 text-xs text-stone-500">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 sm:px-6">
           <p>
-            Meterly Infrastructure • Payment, vending & meter confirmation tracked independently.
+            Selling point: units on the meter. We never call remote credit delivered until the meter confirms.
           </p>
           <p className="font-mono text-[11px] text-stone-400">
-            Tokens work strictly on the meter purchased for • Payments via CBN-licensed PSP
+            STS token is fallback for keypad meters • Payments via CBN-licensed PSP
           </p>
         </div>
       </footer>

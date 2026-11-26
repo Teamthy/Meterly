@@ -4,9 +4,9 @@ import { AuthProvider } from "@/components/AuthContext";
 import { AppShell } from "@/components/AppShell";
 
 export const metadata: Metadata = {
-  title: "Meterly — Nigerian Prepaid Electricity & Smart Remote Delivery",
+  title: "Meterly — Credit lands on the meter",
   description:
-    "Buy prepaid electricity from anywhere: smart remote meter delivery, verified STS token fallback, Pay-for-Me links, Split the Meter pots, AutoPower, and Landlord Power Desk.",
+    "On compatible smart meters, Meterly pushes electricity credit to the meter. No keypad, no 20-digit token. We only call it delivered when the meter confirms. STS token is the fallback.",
 };
 
 export default function RootLayout({

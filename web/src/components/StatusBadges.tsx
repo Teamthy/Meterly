@@ -84,9 +84,14 @@ export function ThreeDimensionStatus({
           status={delivery}
         />
       </div>
+      {method === "REMOTE" && delivery === "CONFIRMED" && (
+        <p className="text-xs font-semibold text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1">
+          On the meter. The meter confirmed the credit. No token to type.
+        </p>
+      )}
       {delivery === "ACCEPTED" && (
         <p className="text-xs font-medium text-sky-800 bg-sky-50/80 border border-sky-200 rounded-md px-2.5 py-1">
-          Accepted by meter network — awaiting physical meter confirmation. Not yet delivered.
+          Pushed to the meter network — not on the meter yet. Accepted ≠ delivered.
         </p>
       )}
       {(vending === "UNKNOWN" || delivery === "UNKNOWN") && (
@@ -112,18 +117,18 @@ export function CapabilityBadges({ caps }: { caps?: Capabilities }) {
 
   return (
     <div className="flex flex-wrap gap-1.5 text-xs">
-      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-medium text-stone-700">
-        STS Token Ready
-      </span>
       {remoteUsable ? (
         <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-800 ring-1 ring-emerald-600/20">
-          Smart Remote Credit {caps.remote_credit.confirmed ? "(Confirmed)" : "(Eligible)"}
+          Credit on meter {caps.remote_credit.confirmed ? "· confirmed" : "· eligible"}
         </span>
       ) : (
         <span className="rounded-md bg-stone-100 px-2 py-0.5 text-stone-500">
-          Keypad Token Only
+          Keypad STS token
         </span>
       )}
+      <span className="rounded-md bg-stone-100 px-2 py-0.5 font-medium text-stone-700">
+        Token fallback
+      </span>
       {readingConfirmed && (
         <span className="rounded-md bg-teal-50 px-2 py-0.5 font-medium text-teal-800 ring-1 ring-teal-600/20">
           Live kWh Reading
