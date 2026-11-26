@@ -174,12 +174,15 @@ func TestPowerDeskFeatureGateDefaultDisabled(t *testing.T) {
 		bearer string
 	}{
 		{"POST", "/v1/orgs", "u1"},
+		{"GET", "/v1/orgs", "u1"},
 		{"GET", "/v1/orgs/" + id.String(), "u1"},
 		{"PATCH", "/v1/orgs/" + id.String(), "u1"},
 		{"POST", "/v1/orgs/" + id.String() + "/members", "u1"},
 		{"PATCH", "/v1/orgs/" + id.String() + "/members/" + id.String(), "u1"},
 		{"DELETE", "/v1/orgs/" + id.String() + "/members/" + id.String(), "u1"},
 		{"POST", "/v1/orgs/" + id.String() + "/properties", "u1"},
+		{"POST", "/v1/properties/" + id.String() + "/buildings", "u1"},
+		{"GET", "/v1/properties/" + id.String() + "/buildings", "u1"},
 		{"POST", "/v1/properties/" + id.String() + "/units", "u1"},
 		{"POST", "/v1/units/" + id.String() + "/meters", "u1"},
 		{"GET", "/v1/units/" + id.String() + "/meters/" + id.String() + "/history", "u1"},
@@ -906,4 +909,46 @@ func TestPowerDeskMonthBoundaryAfricaLagosAndAllUnitsFailed(t *testing.T) {
 			t.Fatalf("ledger trial balance non-zero: %d", tb)
 		}
 	})
+}
+
+func TestPowerDeskListOrgsAndBuildings(t *testing.T) {
+	env := newPDEnv(t, memstore.New(), false)
+	rr := env.do("GET", "/v1/orgs", "owner-list", nil, nil)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"data"`) {
+		t.Fatalf("empty list %d %s", rr.Code, rr.Body.String())
+	}
+	rr = env.do("POST", "/v1/orgs", "owner-list", map[string]any{
+		"name": "Listed Estate", "organisation_type": "ESTATE",
+	}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create org %d %s", rr.Code, rr.Body.String())
+	}
+	var org orchestrator.OrgDetailView
+	_ = json.Unmarshal(rr.Body.Bytes(), &org)
+	rr = env.do("GET", "/v1/orgs", "owner-list", nil, nil)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), org.ID.String()) {
+		t.Fatalf("list orgs %d %s", rr.Code, rr.Body.String())
+	}
+	rr = env.do("POST", "/v1/orgs/"+org.ID.String()+"/properties", "owner-list", map[string]any{
+		"name": "Lekki Court", "city": "Lagos", "state": "LA",
+	}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create prop %d %s", rr.Code, rr.Body.String())
+	}
+	var prop powerdesk.Property
+	_ = json.Unmarshal(rr.Body.Bytes(), &prop)
+	rr = env.do("GET", "/v1/properties/"+prop.ID.String()+"/buildings", "owner-list", nil, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list default buildings %d %s", rr.Code, rr.Body.String())
+	}
+	rr = env.do("POST", "/v1/properties/"+prop.ID.String()+"/buildings", "owner-list", map[string]any{
+		"name": "Block C",
+	}, nil)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create building %d %s", rr.Code, rr.Body.String())
+	}
+	rr = env.do("GET", "/v1/properties/"+prop.ID.String()+"/buildings", "owner-list", nil, nil)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "Block C") {
+		t.Fatalf("list buildings %d %s", rr.Code, rr.Body.String())
+	}
 }

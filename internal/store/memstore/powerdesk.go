@@ -221,6 +221,33 @@ func (r powerDeskRepo) ListActiveMembers(_ context.Context, orgID uuid.UUID) ([]
 	return out, nil
 }
 
+func (r powerDeskRepo) ListOrgsForUser(_ context.Context, userID string) ([]*powerdesk.Organisation, error) {
+	defer r.lock()()
+	seen := map[uuid.UUID]struct{}{}
+	out := []*powerdesk.Organisation{}
+	for _, m := range r.s.orgMembers {
+		if m.UserID != userID || m.Status != powerdesk.MemberActive {
+			continue
+		}
+		if _, ok := seen[m.OrganisationID]; ok {
+			continue
+		}
+		org, ok := r.s.orgs[m.OrganisationID]
+		if !ok {
+			continue
+		}
+		seen[m.OrganisationID] = struct{}{}
+		out = append(out, cloneOrg(org))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID.String() < out[j].ID.String()
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 func (r powerDeskRepo) CountActiveOwners(_ context.Context, orgID uuid.UUID) (int, error) {
 	defer r.lock()()
 	n := 0
@@ -334,6 +361,23 @@ func (r powerDeskRepo) GetBuilding(_ context.Context, id uuid.UUID) (*powerdesk.
 		return nil, store.ErrNotFound
 	}
 	return cloneBuilding(b), nil
+}
+
+func (r powerDeskRepo) ListBuildingsForProperty(_ context.Context, propertyID uuid.UUID) ([]*powerdesk.Building, error) {
+	defer r.lock()()
+	out := []*powerdesk.Building{}
+	for _, b := range r.s.buildings {
+		if b.PropertyID == propertyID {
+			out = append(out, cloneBuilding(b))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID.String() < out[j].ID.String()
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 func (r powerDeskRepo) CreateUnit(_ context.Context, u *powerdesk.Unit) error {

@@ -16,10 +16,17 @@ import {
   UserCheck,
   MessageCircle,
   Headphones,
+  UserRound,
+  Settings,
+  Fingerprint,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "On the meter", icon: Zap },
+  { href: "/onboarding", label: "Setup", icon: UserCheck },
+  { href: "/profile", label: "Profile", icon: UserRound },
+  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/signin", label: "Passkey", icon: Fingerprint },
   { href: "/households", label: "Household", icon: Home },
   { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2 },
   { href: "/pots", label: "Split the Meter", icon: Users },

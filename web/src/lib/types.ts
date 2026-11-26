@@ -74,6 +74,35 @@ export interface Meter {
   permission?: "VIEW" | "PURCHASE" | "MANAGE";
 }
 
+export interface MeterConsumption {
+  kwh_per_hour: number;
+  kwh_per_day: number;
+  window_hours: number;
+  samples: number;
+  computed_at: string;
+}
+
+export interface MeterLastCredit {
+  units_kwh: number;
+  credited_at: string;
+  delivery_method: string;
+  transaction_id: string;
+}
+
+export interface MeterUsage {
+  meter_id: string;
+  remaining_kwh: number | null;
+  remaining_source: "remote_reading" | "unavailable" | string;
+  read_at?: string;
+  provider?: string;
+  confirmed: boolean;
+  consumption: MeterConsumption | null;
+  estimated_empty_at?: string | null;
+  estimated_hours_remaining?: number | null;
+  last_credit: MeterLastCredit | null;
+  unavailable_reason?: string;
+}
+
 export interface MeterValidationResult {
   valid: boolean;
   validation_status: string;
@@ -549,4 +578,31 @@ export interface MonthlyStatement {
       refunded_count: number;
     }>;
   }>;
+}
+
+export type OnboardingStep =
+  | "welcome"
+  | "account"
+  | "profile"
+  | "meter"
+  | "alerts"
+  | "done";
+
+export interface UserProfile {
+  user_id: string;
+  external_id: string;
+  display_name: string;
+  email_masked: string;
+  phone_masked: string;
+  onboarding_step: OnboardingStep;
+  onboarding_completed_at?: string | null;
+  created_at: string;
+}
+
+export interface Passkey {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string;
+  sign_count: number;
 }

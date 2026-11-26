@@ -20,12 +20,15 @@ import (
 
 func (s *Server) powerDeskRoutes(mux *patternMux, user, write func(http.HandlerFunc) http.Handler) {
 	mux.Handle("POST /v1/orgs", write(s.createOrg))
+	mux.Handle("GET /v1/orgs", user(s.listOrgs))
 	mux.Handle("GET /v1/orgs/{id}", user(s.getOrg))
 	mux.Handle("PATCH /v1/orgs/{id}", write(s.updateOrg))
 	mux.Handle("POST /v1/orgs/{id}/members", write(s.addOrgMember))
 	mux.Handle("PATCH /v1/orgs/{id}/members/{uid}", write(s.updateOrgMemberRole))
 	mux.Handle("DELETE /v1/orgs/{id}/members/{uid}", write(s.removeOrgMember))
 	mux.Handle("POST /v1/orgs/{id}/properties", write(s.createProperty))
+	mux.Handle("POST /v1/properties/{id}/buildings", write(s.createBuilding))
+	mux.Handle("GET /v1/properties/{id}/buildings", user(s.listBuildings))
 	mux.Handle("POST /v1/properties/{id}/units", write(s.createUnit))
 	mux.Handle("POST /v1/units/{id}/meters", write(s.attachUnitMeter))
 	mux.Handle("GET /v1/units/{id}/meters/{unit_meter_id}/history", user(s.getUnitMeterHistory))
@@ -87,6 +90,24 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, org)
+}
+
+// GET /v1/orgs
+func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	if !s.requirePowerDesk(w) {
+		return
+	}
+	r = s.pdCtx(r)
+	list, err := s.O.ListMyOrgs(r.Context())
+	if err != nil {
+		s.mapPowerDeskErr(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []orchestrator.OrgSummary{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": list})
 }
 
 // GET /v1/orgs/{id}
@@ -261,6 +282,54 @@ func (s *Server) createProperty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, prop)
+}
+
+// POST /v1/properties/{id}/buildings
+func (s *Server) createBuilding(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	if !s.requirePowerDesk(w) {
+		return
+	}
+	r = s.pdCtx(r)
+	propID, ok := parsePathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decode(r, &req) {
+		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	b, err := s.O.CreateBuilding(r.Context(), propID, req.Name)
+	if err != nil {
+		s.mapPowerDeskErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, b)
+}
+
+// GET /v1/properties/{id}/buildings
+func (s *Server) listBuildings(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+	if !s.requirePowerDesk(w) {
+		return
+	}
+	r = s.pdCtx(r)
+	propID, ok := parsePathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	list, err := s.O.ListBuildings(r.Context(), propID)
+	if err != nil {
+		s.mapPowerDeskErr(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []*powerdesk.Building{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": list})
 }
 
 // POST /v1/properties/{id}/units

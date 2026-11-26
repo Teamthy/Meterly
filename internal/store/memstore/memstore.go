@@ -19,6 +19,7 @@ import (
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
@@ -38,7 +39,12 @@ type Store struct {
 
 	users             map[string]string
 	userIDs           map[string]bool
+	userExt           map[string]string
+	userProfiles      map[string]identity.Profile
 	userContacts      map[string]notifications.UserContacts
+	authChallenges    map[string]identity.Challenge
+	authCreds         map[string]identity.Credential
+	authSessions      map[string]identity.Session
 	meters            map[uuid.UUID]*meters.Meter
 	meterByHash       map[string]uuid.UUID
 	grants            []*meters.Grant
@@ -99,12 +105,17 @@ type Store struct {
 	hhMeters          map[string]households.MeterLink // householdID:meterID
 	ownership         map[string]households.Ownership // meterID:userID
 	remoteCohorts     map[uuid.UUID]meters.RemoteCohort
+	readingSamples    map[uuid.UUID][]meters.ReadingSample
 }
 
 func New() *Store {
 	return &Store{
-		users: map[string]string{}, userIDs: map[string]bool{}, userContacts: map[string]notifications.UserContacts{},
-		meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
+		users: map[string]string{}, userIDs: map[string]bool{}, userExt: map[string]string{},
+		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
+		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
+		authSessions:   map[string]identity.Session{},
+		readingSamples: map[uuid.UUID][]meters.ReadingSample{},
+		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
 		gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
@@ -242,20 +253,29 @@ func (r *repos) Offline() store.OfflineRepo                              { retur
 func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
 func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
 func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
+func (r *repos) Auth() store.AuthRepo                                    { return r }
+func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
 func (r *repos) EnsureByExternalID(_ context.Context, ext string) (string, error) {
 	defer r.lock()()
 	if id, ok := r.s.users[ext]; ok {
+		r.s.userExt[id] = ext
 		return id, nil
 	}
 	id := uuid.NewString()
 	r.s.users[ext] = id
 	r.s.userIDs[id] = true
+	r.s.userExt[id] = ext
+	r.s.userProfiles[id] = identity.Profile{
+		ID: id, ExternalID: ext, OnboardingStep: identity.StepWelcome, CreatedAt: time.Now().UTC(),
+	}
 	r.onUndo(func() {
 		delete(r.s.users, ext)
 		delete(r.s.userIDs, id)
+		delete(r.s.userExt, id)
+		delete(r.s.userProfiles, id)
 	})
 	return id, nil
 }

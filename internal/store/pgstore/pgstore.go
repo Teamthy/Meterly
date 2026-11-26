@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -137,6 +138,8 @@ func (r *repos) Offline() store.OfflineRepo                              { retur
 func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
 func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
 func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
+func (r *repos) Auth() store.AuthRepo                                    { return authRepo{r} }
+func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -196,6 +199,75 @@ func (r userRepo) EnsureByExternalID(ctx context.Context, ext string) (string, e
 		ON CONFLICT (external_id) DO UPDATE SET external_id = EXCLUDED.external_id
 		RETURNING id::text`, ext).Scan(&id)
 	return id, mapErr(err)
+}
+
+func (r userRepo) Profile(ctx context.Context, userID string) (identity.Profile, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return identity.Profile{}, store.ErrNotFound
+	}
+	var p identity.Profile
+	var completed *time.Time
+	err = r.db.QueryRow(ctx, `
+		SELECT id::text, coalesce(external_id, ''), coalesce(display_name, ''),
+		       email_masked, phone_masked, onboarding_step, onboarding_completed_at, created_at
+		FROM users WHERE id = $1`, uid).Scan(
+		&p.ID, &p.ExternalID, &p.DisplayName, &p.EmailMasked, &p.PhoneMasked,
+		&p.OnboardingStep, &completed, &p.CreatedAt,
+	)
+	if err != nil {
+		return identity.Profile{}, mapErr(err)
+	}
+	if completed != nil {
+		t := completed.UTC()
+		p.OnboardingCompletedAt = &t
+	}
+	p.CreatedAt = p.CreatedAt.UTC()
+	return p, nil
+}
+
+func (r userRepo) SetDisplayName(ctx context.Context, userID, name string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return store.ErrNotFound
+	}
+	tag, err := r.db.Exec(ctx, `UPDATE users SET display_name = $2, updated_at = now() WHERE id = $1`, uid, name)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r userRepo) SetOnboarding(ctx context.Context, userID, step string, completedAt *time.Time) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return store.ErrNotFound
+	}
+	tag, err := r.db.Exec(ctx, `UPDATE users SET onboarding_step = $2, onboarding_completed_at = $3, updated_at = now() WHERE id = $1`,
+		uid, step, completedAt)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r userRepo) ExternalID(ctx context.Context, userID string) (string, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return "", store.ErrNotFound
+	}
+	var ext string
+	err = r.db.QueryRow(ctx, `SELECT coalesce(external_id, '') FROM users WHERE id = $1`, uid).Scan(&ext)
+	if err != nil {
+		return "", mapErr(err)
+	}
+	return ext, nil
 }
 
 func (r userRepo) LockForUpdate(ctx context.Context, userID string) error {
