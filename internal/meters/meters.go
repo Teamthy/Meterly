@@ -41,6 +41,10 @@ type Capabilities struct {
 	TokenVending  Capability `json:"token_vending"`
 	RemoteCredit  Capability `json:"remote_credit"`
 	RemoteReading Capability `json:"remote_reading"`
+	// Vend gates from the last provider verify. Omitted JSON = can vend, no floor.
+	CannotVend       bool  `json:"cannot_vend,omitempty"`
+	MinPurchaseMinor int64 `json:"min_purchase_minor,omitempty"`
+	ArrearsMinor     int64 `json:"arrears_minor,omitempty"`
 }
 
 // RemoteCreditUsable reports whether remote delivery may be attempted.
@@ -90,4 +94,6 @@ var (
 	ErrInvalidMeter = errors.New("meters: meter could not be validated")
 	ErrNotFound     = errors.New("meters: not found")
 	ErrForbidden    = errors.New("meters: no access to this meter")
+	ErrCannotVend   = errors.New("meters: disco will not vend this meter")
+	ErrSandboxMeter = errors.New("meters: sandbox meter number is not allowed live")
 )

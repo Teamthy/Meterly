@@ -128,6 +128,12 @@ type MeterValidationResult struct {
 	// Capabilities as reported by the provider for this meter.
 	RemoteCreditSupported  bool
 	RemoteReadingSupported bool
+	// CanVend is true when the provider omitted the flag. False means do not take payment.
+	CanVend bool
+	// MinPurchaseMinor is the Disco floor in kobo; 0 means none.
+	MinPurchaseMinor int64
+	// ArrearsMinor is outstanding debt in kobo that may be taken from the vend amount.
+	ArrearsMinor int64
 }
 
 type VendRequest struct {

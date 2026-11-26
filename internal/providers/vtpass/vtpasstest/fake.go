@@ -129,12 +129,13 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			reply(map[string]any{
 				"code": "000",
 				"content": map[string]any{
-					"Customer_Name":    "TESTMETER1",
-					"Address":          "ABULE EGBA BU ABULE",
-					"Meter_Number":     meter,
-					"Meter_Type":       "PREPAID",
-					"Can_Vend":         "yes",
-					"WrongBillersCode": false,
+					"Customer_Name":       "TESTMETER1",
+					"Address":             "ABULE EGBA BU ABULE",
+					"Meter_Number":        meter,
+					"Meter_Type":          "PREPAID",
+					"Can_Vend":            "yes",
+					"Min_Purchase_Amount": "500",
+					"WrongBillersCode":    false,
 				},
 			})
 		case meter == PostpaidMeter && typ == "postpaid":

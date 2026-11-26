@@ -98,6 +98,8 @@ var (
 	ErrCreditOnMeter     = errors.New("credit is on the meter; no keypad token")
 	ErrInvalidPreference = errors.New("unknown delivery preference")
 	ErrInvalidPack       = errors.New("unknown amount pack")
+	ErrInFlight          = errors.New("a purchase for this meter is already in progress")
+	ErrNameNotConfirmed  = errors.New("confirm the disco account name before paying")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
@@ -302,6 +304,9 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		}
 		// Serialize this authorization and creation with meter access changes.
 		if _, err := registry.AuthorizeForUpdateIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {
+			return err
+		}
+		if err := o.ensureNoInFlight(ctx, r, req.CustomerID, q.MeterID); err != nil {
 			return err
 		}
 		if err := r.Quotes().MarkUsed(ctx, q.ID); err != nil {

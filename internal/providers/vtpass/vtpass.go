@@ -247,10 +247,13 @@ func (c *Client) verify(ctx context.Context, meter, serviceID, typ string) (prov
 			mt = strings.ToUpper(typ)
 		}
 		return providers.MeterValidationResult{
-			Valid:        true,
-			MeterType:    mt,
-			CustomerName: name,
-			Address:      firstNonEmpty(vc.Address, vc.AddressAlt),
+			Valid:            true,
+			MeterType:        mt,
+			CustomerName:     name,
+			Address:          firstNonEmpty(vc.Address, vc.AddressAlt),
+			CanVend:          parseCanVend(vc.CanVend),
+			MinPurchaseMinor: parseNairaMinor(vc.MinPurchase),
+			ArrearsMinor:     parseNairaMinor(vc.Arrears),
 		}, nil
 	case "011", "012", "030":
 		return providers.MeterValidationResult{Valid: false}, nil
@@ -481,13 +484,16 @@ func decodeEnvelope(raw []byte) (envelope, error) {
 }
 
 type verifyFields struct {
-	CustomerName     string `json:"Customer_Name"`
-	CustomerNameAlt  string `json:"customerName"`
-	Address          string `json:"Address"`
-	AddressAlt       string `json:"customerAddress"`
-	MeterNumber      string `json:"Meter_Number"`
-	MeterType        string `json:"Meter_Type"`
-	WrongBillersCode bool   `json:"WrongBillersCode"`
+	CustomerName     string          `json:"Customer_Name"`
+	CustomerNameAlt  string          `json:"customerName"`
+	Address          string          `json:"Address"`
+	AddressAlt       string          `json:"customerAddress"`
+	MeterNumber      string          `json:"Meter_Number"`
+	MeterType        string          `json:"Meter_Type"`
+	WrongBillersCode bool            `json:"WrongBillersCode"`
+	CanVend          string          `json:"Can_Vend"`
+	MinPurchase      json.RawMessage `json:"Min_Purchase_Amount"`
+	Arrears          json.RawMessage `json:"Customer_Arrears"`
 }
 
 func verifyContent(raw json.RawMessage) verifyFields {
@@ -560,6 +566,42 @@ func parseUnits(raws ...json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+func parseCanVend(s string) bool {
+	v := strings.ToLower(strings.TrimSpace(s))
+	switch v {
+	case "", "yes", "true", "1", "y":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseNairaMinor(raw json.RawMessage) int64 {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var n float64
+	if json.Unmarshal(raw, &n) == nil {
+		if n < 0 {
+			return 0
+		}
+		return int64(n * 100)
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return 0
+	}
+	s = strings.TrimSpace(strings.ReplaceAll(s, ",", ""))
+	if s == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f < 0 {
+		return 0
+	}
+	return int64(f * 100)
 }
 
 func digitsOnly(s string) string {

@@ -56,7 +56,7 @@ func TestFormatRequestID(t *testing.T) {
 func TestValidatePrepaidAndPostpaid(t *testing.T) {
 	c, _ := setup(t)
 	pre, err := c.ValidateMeter(ctx, providers.MeterValidationRequest{MeterNumber: vtpasstest.PrepaidMeter, DiscoCode: "IKEDC"})
-	if err != nil || !pre.Valid || pre.MeterType != "PREPAID" || pre.CustomerName != "TESTMETER1" {
+	if err != nil || !pre.Valid || pre.MeterType != "PREPAID" || pre.CustomerName != "TESTMETER1" || !pre.CanVend || pre.MinPurchaseMinor != 50_000 {
 		t.Fatalf("prepaid: %+v %v", pre, err)
 	}
 	post, err := c.ValidateMeter(ctx, providers.MeterValidationRequest{MeterNumber: vtpasstest.PostpaidMeter, DiscoCode: "EKEDC"})

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -247,6 +248,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	}
 
 	reg := registry.New(a.Store, box, vend, remote)
+	reg.Live = strings.EqualFold(cfg.ProviderEnvironment, "PRODUCTION")
 	a.Orch = orchestrator.New(cfg.Orchestrator, a.Store, reg, box, a.payments, vend, remote, log)
 	a.Orch.SetMetrics(a.Metrics)
 	a.Orch.SetMeterReadingProvider(readings)

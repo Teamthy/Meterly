@@ -264,14 +264,24 @@ func (v *Vending) ValidateMeter(_ context.Context, req providers.MeterValidation
 	if len(n) < 11 || len(n) > 13 || strings.HasPrefix(n, "0") || !digits(n) {
 		return providers.MeterValidationResult{Valid: false}, nil
 	}
-	return providers.MeterValidationResult{
+	res := providers.MeterValidationResult{
 		Valid:                  true,
 		MeterType:              "PREPAID",
 		CustomerName:           "TEST CUSTOMER " + n[len(n)-4:],
 		Address:                "12 Test Street, Ikeja, Lagos",
 		RemoteCreditSupported:  strings.HasPrefix(n, "7"),
 		RemoteReadingSupported: strings.HasPrefix(n, "7"),
-	}, nil
+		CanVend:                true,
+	}
+	switch {
+	case strings.HasSuffix(n, "0001"):
+		res.CanVend = false
+	case strings.HasSuffix(n, "0002"):
+		res.MinPurchaseMinor = 1_000_000 // ₦10,000
+	case strings.HasSuffix(n, "0003"):
+		res.ArrearsMinor = 50_000 // ₦500
+	}
+	return res, nil
 }
 
 func (v *Vending) Vend(_ context.Context, req providers.VendRequest) (providers.VendResult, error) {

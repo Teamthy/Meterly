@@ -550,11 +550,12 @@ func (s *Server) getCapabilities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createQuote(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MeterID            uuid.UUID                       `json:"meter_id"`
-		AmountMinor        int64                           `json:"amount_minor"`
-		PackID             string                          `json:"pack_id"`
-		Currency           string                          `json:"currency"`
-		DeliveryPreference orchestrator.DeliveryPreference `json:"delivery_preference"`
+		MeterID             uuid.UUID                       `json:"meter_id"`
+		AmountMinor         int64                           `json:"amount_minor"`
+		PackID              string                          `json:"pack_id"`
+		Currency            string                          `json:"currency"`
+		DeliveryPreference  orchestrator.DeliveryPreference `json:"delivery_preference"`
+		ConfirmCustomerName bool                            `json:"confirm_customer_name"`
 	}
 	if !decode(r, &req) || req.MeterID == uuid.Nil || req.Currency != "NGN" {
 		writeErr(w, 400, "INVALID_REQUEST", "meter_id, currency=NGN and pack_id or amount_minor are required")
@@ -566,6 +567,8 @@ func (s *Server) createQuote(w http.ResponseWriter, r *http.Request) {
 	}
 	q, err := s.O.IssueQuote(r.Context(), orchestrator.QuoteSpec{
 		CustomerID: userID(r), MeterID: req.MeterID, AmountMinor: req.AmountMinor, PackID: req.PackID, Pref: req.DeliveryPreference,
+		ConfirmCustomerName: req.ConfirmCustomerName,
+		RequireNameConfirm:  req.ConfirmCustomerName,
 	})
 	if err != nil {
 		s.mapErr(w, r, err)
@@ -878,6 +881,14 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, meters.ErrInvalidMeter):
 		writeErr(w, 422, "METER_VALIDATION_FAILED", "meter could not be validated with the provider")
+	case errors.Is(err, meters.ErrCannotVend):
+		writeErr(w, 422, "METER_CANNOT_VEND", "this meter cannot be vended right now")
+	case errors.Is(err, meters.ErrSandboxMeter):
+		writeErr(w, 422, "SANDBOX_METER", "sandbox meter numbers are not allowed live")
+	case errors.Is(err, orchestrator.ErrInFlight):
+		writeErr(w, 409, "PURCHASE_IN_FLIGHT", "finish or wait for the open purchase on this meter")
+	case errors.Is(err, orchestrator.ErrNameNotConfirmed):
+		writeErr(w, 422, "NAME_NOT_CONFIRMED", "confirm the disco account name before paying")
 	case errors.Is(err, meters.ErrNotFound):
 		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
 	case errors.Is(err, meters.ErrForbidden):

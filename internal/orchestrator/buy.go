@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tariffs"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -16,11 +18,13 @@ import (
 const recommendHorizonHours = 48.0
 
 type QuoteSpec struct {
-	CustomerID  string
-	MeterID     uuid.UUID
-	AmountMinor int64
-	PackID      string
-	Pref        DeliveryPreference
+	CustomerID          string
+	MeterID             uuid.UUID
+	AmountMinor         int64
+	PackID              string
+	Pref                DeliveryPreference
+	ConfirmCustomerName bool
+	RequireNameConfirm  bool
 }
 
 type ScreenLine struct {
@@ -85,6 +89,33 @@ type ElectricityCatalog struct {
 	Discos []DiscoView      `json:"discos"`
 	Packs  []PackView       `json:"packs"`
 	Custom CustomAmountView `json:"custom"`
+}
+
+func purchaseInFlight(t *tx.Transaction) bool {
+	if t == nil || t.Settled() {
+		return false
+	}
+	switch t.Payment {
+	case tx.PayConfirmed, tx.PayRefundPending:
+		return true
+	}
+	return false
+}
+
+func (o *Orchestrator) ensureNoInFlight(ctx context.Context, repos store.Repos, customerID string, meterID uuid.UUID) error {
+	if repos == nil {
+		repos = o.st.Repos()
+	}
+	list, err := repos.Transactions().ListForCustomer(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	for _, t := range list {
+		if t.MeterID == meterID && purchaseInFlight(t) {
+			return ErrInFlight
+		}
+	}
+	return nil
 }
 
 func (o *Orchestrator) Catalog() ElectricityCatalog {
@@ -210,6 +241,27 @@ func (o *Orchestrator) IssueQuote(ctx context.Context, spec QuoteSpec) (*tx.Quot
 	if err != nil {
 		return nil, err
 	}
+	number, err := o.Meters.Number(m)
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := o.Meters.Validate(ctx, number, m.DiscoCode)
+	if err != nil {
+		return nil, err
+	}
+	m = fresh
+	if m.Capabilities.CannotVend {
+		return nil, meters.ErrCannotVend
+	}
+	if spec.RequireNameConfirm && strings.TrimSpace(m.CustomerName) != "" && !spec.ConfirmCustomerName {
+		return nil, ErrNameNotConfirmed
+	}
+	if m.Capabilities.MinPurchaseMinor > 0 && amountMinor < m.Capabilities.MinPurchaseMinor {
+		return nil, fmt.Errorf("%w: disco minimum %d kobo", ErrAmountOutOfRange, m.Capabilities.MinPurchaseMinor)
+	}
+	if err := o.ensureNoInFlight(ctx, o.st.Repos(), spec.CustomerID, spec.MeterID); err != nil {
+		return nil, err
+	}
 	options := []tx.DeliveryMethod{tx.MethodToken}
 	remoteOK := o.remote != nil && m.Capabilities.RemoteCreditUsable()
 	if remoteOK {
@@ -278,10 +330,18 @@ func QuoteConfirmation(q *tx.Quote, m *meters.Meter) Screen {
 	lines := []ScreenLine{
 		{Label: "Meter", Value: masked},
 		{Label: "Distribution company", Value: tariffs.DiscoName(disco)},
-		{Label: "Tariff", Value: tariffView(disco, tariffs.NormalizeBand(band), kobo).Label},
-		{Label: "Electricity", Value: notifications.FormatNairaMinor(credit)},
-		{Label: "Units that will be served", Value: fmt.Sprintf("%.3f kWh", units)},
 	}
+	if m != nil && strings.TrimSpace(m.CustomerName) != "" {
+		lines = append(lines, ScreenLine{Label: "Account name", Value: m.CustomerName})
+	}
+	if m != nil && m.Capabilities.ArrearsMinor > 0 {
+		lines = append(lines, ScreenLine{Label: "Arrears on this meter", Value: notifications.FormatNairaMinor(m.Capabilities.ArrearsMinor)})
+	}
+	lines = append(lines,
+		ScreenLine{Label: "Tariff", Value: tariffView(disco, tariffs.NormalizeBand(band), kobo).Label},
+		ScreenLine{Label: "Electricity", Value: notifications.FormatNairaMinor(credit)},
+		ScreenLine{Label: "Units that will be served", Value: fmt.Sprintf("%.3f kWh", units)},
+	)
 	if q.DiscountMinor > 0 {
 		lines = append(lines, ScreenLine{Label: "Promo", Value: notifications.FormatNairaMinor(q.DiscountMinor) + " off"})
 	}

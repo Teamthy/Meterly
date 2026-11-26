@@ -107,6 +107,7 @@ export default function ConsumerHubPage() {
   const [recipientPhone, setRecipientPhone] = useState("");
   const [notifyRecipient, setNotifyRecipient] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
+  const [nameConfirmed, setNameConfirmed] = useState(false);
 
   // Token reveal & save card state
   const [revealedTokens, setRevealedTokens] = useState<
@@ -329,6 +330,7 @@ export default function ConsumerHubPage() {
           meter_id: selectedMeterId,
           currency: "NGN",
           delivery_preference: deliveryPref,
+          confirm_customer_name: nameConfirmed || !selectedMeter?.customer_name,
           ...body,
         },
       });
@@ -345,6 +347,10 @@ export default function ConsumerHubPage() {
 
   const handleBuyElectricity = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (selectedMeter?.customer_name && !nameConfirmed && !confirmQuote?.quote_id) {
+      setBanner({ type: "err", text: "Confirm the Disco account name is yours before paying." });
+      return;
+    }
     if (confirmQuote?.quote_id) {
       await confirmPurchase();
       return;
@@ -882,7 +888,11 @@ export default function ConsumerHubPage() {
                 ) : (
                   <select
                     value={selectedMeterId}
-                    onChange={(e) => setSelectedMeterId(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedMeterId(e.target.value);
+                      setNameConfirmed(false);
+                      setConfirmQuote(null);
+                    }}
                     className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none"
                   >
                     {meters.map((m) => {
@@ -1124,6 +1134,20 @@ export default function ConsumerHubPage() {
                   type in. No-keypad is only for operator-attested compatible smart
                   meters, not a number prefix.
                 </p>
+              )}
+
+              {selectedMeter?.customer_name && (
+                <label className="flex items-start gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[11px] text-stone-700">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={nameConfirmed}
+                    onChange={(e) => setNameConfirmed(e.target.checked)}
+                  />
+                  <span>
+                    This is my meter: <strong>{selectedMeter.customer_name}</strong>
+                  </span>
+                </label>
               )}
 
               {confirmQuote?.confirmation && (

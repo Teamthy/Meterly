@@ -1,6 +1,7 @@
 package orchestrator_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -58,6 +59,70 @@ func TestBuyOptionsRecommendedPackAndUnitsFromServer(t *testing.T) {
 		if rec.ID != "ngn-2000" {
 			t.Fatalf("expected ngn-2000 for 48h cover, got %s (usage %+v)", rec.ID, opts.Usage)
 		}
+	})
+}
+
+func TestQuoteGatesCannotVendMinNameInFlightSandbox(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		uid := e.user(t, "ada")
+
+		blocked, err := e.o.Meters.Register(e.ctx, uid, "45011110001", "IKEDC", "Blocked")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: blocked.ID, AmountMinor: 500000, Pref: orchestrator.PrefToken,
+		}); !errors.Is(err, meters.ErrCannotVend) {
+			t.Fatalf("cannot vend: %v", err)
+		}
+
+		floor, err := e.o.Meters.Register(e.ctx, uid, "45011110002", "IKEDC", "Floor")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: floor.ID, AmountMinor: 50_000, Pref: orchestrator.PrefToken,
+		}); !errors.Is(err, orchestrator.ErrAmountOutOfRange) {
+			t.Fatalf("min purchase: %v", err)
+		}
+
+		named, err := e.o.Meters.Register(e.ctx, uid, "45011112222", "IKEDC", "Named")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: named.ID, AmountMinor: 500000, Pref: orchestrator.PrefToken,
+			RequireNameConfirm: true,
+		}); !errors.Is(err, orchestrator.ErrNameNotConfirmed) {
+			t.Fatalf("name confirm: %v", err)
+		}
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: named.ID, AmountMinor: 500000, Pref: orchestrator.PrefToken,
+			RequireNameConfirm: true, ConfirmCustomerName: true,
+		}); err != nil {
+			t.Fatalf("confirmed name: %v", err)
+		}
+
+		open := e.buy(t, "ada", "45011118888", orchestrator.PrefToken)
+		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
+			CustomerID: uid, MeterID: open.MeterID, AmountMinor: 500000, Pref: orchestrator.PrefToken,
+		}); !errors.Is(err, orchestrator.ErrInFlight) {
+			t.Fatalf("in flight: %v status=%s", err, open.Status())
+		}
+
+		spaced, err := e.o.Meters.Register(e.ctx, uid, "4501 111 3333", "IKEDC", "Spaced")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spaced.Masked == "" {
+			t.Fatal("normalised meter")
+		}
+
+		e.o.Meters.Live = true
+		if _, err := e.o.Meters.Register(e.ctx, uid, "1111111111111", "IKEDC", "Sandbox"); !errors.Is(err, meters.ErrSandboxMeter) {
+			t.Fatalf("sandbox live: %v", err)
+		}
+		e.o.Meters.Live = false
 	})
 }
 

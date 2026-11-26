@@ -407,6 +407,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
         "429":
@@ -3951,7 +3953,11 @@ components:
         - NOT_FOUND
         - METER_NOT_FOUND
         - METER_VALIDATION_FAILED
+        - METER_CANNOT_VEND
+        - SANDBOX_METER
         - METER_NOT_ELIGIBLE
+        - NAME_NOT_CONFIRMED
+        - PURCHASE_IN_FLIGHT
         - QUOTE_EXPIRED
         - TRANSACTION_NOT_FOUND
         - PAYMENT_UNCONFIRMED
@@ -4061,6 +4067,19 @@ components:
           $ref: "#/components/schemas/Capability"
         remote_reading:
           $ref: "#/components/schemas/Capability"
+        cannot_vend:
+          type: boolean
+          description: Disco will not vend this meter right now (Can_Vend=no).
+        min_purchase_minor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Disco floor in kobo. 0 means none.
+        arrears_minor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Outstanding debt in kobo that may be taken from the vend.
 
     ValidateMeterRequest:
       type: object
@@ -4265,6 +4284,9 @@ components:
           enum: [NGN]
         delivery_preference:
           $ref: "#/components/schemas/DeliveryPreference"
+        confirm_customer_name:
+          type: boolean
+          description: Client attested the Disco account name belongs to this buyer.
 
     ScreenLine:
       type: object
