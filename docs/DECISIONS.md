@@ -93,13 +93,13 @@ Public docs only: [authentication](https://www.vtpass.com/documentation/authenti
 - **Operator refunds** are allowed only from MANUAL_REVIEW, and only when vending is `NOT_STARTED` or `FAILED`, so electricity was provably not delivered. They refund **the amount the PSP reports as paid**, which covers underpayments and late payments, and record its receipt in the ledger first. New payment transitions `PENDING→REFUND_PENDING` and `FAILED→REFUND_PENDING` exist only for this path.
 - **Requeue** clears the review flag, resets the attempt budget and runs Resume. If the cause persists, automation flags the transaction again. There is no "close without action" yet; add one if operations need it.
 - **Provider switches** pause new outbound work: checkouts, vends, credit sends and their re-sends. Status queries still run. A paused step doesn't count as a failed attempt, so an outage the operator is managing never escalates.
-- **Rate limits** are in-memory token buckets, one set per API replica:
+- **Rate limits** are token buckets. In-process by default; `REDIS_URL` (`redis://` or `rediss://`) shares the same budgets across API replicas (`internal/ratelimit` RESP client, no extra module):
   - writes (meter validation and registration, quotes, purchases, payment checks): per user, default 30/min with a burst of 10
   - failed authentication: per client IP, default 20/min
   - webhooks: per IP, default 600/min
   - the response is 429 with `Retry-After`
   - `CLIENT_IP_HEADER` takes the client IP from the right-most value of a header the trusted proxy appended
-  - move to a shared store (Redis) when one replica's view stops being enough
+  - if Redis is configured but later unreachable, Allow **fails open** (request proceeds) so a cache outage cannot freeze vending
 - **Admin search pagination** is keyset on `created_at` (`before=` / `next_before`). Transactions created in the same microsecond across a page boundary could be skipped; add an ID tiebreaker if that ever matters.
 
 

@@ -38,6 +38,16 @@ services:
         condition: service_healthy
     restart: "no"
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   api:
     build:
       context: .
@@ -51,6 +61,7 @@ services:
       TOKEN_ENC_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
       METER_HMAC_KEY: ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100
       RUN_WORKER: "true"
+      REDIS_URL: redis://redis:6379
     ports:
       - "${API_PORT:-8080}:8080"
       - "127.0.0.1:${METRICS_PORT:-9090}:9090"
@@ -59,6 +70,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   worker:

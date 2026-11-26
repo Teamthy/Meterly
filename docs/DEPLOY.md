@@ -74,3 +74,4 @@ METERLY_API_ORIGIN=https://meterly-api.onrender.com
 - Live Paystack / VTpass / Africa’s Talking / WhatsApp / OIDC — still fakes in `MODE=dev` until keys are pasted.
 - Remote meter credit — `REMOTE_PROVIDER=none` until a partner implements Meterly's `heshttp` gateway (or we write a documented translator). Cohorts and confirmation webhooks are in code.
 - Production feature flags (`FEATURE_SPLIT_METER`, gift SMS, USSD, …) pending legal sign-off.
+- More than one API replica: set `REDIS_URL` (`redis://` or `rediss://`) so write/auth/webhook budgets are shared. One instance can keep the in-memory limiter.

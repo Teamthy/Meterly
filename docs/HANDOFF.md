@@ -22,7 +22,7 @@
 | 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
 | 6 | ~~Web UI for households + token send~~ | Eng | `/households` + STS send on Buy Power |
 | 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook + admin cohort UI are in |
-| 8 | Distributed rate limits (Redis) | Eng | only if >1 API replica |
+| 8 | ~~Distributed rate limits (Redis)~~ | Eng | `REDIS_URL` optional; compose runs Redis 7. Empty URL = in-process buckets |
 | 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
 
 ---
@@ -203,7 +203,7 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 - **Git:** this session’s branch name is fixed (`arena/7cc28241-meterly`). After a PR merges, `git merge origin/main` — do not rebase/force-push.
 - **Orchestrator time** is `o.Now` (injectable).
 - **Auth:** `AUTH_MODE=dev` only in `MODE=dev`. Bearer token *is* the subject; `operator:` / `admin:` prefixes. `X-Dev-Display-Name`, `X-Dev-Verified-Email`, `X-Dev-Verified-Phone` populate contacts.
-- **Rate limits are in-memory per process.** Redis only when one replica’s view is not enough.
+- **Rate limits** are in-memory unless `REDIS_URL` is set (shared token buckets). Redis down after startup fails open.
 - **Email is required** on `POST /v1/electricity/transactions` (Paystack).
 - **Do not restore `internal/households/service.go`** — mutations live on `Orchestrator`.
 - **Render connector is unsupported** in Arena. Dashboard + `render.yaml` only.
@@ -217,7 +217,7 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 
 - Render deploy + Vercel origin (human paste).
 - Live sandbox runs: Paystack `sk_test_`, VTpass sandbox keys, AT, Resend, WhatsApp, a real OIDC issuer.
-- Optional: Redis rate limits if Render scales to >1 instance.
+- Optional: paste `REDIS_URL` on Render if the API scales to >1 instance (compose already runs Redis).
 
 ### Engineering, blocked on documents / partners
 
@@ -254,6 +254,8 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 ---
 
 ## 11. Session log (newest first)
+
+- **2026-11-26: PR #17 merged; Redis rate limits.** Shared token buckets when `REDIS_URL` is set; compose runs Redis 7. Fail-open if Redis dies after startup. No extra Go module (tiny RESP client).
 
 - **2026-11-26: PR #16 merged; batch 3 credit-on-meter UI.** Household + STS send on `main`. This branch: admin remote-credit cohort desk (attest/revoke), Buy Power hides STS while `REMOTE`, ACCEPTED≠CONFIRMED copy, poll while waiting for meter confirm. No Hexing/Conlog client.
 

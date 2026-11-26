@@ -48,17 +48,19 @@ type Limits struct {
 }
 
 type Server struct {
-	O                  *orchestrator.Orchestrator
-	Auth               auth.Authenticator
-	Payments           providers.PaymentProvider
-	Remote             providers.RemoteCreditProvider
-	Notifications      *notificationservice.Service
-	Offline            *offline.Service
-	Metrics            *observability.Registry
-	Tracer             *observability.Tracer
-	Log                *slog.Logger
-	Ready              func(context.Context) error
-	Limits             Limits
+	O             *orchestrator.Orchestrator
+	Auth          auth.Authenticator
+	Payments      providers.PaymentProvider
+	Remote        providers.RemoteCreditProvider
+	Notifications *notificationservice.Service
+	Offline       *offline.Service
+	Metrics       *observability.Registry
+	Tracer        *observability.Tracer
+	Log           *slog.Logger
+	Ready         func(context.Context) error
+	Limits        Limits
+	// NewLimiter, when set, builds shared (e.g. Redis) buckets. Nil = in-process.
+	NewLimiter         func(name string, perMinute, burst int) ratelimit.Limiter
 	PayForMeDisabled   bool
 	SplitMeterDisabled bool
 	AutoPowerDisabled  bool
@@ -122,13 +124,17 @@ func (s *Server) Routes() http.Handler {
 	if s.Log == nil {
 		s.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	s.writes = ratelimit.New(orDefault(s.Limits.WritesPerMinute, 30), 10)
-	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
-	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
+	newLim := s.NewLimiter
+	if newLim == nil {
+		newLim = func(_ string, per, burst int) ratelimit.Limiter { return ratelimit.New(per, burst) }
+	}
+	s.writes = newLim("writes", orDefault(s.Limits.WritesPerMinute, 30), 10)
+	s.authFails = newLim("auth", orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
+	s.hooks = newLim("webhooks", orDefault(s.Limits.WebhooksPerMinute, 600), 100)
 	pubPayRate := orDefault(s.Limits.PublicPayPerMinute, 60)
 	pubLinkRate := orDefault(s.Limits.PublicLinkPerMinute, 10)
-	s.publicPay = ratelimit.New(pubPayRate, min(pubPayRate, max(20, pubPayRate/3)))
-	s.publicLink = ratelimit.New(pubLinkRate, min(pubLinkRate, max(5, pubLinkRate/2)))
+	s.publicPay = newLim("public-pay", pubPayRate, min(pubPayRate, max(20, pubPayRate/3)))
+	s.publicLink = newLim("public-link", pubLinkRate, min(pubLinkRate, max(5, pubLinkRate/2)))
 
 	mux := &patternMux{ServeMux: http.NewServeMux()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
