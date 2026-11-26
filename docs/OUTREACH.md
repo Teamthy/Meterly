@@ -180,3 +180,69 @@ Thank you.
 - Ikeja may take weeks. VTpass + Paystack keys should arrive in days. Paste those on Render (`docs/DEPLOY.md`) so the app can verify meters and take sandbox payment even while AMI is pending.
 - When Ikeja names a MAP, send email 2 the same day. Forward their API PDF to engineering — do not implement from memory.
 - Do not tell customers “no token” until one real IE smart meter has confirmed credit.
+
+---
+
+## What they will ask for, and what it costs
+
+Published numbers below. Anything marked **quote** is not public — they will name a price after KYC.
+
+### Paystack (money) — public price
+
+No setup, no monthly. [Local Nigeria pricing](https://support.paystack.com/en/articles/2130306): **1.5% + ₦100**, ₦100 waived under ₦2,500, **capped at ₦2,000**. International cards 3.9% + ₦100. Settlement typically next working day.
+
+They will ask: CAC (BN or LTD), BVN, director ID (NIN/passport), Nigerian bank account in the business name, address. Test keys are free before KYC. You do **not** need your own CBN licence.
+
+### VTpass (verify + vend) — wallet + commission
+
+No published API join fee. You **pre-fund a wallet**; every vend debit that wallet. Commission comes back (IKEDC API historically ~**1.0–1.5%** — confirm on your dashboard; it varies by Disco and meter type).
+
+They will ask: account on vtpass.com, KYC (name, phone, ID), then API activation, then electricity enabled. Live keys after they like the account. Sandbox is free.
+
+**Working capital is the real cost.** Paystack pays you T+1. VTpass takes naira **now**. If you vend ₦2m in a day you need ~₦2m sitting in VTpass.
+
+### Unit economics (example, not a quote)
+
+Customer buys **₦5,000** of Ikeja units:
+
+| | ₦ |
+|---|---|
+| Paystack fee (1.5% + 100) | −175 |
+| VTpass commission (~1.5%) | +75 |
+| **Net before any service fee** | **−100** |
+
+Electricity resale is thin. Either a small convenience fee, or you eat it for growth. Do not assume ₦5,000 in / ₦5,000 profit.
+
+### Ikeja Electric (AMI intro) — do not pay the wrong fee
+
+Their **vendor registration** (Dun & Bradstreet, Zenith `IE Vendor Operations`, conflict-of-interest form) is for companies that **sell cables/meters/services to IE**. CAC, profile, previous jobs, bank reference, proof of address, tax clearance for higher categories. That is **procurement**, not “let us push credit to meters.” Do not pay that fee unless they explicitly say the AMI partnership requires it.
+
+For AMI they are likely to ask:
+
+- Who you are (CAC, directors, TIN)
+- That payment is via a CBN-licensed PSP
+- That vending is via a licensed aggregator (or their own collection partner)
+- NDA
+- Cybersecurity / data-protection note (NDPA)
+- A pilot on **one meter brand** (IE’s own site: remote loading today is **Mojec only**, and the customer still pastes a token at [ikejaelectric.com/remote-token-loading](https://www.ikejaelectric.com/remote-token-loading/))
+
+Cost: **quote**. Could be ₦0 for a pilot that brings them prepaid revenue. Could be a commercial contract. Unknown until they reply.
+
+### MAP / HES (Mojec, CIG/Conlog, NHC, …) — quote
+
+Typical ask: NDA, CAC, insurance, SLA, mTLS or IP allowlist, sandbox then one witnessed meter, maybe a revenue share or per-push fee. Integration fee **₦0 to large** — they will not publish it. Budget time (weeks–months), not a SKU.
+
+### NERC / legal (not a partner email)
+
+You are **not** applying for a Disco, MAP, or generation licence. Counsel must still say whether Meterly is only a **software merchant** (Paystack + VTpass) or a **Collection Service Provider** (NERC 2025: CBN-licensed CSPs, Disco agreement, **₦100,000** registration in press reports). Do not spend millions on a trading licence because someone used the word “aggregator.”
+
+### Cheap this month vs expensive later
+
+| This month (known) | Later (unknown) |
+|---|---|
+| CAC if you do not have it | Ikeja/MAP commercial |
+| Paystack 0 setup | NERC CSP if counsel says you are one |
+| VTpass 0 setup + wallet float | NDPA DPIA / lawyer |
+| Render + Vercel hosting | |
+
+Float + Paystack fees are the costs that start the day the first live vend happens. AMI is the cost that starts when Ikeja answers.
