@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,21 @@ func NewPayments() *Payments {
 }
 
 func (p *Payments) Name() string { return "mockpay" }
+
+// Snapshot is the MODE=dev console view of mock checkouts. Card authorizations
+// are stripped so they never leave the process.
+func (p *Payments) Snapshot() []providers.PaymentVerification {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]providers.PaymentVerification, 0, len(p.pays))
+	for _, v := range p.pays {
+		cp := *v
+		cp.Authorization = nil
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProviderRef < out[j].ProviderRef })
+	return out
+}
 
 func (p *Payments) InitializePayment(_ context.Context, req providers.PaymentInit) (providers.PaymentInitResult, error) {
 	p.mu.Lock()
@@ -309,6 +325,18 @@ func NewRemoteCredit() *RemoteCredit {
 }
 
 func (r *RemoteCredit) Name() string { return "mockhes" }
+
+// Snapshot is the MODE=dev console view of mock remote-credit commands.
+func (r *RemoteCredit) Snapshot() []providers.RemoteCreditResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]providers.RemoteCreditResult, 0, len(r.credits))
+	for _, res := range r.credits {
+		out = append(out, res)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProviderRef < out[j].ProviderRef })
+	return out
+}
 
 func (r *RemoteCredit) CheckEligibility(_ context.Context, meter string) (bool, *bool, error) {
 	ok := strings.HasPrefix(meter, "7")

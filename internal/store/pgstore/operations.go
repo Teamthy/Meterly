@@ -52,6 +52,33 @@ func (r auditRepo) ForResource(ctx context.Context, typ string, id uuid.UUID) ([
 	return out, rows.Err()
 }
 
+func (r auditRepo) Recent(ctx context.Context, limit int) ([]audit.Event, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `SELECT id, coalesce(actor_user_id::text, ''), actor_type, action, resource_type, resource_id,
+		correlation_id, metadata_redacted, created_at FROM audit_events ORDER BY id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]audit.Event, 0)
+	for rows.Next() {
+		var e audit.Event
+		var meta []byte
+		if err := rows.Scan(&e.ID, &e.ActorUserID, &e.ActorType, &e.Action, &e.ResourceType, &e.ResourceID,
+			&e.CorrelationID, &meta, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(meta, &e.Metadata); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = e.CreatedAt.UTC()
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ---- providers -----------------------------------------------------------------
 
 type providerRepo struct{ *repos }
@@ -80,9 +107,8 @@ func (r providerRepo) SetEnabled(ctx context.Context, name, providerType string,
 
 // ---- search --------------------------------------------------------------------
 
-func (r txnRepo) Search(ctx context.Context, f store.TxnFilter) ([]*tx.Transaction, error) {
+func txnWhere(f store.TxnFilter) (clause string, args []any) {
 	var where []string
-	var args []any
 	add := func(cond string, v any) {
 		args = append(args, v)
 		where = append(where, fmt.Sprintf(cond, len(args)))
@@ -108,16 +134,20 @@ func (r txnRepo) Search(ctx context.Context, f store.TxnFilter) ([]*tx.Transacti
 	if !f.Before.IsZero() {
 		add("created_at < $%d", f.Before)
 	}
+	if len(where) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(where, " AND "), args
+}
+
+func (r txnRepo) Search(ctx context.Context, f store.TxnFilter) ([]*tx.Transaction, error) {
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	sql := "SELECT id FROM electricity_transactions"
-	if len(where) > 0 {
-		sql += " WHERE " + strings.Join(where, " AND ")
-	}
+	clause, args := txnWhere(f)
 	args = append(args, limit)
-	sql += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args))
+	sql := "SELECT id FROM electricity_transactions" + clause + fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args))
 	rows, err := r.db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, mapErr(err)
@@ -135,4 +165,11 @@ func (r txnRepo) Search(ctx context.Context, f store.TxnFilter) ([]*tx.Transacti
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+func (r txnRepo) Count(ctx context.Context, f store.TxnFilter) (int, error) {
+	clause, args := txnWhere(f)
+	var n int
+	err := r.db.QueryRow(ctx, "SELECT count(*) FROM electricity_transactions"+clause, args...).Scan(&n)
+	return n, mapErr(err)
 }

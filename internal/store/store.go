@@ -127,6 +127,7 @@ type RemoteCohortRepo interface {
 type AuditRepo interface {
 	Add(ctx context.Context, e audit.Event) error
 	ForResource(ctx context.Context, resourceType string, id uuid.UUID) ([]audit.Event, error)
+	Recent(ctx context.Context, limit int) ([]audit.Event, error)
 }
 
 // ProviderRepo holds operator switches for integrations. A provider with
@@ -183,6 +184,8 @@ type AuthRepo interface {
 
 type MeterRepo interface {
 	Get(ctx context.Context, id uuid.UUID) (*meters.Meter, error)
+	// ListAll is for the MODE=dev console. Production admin investigates via transactions.
+	ListAll(ctx context.Context, limit int) ([]*meters.Meter, error)
 	// GetForUpdate serializes registration and self-removal for this meter.
 	GetForUpdate(ctx context.Context, id uuid.UUID) (*meters.Meter, error)
 	GetByHash(ctx context.Context, hash string) (*meters.Meter, error)
@@ -222,6 +225,7 @@ type TransactionRepo interface {
 	ListForCustomer(ctx context.Context, customerID string) ([]*tx.Transaction, error)
 	// Search returns matches newest first.
 	Search(ctx context.Context, f TxnFilter) ([]*tx.Transaction, error)
+	Count(ctx context.Context, f TxnFilter) (int, error)
 	// ClaimDue returns unsettled transactions whose NextCheckAt <= now and
 	// that have not changed since staleBefore, and pushes their NextCheckAt
 	// to now+lease so concurrent workers skip them.

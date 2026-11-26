@@ -138,6 +138,28 @@ func (r meterRepo) ActiveGrant(ctx context.Context, meterID uuid.UUID, userID st
 	return &g, nil
 }
 
+func (r meterRepo) ListAll(ctx context.Context, limit int) ([]*meters.Meter, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+meterCols+` FROM meters m
+		JOIN distribution_companies d ON d.id = m.disco_id
+		ORDER BY m.created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]*meters.Meter, 0)
+	for rows.Next() {
+		m, err := scanMeter(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (r meterRepo) ListForUser(ctx context.Context, userID string) ([]meters.Listed, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+meterCols+`, coalesce(g.label, ''), g.permission
 		FROM meter_access_grants g

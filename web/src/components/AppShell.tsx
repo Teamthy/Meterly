@@ -19,6 +19,7 @@ import {
   UserRound,
   Settings,
   Fingerprint,
+  FlaskConical,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
   { href: "/support", label: "Support", icon: MessageCircle },
   { href: "/admin/support", label: "Support Inbox", icon: Headphones },
   { href: "/admin", label: "Ops Console", icon: ShieldAlert },
+  { href: "/dev", label: "Sandbox", icon: FlaskConical },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
