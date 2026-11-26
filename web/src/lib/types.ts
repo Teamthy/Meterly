@@ -133,6 +133,172 @@ export interface PurchaseScreen {
   currency: string;
 }
 
+export interface ConsoleAction {
+  id: string;
+  label: string;
+  method: string;
+  path?: string;
+  path_template?: string;
+  needs_reason?: boolean;
+  needs_admin?: boolean;
+  enabled: boolean;
+  hint?: string;
+}
+
+export interface AdminTxnRow {
+  transaction_id: string;
+  status: string;
+  status_label: string;
+  summary: string;
+  amount_label: string;
+  total_minor: number;
+  currency: string;
+  payment_status: string;
+  vending_status: string;
+  delivery_status: string;
+  delivery_method: "TOKEN" | "REMOTE" | string;
+  method_label: string;
+  review_reason?: string;
+  credit_on_meter: boolean;
+  token_available: boolean;
+  customer_id: string;
+  meter_id: string;
+  created_at: string;
+  when_label: string;
+}
+
+export interface AdminProviderRow {
+  name: string;
+  type?: string;
+  enabled: boolean;
+  status_label: string;
+  action: ConsoleAction;
+}
+
+export interface AdminCohortRow {
+  id: string;
+  summary: string;
+  evidence: string;
+  revoked: boolean;
+  action?: ConsoleAction;
+}
+
+export interface AdminConsole {
+  title: string;
+  subtitle: string;
+  copy: string;
+  role: "OPERATOR" | "ADMIN" | string;
+  can_admin: boolean;
+  reason: {
+    label: string;
+    hint: string;
+    placeholder: string;
+    min_length: number;
+    max_length: number;
+  };
+  summary: ScreenLine[];
+  review_title: string;
+  review_empty: string;
+  review: AdminTxnRow[];
+  recent_title: string;
+  recent_empty: string;
+  recent: AdminTxnRow[];
+  audit_title: string;
+  audit_empty: string;
+  audit: ScreenLine[];
+  providers: AdminProviderRow[];
+  cohorts_title: string;
+  cohorts_copy: string;
+  cohorts: AdminCohortRow[];
+  discos: Array<{ code: string; name: string }>;
+  unit_meter: {
+    title: string;
+    hint: string;
+    methods: Array<{ id: string; label: string }>;
+    action: ConsoleAction;
+  };
+  cohort_attest: ConsoleAction;
+  support: {
+    title: string;
+    waiting_human: number;
+    assigned: number;
+    open: number;
+    inbox_path: string;
+    summary: string;
+  };
+}
+
+export interface AdminInvestigation {
+  title: string;
+  subtitle: string;
+  transaction_id: string;
+  status: string;
+  status_label: string;
+  payment_status: string;
+  vending_status: string;
+  delivery_status: string;
+  delivery_method: string;
+  method_label: string;
+  credit_on_meter: boolean;
+  token_available: boolean;
+  lines: ScreenLine[];
+  ledger: ScreenLine[];
+  ledger_empty: string;
+  notifications: ScreenLine[];
+  notifications_empty: string;
+  audit: ScreenLine[];
+  audit_empty: string;
+  events: ScreenLine[];
+  history: ScreenLine[];
+  actions: ConsoleAction[];
+}
+
+export interface DevMeterRow {
+  meter_id: string;
+  masked_meter_number: string;
+  disco: string;
+  meter_type: string;
+  delivery_hint: string;
+  remote_usable: boolean;
+  reading_label: string;
+  reading_hint: string;
+  set_reading: ConsoleAction;
+}
+
+export interface DevPaymentRow {
+  reference: string;
+  status: string;
+  status_label: string;
+  amount_label: string;
+  summary: string;
+  complete: ConsoleAction;
+  fail: ConsoleAction;
+}
+
+export interface DevConsole {
+  title: string;
+  subtitle: string;
+  copy: string;
+  enabled: boolean;
+  meters_title: string;
+  meters_empty: string;
+  meters: DevMeterRow[];
+  payments_title: string;
+  payments_empty: string;
+  payments: DevPaymentRow[];
+  remote: {
+    title: string;
+    copy: string;
+    pending: number;
+    pending_label: string;
+    settle: ConsoleAction;
+  };
+  recent_title: string;
+  recent_empty: string;
+  recent: AdminTxnRow[];
+  actions: ConsoleAction[];
+}
+
 export interface Quote {
   ID?: string;
   quote_id?: string;

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/AuthContext";
 import {
   apiFetch,
@@ -657,30 +658,53 @@ export default function ConsumerHubPage() {
 
   return (
     <div className="space-y-6">
-      {/* Hero Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-[#0B1F1A] via-[#113128] to-[#163D32] p-6 text-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="max-w-2xl space-y-1.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-0.5 text-xs font-medium text-emerald-300 border border-emerald-400/25">
-              <Radio className="h-3 w-3" /> Credit on the meter — not a code to type
+      <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#111318] p-6 text-paper sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="max-w-xl">
+            <span className="ml-chip">
+              <Radio className="h-3 w-3" /> On the meter
             </span>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Units land on the meter.
+            <h1 className="font-display mt-4 text-4xl font-semibold leading-[1.02] sm:text-5xl">
+              {selectedUsage?.remaining_kwh != null
+                ? `${selectedUsage.remaining_kwh}`
+                : "Units land here."}
+              {selectedUsage?.remaining_kwh != null && (
+                <span className="ml-2 text-2xl font-medium text-white/40 sm:text-3xl">kWh</span>
+              )}
             </h1>
-            <p className="text-sm text-stone-300 leading-relaxed">
-              On a compatible smart meter we push credit remotely. You do not climb a ladder or punch 20 digits.
-              We only say it is delivered when the meter confirms — network &quot;accepted&quot; is not enough.
-              Keypad meters still get an STS token as fallback.
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-white/55">
+              {selectedUsage?.estimated_hours_remaining != null
+                ? `About ${selectedUsage.estimated_hours_remaining} hours left. We only call it delivered when the meter confirms.`
+                : "We push credit to a compatible smart meter. Network “accepted” is not delivered. Keypad meters still get an STS token."}
             </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Link
+                href="/autopower"
+                className="rounded-full bg-volt px-4 py-2 text-xs font-semibold text-volt-ink"
+              >
+                Set auto-renew
+              </Link>
+              <button
+                type="button"
+                onClick={loadAll}
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-xs font-semibold text-paper"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={loadAll}
-            className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-semibold text-white border border-white/15 hover:bg-white/15"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh State
-          </button>
+          {selectedMeter && (
+            <div className="min-w-[200px] rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/70">
+              <p className="font-mono text-paper">{selectedMeter.masked_meter_number}</p>
+              <p className="mt-1">{selectedMeter.disco} · {selectedMeter.label || selectedMeter.meter_type}</p>
+              {selectedUsage?.consumption && (
+                <p className="mt-2 text-white/45">
+                  {selectedUsage.consumption.kwh_per_day} kWh/day
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -688,7 +712,7 @@ export default function ConsumerHubPage() {
         <div
           className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -707,10 +731,10 @@ export default function ConsumerHubPage() {
         {/* Left Column: Add Meter + Buy Electricity */}
         <div className="space-y-6 lg:col-span-5">
           {/* Register Meter Card */}
-          <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
+          <section className="ml-card p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
-                <Plus className="h-4 w-4 text-emerald-600" />
+              <h2 className="font-display flex items-center gap-2 text-lg font-semibold text-ink">
+                <Plus className="h-4 w-4" />
                 Add a meter
               </h2>
               <span className="text-[11px] font-medium text-stone-500">
@@ -737,7 +761,7 @@ export default function ConsumerHubPage() {
                     }}
                     className={`rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
                       meterNum === p.meter
-                        ? "border-emerald-500 bg-emerald-50/70 text-emerald-950 font-semibold"
+                        ? "border-ink bg-volt/15 text-ink font-semibold"
                         : "border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100"
                     }`}
                   >
@@ -759,7 +783,7 @@ export default function ConsumerHubPage() {
                   <select
                     value={disco}
                     onChange={(e) => setDisco(e.target.value)}
-                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none"
                   >
                     {discoList.map((d) => (
                       <option key={d.code} value={d.code}>
@@ -777,7 +801,7 @@ export default function ConsumerHubPage() {
                     value={meterNum}
                     onChange={(e) => setMeterNum(e.target.value)}
                     required
-                    className="w-full rounded-xl border border-stone-300 px-3 py-2 font-mono text-sm focus:border-emerald-600 focus:outline-none"
+                    className="w-full rounded-xl border border-stone-300 px-3 py-2 font-mono text-sm focus:border-ink focus:outline-none"
                   />
                 </div>
               </div>
@@ -792,7 +816,7 @@ export default function ConsumerHubPage() {
                     value={meterLabel}
                     onChange={(e) => setMeterLabel(e.target.value)}
                     placeholder="e.g. Home, Mum Ibadan"
-                    className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                    className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm focus:border-ink focus:outline-none"
                   />
                 </div>
                 <div className="flex items-end pb-2">
@@ -801,7 +825,7 @@ export default function ConsumerHubPage() {
                       type="checkbox"
                       checked={isBeneficiary}
                       onChange={(e) => setIsBeneficiary(e.target.checked)}
-                      className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                      className="rounded border-stone-300 text-ink focus:ring-ink"
                     />
                     Save as someone else&apos;s meter (Beneficiary)
                   </label>
@@ -809,8 +833,8 @@ export default function ConsumerHubPage() {
               </div>
 
               {validation && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs space-y-1.5">
-                  <div className="flex items-center justify-between font-semibold text-emerald-950">
+                <div className="rounded-xl border border-stone-200 bg-volt/15 p-3 text-xs space-y-1.5">
+                  <div className="flex items-center justify-between font-semibold text-ink">
                     <span>
                       {validation.customer_name} ({validation.masked_meter_number})
                     </span>
@@ -831,7 +855,7 @@ export default function ConsumerHubPage() {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 rounded-xl bg-[#0B1F1A] px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-950"
+                  className="flex-1 rounded-full bg-ink px-4 py-2 text-xs font-semibold text-volt"
                 >
                   Save Meter
                 </button>
@@ -840,9 +864,9 @@ export default function ConsumerHubPage() {
           </section>
 
           {/* Buy Electricity Card */}
-          <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
-            <h2 className="text-base font-bold text-stone-900 flex items-center gap-2 mb-3">
-              <Zap className="h-4 w-4 text-emerald-600" />
+          <section className="ml-card p-5">
+            <h2 className="font-display mb-3 flex items-center gap-2 text-lg font-semibold text-ink">
+              <Zap className="h-4 w-4" />
               Put credit on the meter
             </h2>
 
@@ -859,7 +883,7 @@ export default function ConsumerHubPage() {
                   <select
                     value={selectedMeterId}
                     onChange={(e) => setSelectedMeterId(e.target.value)}
-                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none"
                   >
                     {meters.map((m) => {
                       const u = usageByMeter[m.meter_id];
@@ -891,8 +915,8 @@ export default function ConsumerHubPage() {
               )}
 
               {selectedUsage && (
-                <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-3 space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-800">
+                <div className="rounded-xl border border-stone-200 bg-volt/10 p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-ink">
                     <Gauge className="h-3.5 w-3.5" />
                     On the meter
                   </div>
@@ -919,7 +943,7 @@ export default function ConsumerHubPage() {
                     </p>
                   )}
                   {selectedUsage.estimated_hours_remaining != null && (
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-900">
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-ink">
                       <Clock className="h-3.5 w-3.5" />
                       About {selectedUsage.estimated_hours_remaining} hours left
                       {selectedUsage.estimated_empty_at
@@ -964,19 +988,19 @@ export default function ConsumerHubPage() {
                         }}
                         className={`rounded-xl border px-2 py-2.5 text-left transition ${
                           selected
-                            ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600"
-                            : "border-stone-200 bg-white hover:border-emerald-300"
+                            ? "border-ink bg-volt/20 ring-1 ring-ink"
+                            : "border-stone-200 bg-white hover:border-ink/20"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-1">
                           <span className="text-sm font-bold text-stone-900">{pack.label}</span>
                           {pack.recommended && (
-                            <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
+                            <span className="rounded-full bg-ink px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
                               Rec
                             </span>
                           )}
                         </div>
-                        <div className="mt-0.5 text-[11px] font-medium text-emerald-800">
+                        <div className="mt-0.5 text-[11px] font-medium text-ink">
                           {pack.pay_label}
                         </div>
                         <div className="text-[10px] tabular-nums text-stone-500">
@@ -1005,7 +1029,7 @@ export default function ConsumerHubPage() {
                       setConfirmQuote(null);
                     }}
                     placeholder="Custom ₦"
-                    className="w-full rounded-xl border border-stone-300 px-3 py-2 font-mono text-sm tabular-nums focus:border-emerald-600 focus:outline-none"
+                    className="w-full rounded-xl border border-stone-300 px-3 py-2 font-mono text-sm tabular-nums focus:border-ink focus:outline-none"
                   />
                 </div>
                 <div>
@@ -1017,7 +1041,7 @@ export default function ConsumerHubPage() {
                     onChange={(e) =>
                       setDeliveryPref(e.target.value as "AUTO" | "TOKEN" | "REMOTE")
                     }
-                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                    className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-ink focus:outline-none"
                   >
                     {selectedSupportsRemote ? (
                       <>
@@ -1041,7 +1065,7 @@ export default function ConsumerHubPage() {
                   value={buyerEmail}
                   onChange={(e) => setBuyerEmail(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                  className="w-full rounded-xl border border-stone-300 px-3 py-2 text-sm focus:border-ink focus:outline-none"
                 />
               </div>
 
@@ -1051,9 +1075,9 @@ export default function ConsumerHubPage() {
                     type="checkbox"
                     checked={isGift}
                     onChange={(e) => setIsGift(e.target.checked)}
-                    className="rounded border-stone-300 text-emerald-600"
+                    className="rounded border-stone-300 text-ink"
                   />
-                  <Gift className="h-3.5 w-3.5 text-emerald-600" />
+                  <Gift className="h-3.5 w-3.5 text-ink" />
                   Buying as a Gift for someone else
                 </label>
 
@@ -1086,7 +1110,7 @@ export default function ConsumerHubPage() {
               </div>
 
               {selectedSupportsRemote && deliveryPref !== "TOKEN" && (
-                <p className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                <p className="text-[11px] text-ink bg-volt/20 border border-stone-200 rounded-lg px-3 py-2">
                   This meter can take remote credit. After payment we push units to it.
                   You will not get a token unless the push fails and an operator falls back.
                 </p>
@@ -1099,8 +1123,8 @@ export default function ConsumerHubPage() {
               )}
 
               {confirmQuote?.confirmation && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-900">
+                <div className="rounded-xl border border-stone-200 bg-volt/12 p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-ink">
                     {confirmQuote.confirmation.title}
                   </p>
                   {confirmQuote.confirmation.subtitle && (
@@ -1135,7 +1159,7 @@ export default function ConsumerHubPage() {
               <button
                 type="submit"
                 disabled={purchasing || !selectedMeterId}
-                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
+                className="w-full rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt disabled:opacity-50"
               >
                 {purchasing
                   ? confirmQuote
@@ -1149,10 +1173,10 @@ export default function ConsumerHubPage() {
           </section>
 
           {/* Preferences & Offline Phone Linking */}
-          <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4">
+          <section className="ml-card space-y-4 p-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-                <Bell className="h-4 w-4 text-emerald-600" />
+                <Bell className="h-4 w-4 text-ink" />
                 Notification Channels & Offline Phone Link
               </h3>
             </div>
@@ -1166,7 +1190,7 @@ export default function ConsumerHubPage() {
                     onClick={() => handleTogglePref(ch)}
                     className={`rounded-xl border px-3 py-1.5 text-xs font-medium transition ${
                       prefs[ch]
-                        ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                        ? "border-ink bg-volt/20 text-ink"
                         : "border-stone-200 bg-stone-50 text-stone-500"
                     }`}
                   >
@@ -1205,12 +1229,12 @@ export default function ConsumerHubPage() {
                     value={otpCode}
                     onChange={(e) => setOtpCode(e.target.value)}
                     placeholder={`6-digit code sent to ${otpSentMasked}`}
-                    className="flex-1 rounded-xl border border-emerald-400 px-3 py-1.5 font-mono text-xs"
+                    className="flex-1 rounded-xl border border-ink px-3 py-1.5 font-mono text-xs"
                   />
                   <button
                     type="button"
                     onClick={handleVerifyPhoneLink}
-                    className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+                    className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt"
                   >
                     Verify
                   </button>
@@ -1223,21 +1247,21 @@ export default function ConsumerHubPage() {
         {/* Right Column: Honest 3-Dimension Transaction Ledger */}
         <div className="lg:col-span-7 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-stone-900">
+            <h2 className="font-display text-2xl font-semibold text-paper">
               Is it on the meter yet?
             </h2>
-            <span className="font-mono text-xs text-stone-500">
+            <span className="font-mono text-xs text-white/40">
               {txns.length} record{txns.length === 1 ? "" : "s"}
             </span>
           </div>
 
           {txns.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center space-y-2">
-              <Zap className="mx-auto h-8 w-8 text-stone-300" />
-              <p className="text-sm font-medium text-stone-700">
+            <div className="rounded-[24px] border border-dashed border-white/15 bg-white/5 p-10 text-center space-y-2">
+              <Zap className="mx-auto h-8 w-8 text-volt" />
+              <p className="text-sm font-medium text-paper">
                 No purchases yet.
               </p>
-              <p className="text-xs text-stone-500">
+              <p className="text-xs text-white/45">
                 Save the smart-meter preset (700…) and pay — credit is pushed to the meter, not typed.
               </p>
             </div>
@@ -1254,7 +1278,7 @@ export default function ConsumerHubPage() {
                 return (
                   <div
                     key={t.transaction_id}
-                    className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-3.5"
+                    className="ml-card space-y-3.5 p-5"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
@@ -1272,7 +1296,7 @@ export default function ConsumerHubPage() {
                             </span>
                           )}
                           {t.credit_on_meter && (
-                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-600/25">
+                            <span className="rounded-full bg-volt/20 px-2 py-0.5 text-[11px] font-semibold text-ink ring-1 ring-ink/20">
                               On the meter
                             </span>
                           )}
@@ -1314,7 +1338,7 @@ export default function ConsumerHubPage() {
                       <div
                         className={`rounded-xl border p-3.5 text-xs space-y-1 ${
                           t.credit_on_meter
-                            ? "border-emerald-300 bg-emerald-50/70 text-emerald-950"
+                            ? "border-ink/20 bg-volt/15 text-ink"
                             : t.delivery_status === "FAILED"
                               ? "border-rose-200 bg-rose-50 text-rose-950"
                               : "border-sky-200 bg-sky-50/80 text-sky-950"
@@ -1348,9 +1372,9 @@ export default function ConsumerHubPage() {
 
                     {/* Revealed STS Token Box */}
                     {revealed && t.delivery_method !== "REMOTE" && (
-                      <div className="rounded-xl border border-emerald-300 bg-emerald-50/70 p-3.5 space-y-2">
+                      <div className="rounded-xl border border-ink/20 bg-volt/15 p-3.5 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-900">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-ink">
                             20-Digit STS Prepaid Token ({revealed.masked_meter_number})
                           </span>
                           <button
@@ -1358,7 +1382,7 @@ export default function ConsumerHubPage() {
                             onClick={() =>
                               handleCopyToken(t.transaction_id, revealed.token)
                             }
-                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-800"
+                            className="inline-flex items-center gap-1 rounded-full bg-ink px-2.5 py-1 text-xs font-semibold text-volt hover:bg-black"
                           >
                             {copiedId === t.transaction_id ? (
                               <>
@@ -1374,11 +1398,11 @@ export default function ConsumerHubPage() {
                         <p className="font-mono text-xl font-bold tracking-wider text-stone-950 tabular-nums">
                           {formatSTSToken(revealed.token)}
                         </p>
-                        <p className="text-[11px] text-emerald-900/80">
+                        <p className="text-[11px] text-ink/80">
                           {revealed.note}
                         </p>
-                        <div className="border-t border-emerald-200/80 pt-2 space-y-2">
-                          <p className="text-[11px] font-semibold text-emerald-950">
+                        <div className="border-t border-stone-200 pt-2 space-y-2">
+                          <p className="text-[11px] font-semibold text-ink">
                             Send this token (self = your verified contact; other number needs gift SMS legal flag)
                           </p>
                           <input
@@ -1390,7 +1414,7 @@ export default function ConsumerHubPage() {
                               }))
                             }
                             placeholder="Leave empty for yourself, or +234… / email"
-                            className="w-full rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-mono"
+                            className="w-full rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-xs font-mono"
                           />
                           <div className="flex flex-wrap gap-1.5">
                             {(["SMS", "EMAIL", "WHATSAPP"] as const).map((ch) => (
@@ -1399,14 +1423,14 @@ export default function ConsumerHubPage() {
                                 type="button"
                                 disabled={sendBusy === `${t.transaction_id}:${ch}`}
                                 onClick={() => handleSendToken(t.transaction_id, ch)}
-                                className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-600/25 hover:bg-emerald-100 disabled:opacity-50"
+                                className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-ink ring-1 ring-ink/20 hover:bg-volt/20 disabled:opacity-50"
                               >
                                 {ch}
                               </button>
                             ))}
                           </div>
                           {(tokenShares[t.transaction_id] || []).length > 0 && (
-                            <ul className="text-[11px] text-emerald-950/80 space-y-0.5">
+                            <ul className="text-[11px] text-ink/80 space-y-0.5">
                               {(tokenShares[t.transaction_id] || []).map((s) => (
                                 <li key={s.share_id} className="font-mono">
                                   {s.channel}
@@ -1428,7 +1452,7 @@ export default function ConsumerHubPage() {
                             type="checkbox"
                             checked={cardConsent}
                             onChange={(e) => setCardConsent(e.target.checked)}
-                            className="mt-0.5 rounded border-stone-300 text-emerald-600"
+                            className="mt-0.5 rounded border-stone-300 text-ink"
                           />
                           <span>
                             I explicitly consent to saving the reusable card authorization from this payment for scheduled or low-balance AutoPower recharges within my spend caps.
@@ -1438,7 +1462,7 @@ export default function ConsumerHubPage() {
                           <button
                             type="button"
                             onClick={() => handleSaveCard(t.transaction_id)}
-                            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
+                            className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt"
                           >
                             Confirm & Encrypt Card Mandate
                           </button>
@@ -1466,7 +1490,7 @@ export default function ConsumerHubPage() {
                               onComplete: loadAll,
                             })
                           }
-                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                          className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt hover:bg-black"
                         >
                           Complete Payment
                         </button>
@@ -1476,7 +1500,7 @@ export default function ConsumerHubPage() {
                         <button
                           type="button"
                           onClick={() => handleRevealToken(t.transaction_id)}
-                          className="rounded-lg bg-[#0B1F1A] px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-950"
+                          className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt hover:bg-black"
                         >
                           Reveal STS Token
                         </button>

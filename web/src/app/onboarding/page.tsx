@@ -148,14 +148,14 @@ export default function OnboardingPage() {
 
   if (step === "done") {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-stone-200 bg-white p-8 text-center">
-        <Zap className="mx-auto h-10 w-10 text-emerald-600" />
+      <div className="mx-auto max-w-lg ml-card p-8 text-center">
+        <Zap className="mx-auto h-10 w-10 text-ink" />
         <h1 className="mt-4 text-xl font-semibold">You’re set</h1>
         <p className="mt-2 text-sm text-stone-600">Buy units whenever the house needs them.</p>
         <button
           type="button"
           onClick={() => router.push("/")}
-          className="mt-6 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white"
+          className="mt-6 rounded-full bg-ink px-4 py-2.5 text-sm font-semibold text-volt"
         >
           Go to the meter
         </button>
@@ -168,21 +168,23 @@ export default function OnboardingPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-volt">
         Setup {idx + 1} of 5
       </p>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-stone-200">
-        <div className="h-full bg-emerald-500 transition-all" style={{ width: `${((idx + 1) / 5) * 100}%` }} />
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full bg-volt transition-all" style={{ width: `${((idx + 1) / 5) * 100}%` }} />
       </div>
-      <h1 className="mt-6 text-2xl font-semibold tracking-tight">{meta.title}</h1>
-      <p className="mt-2 text-sm leading-relaxed text-stone-600">{meta.body}</p>
+      <h1 className="font-display mt-6 text-3xl font-semibold text-paper">{meta.title}</h1>
+      <p className="mt-2 text-sm leading-relaxed text-white/55">{meta.body}</p>
+
+      <div className="mt-6 ml-card p-5">
 
       {step === "account" && (
         <button
           type="button"
           disabled={busy}
           onClick={onPasskey}
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#0B1F1A] px-4 py-3 text-sm font-semibold text-white hover:bg-[#16352c] disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt hover:bg-black disabled:opacity-50"
         >
           <Fingerprint className="h-4 w-4" />
           Create a device passkey
@@ -190,7 +192,7 @@ export default function OnboardingPage() {
       )}
 
       {step === "profile" && (
-        <div className="mt-6 space-y-3">
+        <div className="space-y-3">
           <label className="block text-xs font-medium text-stone-600">
             Display name
             <input
@@ -221,7 +223,7 @@ export default function OnboardingPage() {
       )}
 
       {step === "meter" && (
-        <div className="mt-6 space-y-3">
+        <div className="space-y-3">
           <label className="block text-xs font-medium text-stone-600">
             Meter number
             <input
@@ -248,7 +250,7 @@ export default function OnboardingPage() {
       )}
 
       {step === "alerts" && (
-        <div className="mt-6 space-y-2">
+        <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} />
             SMS receipts
@@ -302,14 +304,15 @@ export default function OnboardingPage() {
             type="button"
             disabled={busy}
             onClick={onContinue}
-            className="ml-auto rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="ml-auto rounded-full bg-ink px-4 py-2.5 text-sm font-semibold text-volt hover:bg-black disabled:opacity-50"
           >
             {busy ? "Saving…" : step === "alerts" ? "Finish" : "Continue"}
           </button>
         )}
       </div>
+      </div>
 
-      <div className="mt-10 flex justify-center gap-4 text-stone-400">
+      <div className="mt-8 flex justify-center gap-4 text-white/30">
         <Home className="h-4 w-4" />
         <User className="h-4 w-4" />
         <Zap className="h-4 w-4" />

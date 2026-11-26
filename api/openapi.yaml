@@ -1604,6 +1604,31 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/console:
+    get:
+      operationId: adminGetConsole
+      tags: [Admin]
+      summary: Composed ops home screen (queues, counts, audit, providers, cohorts)
+      description: >
+        Operators and admins load this once. The payload includes review and recent
+        queues, counts, recent audit lines, provider switches and remote-credit
+        cohorts already labelled for display. The UI must not recompute those.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Ops console screen.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminConsole"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/admin/transactions:
     get:
       operationId: adminSearchTransactions
@@ -4496,6 +4521,249 @@ components:
           minLength: 5
           maxLength: 500
 
+    ConsoleAction:
+      type: object
+      required: [id, label, method, enabled]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        path_template:
+          type: string
+        needs_reason:
+          type: boolean
+        needs_admin:
+          type: boolean
+        enabled:
+          type: boolean
+        hint:
+          type: string
+
+    AdminTxnRow:
+      type: object
+      required: [transaction_id, status, status_label, summary]
+      additionalProperties: false
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        status_label:
+          type: string
+        summary:
+          type: string
+        amount_label:
+          type: string
+        total_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        payment_status:
+          type: string
+        vending_status:
+          type: string
+        delivery_status:
+          type: string
+        delivery_method:
+          type: string
+        method_label:
+          type: string
+        review_reason:
+          type: string
+        credit_on_meter:
+          type: boolean
+        token_available:
+          type: boolean
+        customer_id:
+          type: string
+        meter_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        when_label:
+          type: string
+
+    AdminProviderRow:
+      type: object
+      required: [name, enabled, status_label, action]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        enabled:
+          type: boolean
+        status_label:
+          type: string
+        action:
+          $ref: "#/components/schemas/ConsoleAction"
+
+    AdminCohortRow:
+      type: object
+      required: [id, summary, revoked]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        summary:
+          type: string
+        evidence:
+          type: string
+        revoked:
+          type: boolean
+        action:
+          $ref: "#/components/schemas/ConsoleAction"
+
+    AdminConsole:
+      type: object
+      required: [title, role, can_admin, summary, review, recent, providers, cohorts]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+        copy:
+          type: string
+        role:
+          type: string
+          enum: [OPERATOR, ADMIN]
+        can_admin:
+          type: boolean
+        reason:
+          type: object
+          additionalProperties: true
+        summary:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        review_title:
+          type: string
+        review_empty:
+          type: string
+        review:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminTxnRow"
+        recent_title:
+          type: string
+        recent_empty:
+          type: string
+        recent:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminTxnRow"
+        audit_title:
+          type: string
+        audit_empty:
+          type: string
+        audit:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminProviderRow"
+        cohorts_title:
+          type: string
+        cohorts_copy:
+          type: string
+        cohorts:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminCohortRow"
+        discos:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        unit_meter:
+          type: object
+          additionalProperties: true
+        cohort_attest:
+          $ref: "#/components/schemas/ConsoleAction"
+        support:
+          type: object
+          additionalProperties: true
+
+    AdminInvestigation:
+      type: object
+      required: [title, transaction_id, status, actions]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+        transaction_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        status_label:
+          type: string
+        payment_status:
+          type: string
+        vending_status:
+          type: string
+        delivery_status:
+          type: string
+        delivery_method:
+          type: string
+        method_label:
+          type: string
+        credit_on_meter:
+          type: boolean
+        token_available:
+          type: boolean
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        ledger:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        ledger_empty:
+          type: string
+        notifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        notifications_empty:
+          type: string
+        audit:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        audit_empty:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScreenLine"
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConsoleAction"
+
     AdminTransactionView:
       allOf:
         - $ref: "#/components/schemas/TransactionView"
@@ -4700,7 +4968,7 @@ components:
 
     AdminTransactionDetailResponse:
       type: object
-      required: [transaction, ledger, events, audit, notifications]
+      required: [transaction, ledger, events, audit, notifications, investigation]
       additionalProperties: false
       properties:
         transaction:
@@ -4721,6 +4989,8 @@ components:
           type: [array, "null"]
           items:
             $ref: "#/components/schemas/NotificationOperatorView"
+        investigation:
+          $ref: "#/components/schemas/AdminInvestigation"
 
     AdminTokenRevealResponse:
       type: object

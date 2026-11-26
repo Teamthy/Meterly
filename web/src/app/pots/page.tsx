@@ -142,14 +142,14 @@ export default function SplitPotsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-[#0B1F1A] p-6 text-white">
-        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
+      <div className="ml-panel p-6 sm:p-8">
+        <span className="text-xs font-semibold uppercase tracking-wider text-volt">
           F2 • Split the Meter (Funding Pots)
         </span>
-        <h1 className="mt-1 text-2xl font-bold">
+        <h1 className="font-display mt-3 text-3xl font-semibold leading-tight">
           Pool compound or flatmate shares — buy automatically when funded.
         </h1>
-        <p className="mt-1 max-w-2xl text-sm text-stone-300">
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/55">
           Contributors see initials only, pay zero per-share fees (single ₦100 fee included in target), and receive automatic refunds on expiry, cancellation, or overfunding.
         </p>
       </div>
@@ -158,7 +158,7 @@ export default function SplitPotsPage() {
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -169,10 +169,10 @@ export default function SplitPotsPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <form
           onSubmit={handleCreate}
-          className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-xs lg:col-span-5"
+          className="space-y-4 ml-card p-5 lg:col-span-5"
         >
           <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
-            <Users className="h-4 w-4 text-emerald-600" />
+            <Users className="h-4 w-4 text-ink" />
             Create Split-the-Meter Pot
           </h2>
 
@@ -264,7 +264,7 @@ export default function SplitPotsPage() {
           <button
             type="submit"
             disabled={creating || !meterId}
-            className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="w-full rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt hover:bg-black disabled:opacity-50"
           >
             {creating ? "Creating Pot..." : "Create Funding Pot"}
           </button>
@@ -272,9 +272,9 @@ export default function SplitPotsPage() {
 
         <div className="space-y-4 lg:col-span-7">
           {latestPot && (
-            <div className="rounded-2xl border-2 border-emerald-500 bg-emerald-50/50 p-5 space-y-3">
+            <div className="rounded-2xl border-2 border-ink bg-volt/10 p-5 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-900">
+                <span className="text-xs font-bold uppercase tracking-wider text-ink">
                   Share Contributor Link
                 </span>
                 <StatusPill status={latestPot.status} />
@@ -284,7 +284,7 @@ export default function SplitPotsPage() {
                   <img
                     src={`data:image/png;base64,${latestPot.qr_png_base64}`}
                     alt="Split Pot QR"
-                    className="h-24 w-24 rounded-xl border border-stone-200 bg-white p-1"
+                    className="h-24 w-24 rounded-2xl border border-stone-200 bg-white p-1"
                   />
                 )}
                 <div className="flex-1 space-y-2">
@@ -293,7 +293,7 @@ export default function SplitPotsPage() {
                   </code>
                   <Link
                     href={latestSharePath}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#0B1F1A] px-3.5 py-2 text-xs font-semibold text-white"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-ink px-3.5 py-2 text-xs font-semibold text-volt"
                   >
                     Open Public Contributor Page <ExternalLink className="h-3.5 w-3.5" />
                   </Link>
@@ -329,7 +329,7 @@ export default function SplitPotsPage() {
                 return (
                   <div
                     key={p.id}
-                    className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3"
+                    className="ml-card space-y-3 p-4"
                   >
                     <div className="flex items-center justify-between">
                       <div>
@@ -345,7 +345,7 @@ export default function SplitPotsPage() {
 
                     <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
                       <div
-                        className="h-full bg-emerald-500 transition-all"
+                        className="h-full bg-volt transition-all"
                         style={{ width: `${pct}%` }}
                       />
                     </div>

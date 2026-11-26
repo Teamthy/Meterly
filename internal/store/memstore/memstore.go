@@ -400,6 +400,22 @@ func (r meterRepo) ListForUser(_ context.Context, userID string) ([]meters.Liste
 	return out, nil
 }
 
+func (r meterRepo) ListAll(_ context.Context, limit int) ([]*meters.Meter, error) {
+	defer r.lock()()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	out := make([]*meters.Meter, 0, len(r.s.meters))
+	for _, m := range r.s.meters {
+		out = append(out, cloneMeter(m))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ValidatedAt.After(out[j].ValidatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (r meterRepo) ListActiveUserIDs(_ context.Context, meterID uuid.UUID) ([]string, error) {
 	defer r.lock()()
 	seen := map[string]bool{}
@@ -552,18 +568,25 @@ func (r txnRepo) ListForCustomer(_ context.Context, customerID string) ([]*tx.Tr
 	return out, nil
 }
 
+func txnMatches(t *tx.Transaction, f store.TxnFilter) bool {
+	switch {
+	case f.ReviewOnly && t.ReviewReason == "",
+		f.Payment != "" && t.Payment != f.Payment,
+		f.Vending != "" && t.Vending != f.Vending,
+		f.Delivery != "" && t.Delivery != f.Delivery,
+		f.CustomerID != "" && t.CustomerID != f.CustomerID,
+		f.MeterID != uuid.Nil && t.MeterID != f.MeterID,
+		!f.Before.IsZero() && !t.CreatedAt.Before(f.Before):
+		return false
+	}
+	return true
+}
+
 func (r txnRepo) Search(_ context.Context, f store.TxnFilter) ([]*tx.Transaction, error) {
 	defer r.lock()()
 	var out []*tx.Transaction
 	for _, t := range r.s.txns {
-		switch {
-		case f.ReviewOnly && t.ReviewReason == "",
-			f.Payment != "" && t.Payment != f.Payment,
-			f.Vending != "" && t.Vending != f.Vending,
-			f.Delivery != "" && t.Delivery != f.Delivery,
-			f.CustomerID != "" && t.CustomerID != f.CustomerID,
-			f.MeterID != uuid.Nil && t.MeterID != f.MeterID,
-			!f.Before.IsZero() && !t.CreatedAt.Before(f.Before):
+		if !txnMatches(t, f) {
 			continue
 		}
 		out = append(out, cloneTxn(t))
@@ -573,6 +596,17 @@ func (r txnRepo) Search(_ context.Context, f store.TxnFilter) ([]*tx.Transaction
 		out = out[:f.Limit]
 	}
 	return out, nil
+}
+
+func (r txnRepo) Count(_ context.Context, f store.TxnFilter) (int, error) {
+	defer r.lock()()
+	n := 0
+	for _, t := range r.s.txns {
+		if txnMatches(t, f) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r txnRepo) ClaimDue(_ context.Context, now, staleBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error) {
@@ -769,6 +803,26 @@ func (r auditRepo) ForResource(_ context.Context, typ string, id uuid.UUID) ([]a
 		if e.ResourceType == typ && e.ResourceID != nil && *e.ResourceID == id {
 			out = append(out, e)
 		}
+	}
+	return out, nil
+}
+
+func (r auditRepo) Recent(_ context.Context, limit int) ([]audit.Event, error) {
+	defer r.lock()()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	n := len(r.s.audit)
+	if n == 0 {
+		return []audit.Event{}, nil
+	}
+	start := n - limit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]audit.Event, 0, n-start)
+	for i := n - 1; i >= start; i-- {
+		out = append(out, r.s.audit[i])
 	}
 	return out, nil
 }

@@ -66,16 +66,16 @@ export default function ProfilePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0B1F1A] text-emerald-300">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-volt">
           <UserRound className="h-5 w-5" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold">Profile</h1>
-          <p className="text-xs text-stone-500">Backed by the users table — encrypted email and phone, display name, onboarding.</p>
+          <h1 className="font-display text-3xl font-semibold text-paper">Profile</h1>
+          <p className="text-xs text-white/45">Encrypted email and phone, display name, onboarding.</p>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-stone-200 bg-white p-5 space-y-3">
+      <div className="ml-card space-y-3 p-5">
         <label className="block text-xs font-medium text-stone-600">
           Display name
           <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded-xl border border-stone-300 px-3 py-2 text-sm" />
@@ -95,19 +95,19 @@ export default function ProfilePage() {
           type="button"
           disabled={busy}
           onClick={save}
-          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt disabled:opacity-50"
         >
           Save profile
         </button>
         {msg && <p className="text-sm text-stone-600">{msg}</p>}
       </div>
 
-      <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="ml-card p-5">
         <div className="flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <Fingerprint className="h-4 w-4" /> Passkeys
           </h2>
-          <Link href="/signin" className="text-xs font-medium text-emerald-700">
+          <Link href="/signin" className="text-xs font-medium text-ink">
             Add on this device
           </Link>
         </div>

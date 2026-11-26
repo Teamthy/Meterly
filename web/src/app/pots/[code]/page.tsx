@@ -94,7 +94,7 @@ export default function PublicPotContributePage({
 
   if (!pot) {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-stone-200 bg-white p-8 text-center text-sm text-stone-500">
+      <div className="mx-auto max-w-lg ml-card p-8 text-center text-sm text-stone-500">
         Loading Split-the-Meter pot…
       </div>
     );
@@ -107,10 +107,10 @@ export default function PublicPotContributePage({
 
   return (
     <div className="mx-auto max-w-lg space-y-5">
-      <div className="rounded-2xl border border-stone-200 bg-white overflow-hidden shadow-sm">
-        <div className="bg-[#0B1F1A] p-6 text-white space-y-2">
+      <div className="ml-card overflow-hidden shadow-sm">
+        <div className="bg-ink p-6 text-white space-y-2">
           <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-300">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-volt">
               <Users className="h-3.5 w-3.5" /> Split the Meter Pot
             </span>
             <StatusPill status={pot.status} />
@@ -118,7 +118,7 @@ export default function PublicPotContributePage({
           <h1 className="text-xl font-bold">
             Organised by {pot.organiser_display_name}
           </h1>
-          <p className="font-mono text-sm text-emerald-200">
+          <p className="font-mono text-sm text-volt">
             Meter {pot.masked_meter_number} ({pot.disco}) • Includes{" "}
             {formatNaira(pot.fee_minor)} fee
           </p>
@@ -144,7 +144,7 @@ export default function PublicPotContributePage({
             </div>
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-stone-100">
               <div
-                className="h-full bg-emerald-500 transition-all"
+                className="h-full bg-volt transition-all"
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -247,7 +247,7 @@ export default function PublicPotContributePage({
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="w-full rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt hover:bg-black disabled:opacity-50"
               >
                 {submitting
                   ? "Opening Checkout..."
@@ -257,14 +257,14 @@ export default function PublicPotContributePage({
               </button>
             </form>
           ) : (
-            <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-xs text-emerald-950 flex items-center justify-between">
+            <div className="rounded-xl bg-volt/20 border border-stone-200 p-4 text-xs text-ink flex items-center justify-between">
               <span>
                 Pot status is <strong className="font-mono">{pot.status}</strong>. Electricity is automatically vended when funded, or contributions are refunded if expired/cancelled.
               </span>
               <button
                 type="button"
                 onClick={loadPot}
-                className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 font-semibold border border-emerald-200"
+                className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 font-semibold border border-stone-200"
               >
                 <RefreshCw className="h-3 w-3" /> Refresh
               </button>

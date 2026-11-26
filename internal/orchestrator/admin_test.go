@@ -198,6 +198,60 @@ func TestTokenReadsAndRevealsAreAudited(t *testing.T) {
 	})
 }
 
+func TestAdminConsoleCountsAndInvestigationActions(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		_ = e.buy(t, "u1", "45012345678", orchestrator.PrefToken)
+		bad := e.create(t, "u2", "45012345679", orchestrator.PrefToken)
+		_ = e.pay.Complete(bad.PaymentProviderRef, true, 100)
+		_, _ = e.o.HandlePaymentNotification(e.ctx, bad.PaymentProviderRef)
+
+		opCons, err := e.o.AdminConsole(e.ctx, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opCons.Role != "OPERATOR" || opCons.CanAdmin {
+			t.Fatalf("operator console %+v", opCons)
+		}
+		if len(opCons.Review) != 1 || opCons.Review[0].TransactionID != bad.ID || opCons.Review[0].Status != "MANUAL_REVIEW" {
+			t.Fatalf("review %+v", opCons.Review)
+		}
+		if len(opCons.Summary) == 0 || opCons.Summary[0].Value != "1" {
+			t.Fatalf("summary %+v", opCons.Summary)
+		}
+		adminCons, err := e.o.AdminConsole(e.ctx, true)
+		if err != nil || !adminCons.CanAdmin || adminCons.Role != "ADMIN" {
+			t.Fatalf("admin console %v %+v", err, adminCons)
+		}
+
+		d, err := e.o.Detail(e.ctx, bad.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invOp := orchestrator.InvestigationFrom(d, false)
+		invAd := orchestrator.InvestigationFrom(d, true)
+		if invOp.TokenAvailable {
+			t.Fatal("underpaid review must not expose a token")
+		}
+		refundOp, refundAd := false, false
+		for _, a := range invOp.Actions {
+			if a.ID == "refund" {
+				refundOp = a.Enabled
+			}
+		}
+		for _, a := range invAd.Actions {
+			if a.ID == "refund" {
+				refundAd = a.Enabled
+			}
+		}
+		if refundOp {
+			t.Fatal("operator investigation must not enable refund")
+		}
+		if !refundAd {
+			t.Fatalf("admin investigation should enable refund %+v", invAd.Actions)
+		}
+	})
+}
+
 func TestSearchAndDetail(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
 		done := e.buy(t, "u1", "45012345678", orchestrator.PrefToken)

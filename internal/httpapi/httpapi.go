@@ -208,6 +208,7 @@ func (s *Server) Routes() http.Handler {
 	s.adminRoutes(mux)
 
 	if s.Dev {
+		mux.HandleFunc("GET /v1/dev/console", s.devConsole)
 		mux.HandleFunc("POST /v1/dev/payments/{ref}/complete", s.devCompletePayment)
 		mux.HandleFunc("POST /v1/dev/remote/settle", s.devSettle)
 		mux.HandleFunc("POST /v1/dev/meters/{meter_id}/reading", s.devSetReading)
@@ -744,20 +745,28 @@ func (s *Server) devCompletePayment(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	ok := req.Success == nil || *req.Success
-	if err := s.DevPay.Complete(r.PathValue("ref"), ok, 0); err != nil {
+	ref := r.PathValue("ref")
+	if err := s.DevPay.Complete(ref, ok, 0); err != nil {
 		writeErr(w, 404, "INVALID_REQUEST", err.Error())
 		return
+	}
+	if _, err := s.O.HandlePaymentNotification(r.Context(), ref); err != nil {
+		s.Log.Warn("dev payment complete", "err", err)
 	}
 	writeJSON(w, 200, map[string]any{"completed": true, "success": ok})
 }
 
-func (s *Server) devSettle(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) devSettle(w http.ResponseWriter, r *http.Request) {
 	if s.DevRemote == nil {
 		writeErr(w, 404, "INVALID_REQUEST", "mock remote credit not in use")
 		return
 	}
 	s.DevRemote.Settle()
-	writeJSON(w, 200, map[string]any{"settled": true})
+	processed, progressed, err := s.O.ResumeDue(r.Context())
+	if err != nil {
+		s.Log.Warn("dev remote settle", "err", err)
+	}
+	writeJSON(w, 200, map[string]any{"settled": true, "processed": processed, "progressed": progressed})
 }
 
 func (s *Server) devSetReading(w http.ResponseWriter, r *http.Request) {

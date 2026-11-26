@@ -171,14 +171,14 @@ export default function HouseholdDetailPage() {
       <div>
         <Link
           href="/households"
-          className="inline-flex items-center gap-1 text-xs font-medium text-emerald-800 hover:underline"
+          className="inline-flex items-center gap-1 text-xs font-medium text-volt hover:underline"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> All households
         </Link>
-        <h1 className="mt-2 text-xl font-bold text-stone-900">
+        <h1 className="font-display mt-2 text-3xl font-semibold text-paper">
           {view.household.name}
         </h1>
-        <p className="text-xs text-stone-500">
+        <p className="mt-1 text-xs text-white/50">
           Your role <StatusPill status={view.my_role || ""} /> · status{" "}
           <StatusPill status={view.my_status || ""} />
         </p>
@@ -188,7 +188,7 @@ export default function HouseholdDetailPage() {
         <div
           className={`rounded-xl border px-4 py-2.5 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -199,10 +199,10 @@ export default function HouseholdDetailPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <form
           onSubmit={verifyOwnership}
-          className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-3"
+          className="ml-card space-y-3 p-5"
         >
           <h2 className="text-sm font-bold flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-emerald-700" />
+            <ShieldCheck className="h-4 w-4 text-ink" />
             Verify ownership
           </h2>
           <p className="text-xs text-stone-500">
@@ -243,7 +243,7 @@ export default function HouseholdDetailPage() {
           <button
             type="submit"
             disabled={busy || !verifyMeterId}
-            className="rounded-xl bg-[#0B1F1A] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt disabled:opacity-50"
           >
             Match name & verify
           </button>
@@ -252,10 +252,10 @@ export default function HouseholdDetailPage() {
         {admin && (
           <form
             onSubmit={addMeter}
-            className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-3"
+            className="ml-card space-y-3 p-5"
           >
             <h2 className="text-sm font-bold flex items-center gap-2">
-              <Zap className="h-4 w-4 text-emerald-700" />
+              <Zap className="h-4 w-4 text-ink" />
               Add a verified meter
             </h2>
             <p className="text-xs text-stone-500">
@@ -275,7 +275,7 @@ export default function HouseholdDetailPage() {
             <button
               type="submit"
               disabled={busy || !meterToAdd}
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt disabled:opacity-50"
             >
               Link meter
             </button>
@@ -285,10 +285,10 @@ export default function HouseholdDetailPage() {
         {admin && (
           <form
             onSubmit={invite}
-            className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-3"
+            className="ml-card space-y-3 p-5"
           >
             <h2 className="text-sm font-bold flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-emerald-700" />
+              <UserPlus className="h-4 w-4 text-ink" />
               Invite who may buy
             </h2>
             <p className="text-xs text-stone-500">
@@ -318,7 +318,7 @@ export default function HouseholdDetailPage() {
             <button
               type="submit"
               disabled={busy}
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt disabled:opacity-50"
             >
               Send invite
             </button>
@@ -326,7 +326,7 @@ export default function HouseholdDetailPage() {
         )}
       </div>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
+      <section className="ml-card p-5">
         <h2 className="text-sm font-bold mb-3">Meters in this household</h2>
         {(view.meters || []).length === 0 ? (
           <p className="text-sm text-stone-500">None linked yet.</p>
@@ -352,7 +352,7 @@ export default function HouseholdDetailPage() {
         )}
       </section>
 
-      <section className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs">
+      <section className="ml-card p-5">
         <h2 className="text-sm font-bold mb-3">Members</h2>
         <ul className="space-y-2">
           {(view.members || []).map((mem) => (

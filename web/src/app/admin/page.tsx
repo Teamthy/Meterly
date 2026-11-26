@@ -1,320 +1,279 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/AuthContext";
-import { apiFetch, DISCOS, formatNaira, formatSTSToken } from "@/lib/api";
-import { RemoteCohort, TransactionView } from "@/lib/types";
+import { ApiError, apiFetch, formatSTSToken } from "@/lib/api";
+import {
+  AdminConsole,
+  AdminInvestigation,
+  AdminTxnRow,
+  ConsoleAction,
+  ScreenLine,
+} from "@/lib/types";
 import { StatusPill, ThreeDimensionStatus } from "@/components/StatusBadges";
 import {
   ShieldAlert,
   Search,
   CheckCircle2,
-  Eye,
   RotateCcw,
   Sliders,
   Radio,
+  Headphones,
 } from "lucide-react";
+
+function Lines({
+  lines,
+  empty,
+}: {
+  lines?: ScreenLine[];
+  empty?: string;
+}) {
+  if (!lines || lines.length === 0) {
+    return <p className="text-xs text-stone-400">{empty}</p>;
+  }
+  return (
+    <dl className="space-y-1.5">
+      {lines.map((line, i) => (
+        <div key={`${line.label}-${i}`} className="flex justify-between gap-3 text-xs">
+          <dt className="text-stone-500">{line.label}</dt>
+          <dd
+            className={
+              line.emphasis
+                ? "font-semibold text-stone-900 text-right"
+                : "text-stone-800 text-right"
+            }
+          >
+            {line.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function TxnList({
+  title,
+  empty,
+  rows,
+  selectedId,
+  onSelect,
+}: {
+  title: string;
+  empty: string;
+  rows: AdminTxnRow[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <section className="ml-card space-y-3 p-4">
+      <h2 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
+        <Search className="h-4 w-4 text-ink" />
+        {title}
+      </h2>
+      <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+        {rows.length === 0 ? (
+          <p className="text-xs text-stone-400">{empty}</p>
+        ) : (
+          rows.map((t) => (
+            <button
+              key={t.transaction_id}
+              type="button"
+              onClick={() => onSelect(t.transaction_id)}
+              className={`w-full rounded-xl border p-3 text-left text-xs transition ${
+                selectedId === t.transaction_id
+                  ? "border-ink bg-volt/12"
+                  : "border-stone-200 bg-stone-50 hover:bg-stone-100"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-stone-900">{t.amount_label}</span>
+                <StatusPill status={t.status} />
+              </div>
+              <p className="mt-1 text-[11px] text-stone-500">{t.summary}</p>
+              <p className="mt-0.5 font-mono text-[11px] text-stone-400">
+                {t.when_label} · {t.method_label}
+              </p>
+            </button>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
 
 export default function AdminConsolePage() {
   const { token, setPersonaById } = useAuth();
-  const isStaff =
-    token.startsWith("operator:") || token.startsWith("admin:");
-  const isAdmin = token.startsWith("admin:");
-
-  const [reviewOnly, setReviewOnly] = useState(false);
-  const [txns, setTxns] = useState<TransactionView[]>([]);
+  const [console, setConsole] = useState<AdminConsole | null>(null);
+  const [forbidden, setForbidden] = useState(false);
+  const [ready, setReady] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
-  const [providers, setProviders] = useState<
-    Array<{ name: string; type?: string; enabled: boolean }>
-  >([]);
-  const [reason, setReason] = useState(
-    "Operator investigation & reconciliation per runbook"
-  );
-  const [revealedToken, setRevealedToken] = useState<string | null>(null);
-
-  // Unit meter verification form
-  const [unitMeterId, setUnitMeterId] = useState("");
-  const [verifyMethod, setVerifyMethod] = useState<
-    "ACCOUNT_NAME_MATCH" | "EVIDENCE_APPROVED"
-  >("EVIDENCE_APPROVED");
-  const [verifyEvidence, setVerifyEvidence] = useState("DEED-LP1-2026-01");
-  const [banner, setBanner] = useState<{ type: "ok" | "err"; text: string } | null>(
+  const [investigation, setInvestigation] = useState<AdminInvestigation | null>(
     null
   );
-
-  const [cohorts, setCohorts] = useState<RemoteCohort[]>([]);
-  const [cohortDisco, setCohortDisco] = useState("IKEDC");
+  const [reason, setReason] = useState("");
+  const [revealedToken, setRevealedToken] = useState<string | null>(null);
+  const [unitMeterId, setUnitMeterId] = useState("");
+  const [verifyMethod, setVerifyMethod] = useState("");
+  const [verifyEvidence, setVerifyEvidence] = useState("DEED-LP1-2026-01");
+  const [cohortDisco, setCohortDisco] = useState("");
   const [cohortPrefix, setCohortPrefix] = useState("62");
   const [cohortMfr, setCohortMfr] = useState("");
   const [cohortEvidence, setCohortEvidence] = useState(
     "MAP letter March 2026 Hexing AMI — demo attestation"
   );
-  const [cohortBusy, setCohortBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState<{ type: "ok" | "err"; text: string } | null>(
+    null
+  );
 
-  const loadList = useCallback(async () => {
-    if (!isStaff) return;
+  const loadConsole = useCallback(async () => {
     try {
-      const [tRes, pRes] = await Promise.all([
-        apiFetch<{ data: TransactionView[] }>(
-          `/v1/admin/transactions${reviewOnly ? "?review=true" : ""}`,
-          { token }
-        ),
-        apiFetch<{
-          data?: Array<{ name: string; type?: string; enabled: boolean }>;
-          providers?: Array<{ name: string; type?: string; enabled: boolean }>;
-        }>("/v1/admin/providers", { token }).catch(() => ({
-          data: [],
-          providers: [],
-        })),
-      ]);
-      setTxns(tRes.data || []);
-      setProviders(pRes.data || pRes.providers || []);
+      const c = await apiFetch<AdminConsole>("/v1/admin/console", { token });
+      setConsole(c);
+      setForbidden(false);
+      setReason((prev) => prev || c.reason.placeholder);
+      setVerifyMethod((prev) => prev || c.unit_meter.methods[0]?.id || "");
+      setCohortDisco((prev) => prev || c.discos[0]?.code || "");
     } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        setForbidden(true);
+        setConsole(null);
+        return;
+      }
       setBanner({
         type: "err",
-        text: e instanceof Error ? e.message : "Failed to query admin API",
+        text: e instanceof Error ? e.message : "Failed to load ops console",
       });
+    } finally {
+      setReady(true);
     }
-  }, [isStaff, reviewOnly, token]);
-
-  const loadCohorts = useCallback(async () => {
-    if (!isStaff) return;
-    try {
-      const res = await apiFetch<{ data: RemoteCohort[] }>(
-        "/v1/admin/remote-credit/cohorts",
-        { token }
-      );
-      setCohorts(res.data || []);
-    } catch {
-      setCohorts([]);
-    }
-  }, [isStaff, token]);
-
-  useEffect(() => {
-    loadList();
-    loadCohorts();
-  }, [loadList, loadCohorts]);
+  }, [token]);
 
   const loadDetail = useCallback(
     async (id: string) => {
       setSelectedId(id);
       setRevealedToken(null);
       try {
-        const d = await apiFetch<Record<string, unknown>>(
+        const d = await apiFetch<{ investigation: AdminInvestigation }>(
           `/v1/admin/transactions/${id}`,
           { token }
         );
-        setDetail(d);
+        setInvestigation(d.investigation);
       } catch (e) {
         setBanner({
           type: "err",
-          text: e instanceof Error ? e.message : "Failed to load detail",
+          text: e instanceof Error ? e.message : "Failed to load investigation",
         });
       }
     },
     [token]
   );
 
-  const runAdminAction = async (
-    actionPath: "reconcile" | "fallback-to-token" | "requeue" | "refund"
-  ) => {
-    if (!selectedId) return;
-    if (reason.trim().length < 5) {
+  useEffect(() => {
+    loadConsole();
+  }, [loadConsole]);
+
+  const runAction = async (action: ConsoleAction, body?: Record<string, unknown>) => {
+    if (!action.path || !action.enabled) return;
+    const min = console?.reason.min_length ?? 5;
+    if (action.needs_reason && reason.trim().length < min) {
       setBanner({
         type: "err",
-        text: "Audit reason (5–500 chars) is mandatory for every staff mutation.",
+        text: console?.reason.hint || "Audit reason is required.",
       });
       return;
     }
+    setBusy(true);
     try {
-      await apiFetch(`/v1/admin/transactions/${selectedId}/${actionPath}`, {
-        method: "POST",
+      const payload = {
+        ...(action.needs_reason ? { reason: reason.trim() } : {}),
+        ...(body || {}),
+      };
+      const res = await apiFetch<Record<string, unknown>>(action.path, {
+        method: action.method || "POST",
         token,
-        body: { reason: reason.trim() },
+        body: Object.keys(payload).length ? payload : undefined,
       });
-      await loadList();
-      await loadDetail(selectedId);
-      setBanner({
-        type: "ok",
-        text: `Executed audited ${actionPath} on transaction ${selectedId.slice(
-          0,
-          8
-        )}.`,
-      });
+      if (action.id === "token-reveal" && typeof res.token === "string") {
+        setRevealedToken(res.token);
+      }
+      await loadConsole();
+      if (selectedId) await loadDetail(selectedId);
+      setBanner({ type: "ok", text: action.label + " recorded." });
     } catch (err) {
       setBanner({
         type: "err",
-        text: err instanceof Error ? err.message : `${actionPath} failed`,
-      });
-    }
-  };
-
-  const handleAuditedReveal = async () => {
-    if (!selectedId) return;
-    try {
-      const res = await apiFetch<{ token: string }>(
-        `/v1/admin/transactions/${selectedId}/token-reveal`,
-        {
-          method: "POST",
-          token,
-          body: { reason: reason.trim() },
-        }
-      );
-      setRevealedToken(res.token);
-      await loadDetail(selectedId);
-    } catch (err) {
-      setBanner({
-        type: "err",
-        text: err instanceof Error ? err.message : "Token reveal failed",
-      });
-    }
-  };
-
-  const handleToggleProvider = async (name: string, enable: boolean) => {
-    try {
-      await apiFetch(
-        `/v1/admin/providers/${encodeURIComponent(name)}/${
-          enable ? "enable" : "disable"
-        }`,
-        {
-          method: "POST",
-          token,
-          body: { reason: reason.trim() },
-        }
-      );
-      await loadList();
-      setBanner({
-        type: "ok",
-        text: `Provider ${name} ${enable ? "enabled" : "paused"} (admin audited).`,
-      });
-    } catch (err) {
-      setBanner({
-        type: "err",
-        text:
-          err instanceof Error
-            ? err.message
-            : "Switch to Segun (Admin) to toggle providers",
-      });
-    }
-  };
-
-  const handleCreateCohort = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const prefix = cohortPrefix.trim();
-    if (!/^\d{1,13}$/.test(prefix)) {
-      setBanner({
-        type: "err",
-        text: "Number prefix must be 1–13 digits. Never a glob, never a 7… shortcut.",
-      });
-      return;
-    }
-    if (cohortEvidence.trim().length < 5) {
-      setBanner({
-        type: "err",
-        text: "Evidence (5–500 chars) is required. This is an attestation, not a HES client.",
-      });
-      return;
-    }
-    setCohortBusy(true);
-    try {
-      await apiFetch("/v1/admin/remote-credit/cohorts", {
-        method: "POST",
-        token,
-        body: {
-          disco: cohortDisco,
-          number_prefix: prefix,
-          manufacturer: cohortMfr.trim() || undefined,
-          evidence: cohortEvidence.trim(),
-        },
-      });
-      await loadCohorts();
-      setBanner({
-        type: "ok",
-        text: `Attested ${cohortDisco} prefix ${prefix}. Supported ≠ authorised — live HES CheckEligibility still required.`,
-      });
-    } catch (err) {
-      setBanner({
-        type: "err",
-        text:
-          err instanceof Error
-            ? err.message
-            : "Cohort create failed (admin role required)",
+        text: err instanceof Error ? err.message : `${action.label} failed`,
       });
     } finally {
-      setCohortBusy(false);
-    }
-  };
-
-  const handleRevokeCohort = async (id: string) => {
-    if (reason.trim().length < 5) {
-      setBanner({
-        type: "err",
-        text: "Audit reason (5–500 chars) is mandatory to revoke a cohort.",
-      });
-      return;
-    }
-    setCohortBusy(true);
-    try {
-      await apiFetch(`/v1/admin/remote-credit/cohorts/${id}`, {
-        method: "DELETE",
-        token,
-        body: { reason: reason.trim() },
-      });
-      await loadCohorts();
-      setBanner({ type: "ok", text: "Cohort revoked (audited)." });
-    } catch (err) {
-      setBanner({
-        type: "err",
-        text: err instanceof Error ? err.message : "Revoke failed",
-      });
-    } finally {
-      setCohortBusy(false);
+      setBusy(false);
     }
   };
 
   const handleVerifyUnitMeter = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!unitMeterId.trim()) return;
+    if (!console) return;
+    const tmpl = console.unit_meter.action.path_template || "";
+    const path = tmpl.replace("{id}", encodeURIComponent(unitMeterId.trim()));
+    if (!unitMeterId.trim() || !path) return;
+    await runAction(
+      { ...console.unit_meter.action, path, enabled: true },
+      {
+        method: verifyMethod,
+        evidence_reference: verifyEvidence.trim(),
+        reason: reason.trim(),
+      }
+    );
+    setUnitMeterId("");
+  };
+
+  const handleCreateCohort = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!console?.cohort_attest.enabled || !console.cohort_attest.path) return;
+    setBusy(true);
     try {
-      await apiFetch(
-        `/v1/admin/unit-meters/${encodeURIComponent(unitMeterId.trim())}/verify`,
-        {
-          method: "POST",
-          token,
-          body: {
-            method: verifyMethod,
-            evidence_reference: verifyEvidence.trim(),
-            reason: reason.trim(),
-          },
-        }
-      );
-      setBanner({
-        type: "ok",
-        text: `Unit meter ${unitMeterId.slice(
-          0,
-          8
-        )}… verified via ${verifyMethod} (audited)!`,
+      await apiFetch(console.cohort_attest.path, {
+        method: console.cohort_attest.method || "POST",
+        token,
+        body: {
+          disco: cohortDisco,
+          number_prefix: cohortPrefix.trim(),
+          manufacturer: cohortMfr.trim() || undefined,
+          evidence: cohortEvidence.trim(),
+        },
       });
-      setUnitMeterId("");
+      await loadConsole();
+      setBanner({ type: "ok", text: console.cohort_attest.label + " recorded." });
     } catch (err) {
       setBanner({
         type: "err",
-        text: err instanceof Error ? err.message : "Verification failed",
+        text: err instanceof Error ? err.message : "Cohort attest failed",
       });
+    } finally {
+      setBusy(false);
     }
   };
 
-  if (!isStaff) {
+  if (!ready) {
+    return (
+      <div className="ml-card p-8 text-sm text-stone-500">
+        Loading ops console…
+      </div>
+    );
+  }
+
+  if (forbidden) {
     return (
       <div className="mx-auto max-w-xl rounded-2xl border border-amber-200 bg-white p-8 text-center space-y-4">
         <ShieldAlert className="mx-auto h-10 w-10 text-amber-600" />
         <h1 className="text-xl font-bold text-stone-900">
-          Staff Role Required (Operator / Admin + MFA)
+          Staff role required
         </h1>
         <p className="text-sm text-stone-600">
-          Customer tokens receive <code className="font-mono">403 FORBIDDEN</code> on{" "}
-          <code className="font-mono">/v1/admin/*</code>. Switch to a staff persona to inspect stuck transactions, ledger postings, and audited actions:
+          The ops console is served by{" "}
+          <code className="font-mono">GET /v1/admin/console</code>. Customer
+          tokens receive 403. Switch to a staff persona:
         </p>
         <div className="flex justify-center gap-3">
           <button
@@ -327,7 +286,7 @@ export default function AdminConsolePage() {
           <button
             type="button"
             onClick={() => setPersonaById("admin")}
-            className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-semibold text-white"
+            className="rounded-full bg-ink px-4 py-2.5 text-xs font-semibold text-volt"
           >
             Switch to Segun (Admin)
           </button>
@@ -336,25 +295,30 @@ export default function AdminConsolePage() {
     );
   }
 
+  if (!console) {
+    return (
+      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-sm text-rose-900">
+        Could not load the ops console from the API.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl bg-[#0B1F1A] p-6 text-white">
-        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
-          M4 / M5 / M10 • Operator & Admin Investigation Console
+      <div className="ml-panel p-6 sm:p-8">
+        <span className="text-xs font-semibold uppercase tracking-wider text-volt">
+          {console.role} · ops
         </span>
-        <h1 className="mt-1 text-2xl font-bold">
-          Reconciliation, double-entry ledger inspection & audited actions.
-        </h1>
-        <p className="mt-1 max-w-2xl text-sm text-stone-300">
-          Every staff mutation requires a 5–500 character reason and commits an immutable <code className="font-mono">audit_events</code> row in the same database transaction.
-        </p>
+        <h1 className="font-display mt-3 text-3xl font-semibold leading-tight">{console.title}</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/55">{console.subtitle}</p>
+        <p className="mt-2 max-w-2xl text-xs text-white/40">{console.copy}</p>
       </div>
 
       {banner && (
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -362,100 +326,100 @@ export default function AdminConsolePage() {
         </div>
       )}
 
-      {/* Mandatory Audit Reason Bar */}
-      <div className="rounded-2xl border border-stone-200 bg-white p-4 flex flex-wrap items-center gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {console.summary.map((line) => (
+          <div
+            key={line.label}
+            className="ml-card p-4"
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+              {line.label}
+            </p>
+            <p
+              className={`font-display mt-3 text-3xl font-semibold leading-tight ${
+                line.emphasis ? "text-amber-700" : "text-stone-900"
+              }`}
+            >
+              {line.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="ml-card p-4 flex flex-wrap items-center gap-3">
         <label className="text-xs font-bold uppercase tracking-wider text-stone-600">
-          Mandatory Audit Reason:
+          {console.reason.label}
         </label>
         <input
           type="text"
-          minLength={5}
-          maxLength={500}
+          minLength={console.reason.min_length}
+          maxLength={console.reason.max_length}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
+          placeholder={console.reason.placeholder}
           className="flex-1 min-w-[240px] rounded-xl border border-stone-300 px-3 py-1.5 text-xs"
         />
+        <p className="w-full text-[11px] text-stone-500">{console.reason.hint}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Left Column: Search + Unit Meter Verify + Provider Switches */}
         <div className="space-y-5 lg:col-span-5">
-          <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-                <Search className="h-4 w-4 text-emerald-600" />
-                Transactions ({txns.length})
-              </h2>
-              <label className="flex items-center gap-1.5 text-xs text-stone-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={reviewOnly}
-                  onChange={(e) => setReviewOnly(e.target.checked)}
-                />
-                Manual Review Only
-              </label>
-            </div>
+          <TxnList
+            title={console.review_title}
+            empty={console.review_empty}
+            rows={console.review}
+            selectedId={selectedId}
+            onSelect={loadDetail}
+          />
+          <TxnList
+            title={console.recent_title}
+            empty={console.recent_empty}
+            rows={console.recent}
+            selectedId={selectedId}
+            onSelect={loadDetail}
+          />
 
-            <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
-              {txns.map((t) => (
-                <button
-                  key={t.transaction_id}
-                  type="button"
-                  onClick={() => loadDetail(t.transaction_id)}
-                  className={`w-full rounded-xl border p-3 text-left text-xs transition ${
-                    selectedId === t.transaction_id
-                      ? "border-emerald-600 bg-emerald-50/60"
-                      : "border-stone-200 bg-stone-50 hover:bg-stone-100"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono font-bold text-stone-900">
-                      {formatNaira(t.total_minor)}
-                    </span>
-                    <StatusPill status={t.status} />
-                  </div>
-                  <p className="mt-1 font-mono text-[11px] text-stone-500">
-                    {t.transaction_id.slice(0, 12)}… • Pay:{t.payment_status} •
-                    Vend:{t.vending_status} • {t.delivery_method}
-                    {t.credit_on_meter
-                      ? " • on meter"
-                      : t.delivery_status
-                        ? ` • ${t.delivery_status}`
-                        : ""}
-                  </p>
-                </button>
-              ))}
-            </div>
+          <section className="ml-card p-4 space-y-2">
+            <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
+              <Headphones className="h-4 w-4 text-ink" />
+              {console.support.title}
+            </h3>
+            <p className="text-xs text-stone-600">{console.support.summary}</p>
+            <Link
+              href={console.support.inbox_path}
+              className="inline-flex text-xs font-semibold text-ink hover:underline"
+            >
+              Open inbox
+            </Link>
           </section>
 
-          {/* Power Desk Unit-Meter Verification */}
           <form
             onSubmit={handleVerifyUnitMeter}
-            className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2.5"
+            className="ml-card p-4 space-y-2.5"
           >
             <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              Verify Power Desk Unit Meter
+              <CheckCircle2 className="h-4 w-4 text-ink" />
+              {console.unit_meter.title}
             </h3>
+            <p className="text-[11px] text-stone-500">{console.unit_meter.hint}</p>
             <input
               type="text"
               value={unitMeterId}
               onChange={(e) => setUnitMeterId(e.target.value)}
-              placeholder="Paste UnitMeter UUID from Power Desk"
+              placeholder="UnitMeter UUID"
               className="w-full rounded-xl border border-stone-300 px-3 py-1.5 font-mono text-xs"
             />
             <div className="grid grid-cols-2 gap-2">
               <select
                 value={verifyMethod}
-                onChange={(e) =>
-                  setVerifyMethod(
-                    e.target.value as "ACCOUNT_NAME_MATCH" | "EVIDENCE_APPROVED"
-                  )
-                }
+                onChange={(e) => setVerifyMethod(e.target.value)}
                 className="rounded-xl border border-stone-300 bg-white px-2.5 py-1.5 text-xs"
               >
-                <option value="EVIDENCE_APPROVED">EVIDENCE_APPROVED</option>
-                <option value="ACCOUNT_NAME_MATCH">ACCOUNT_NAME_MATCH</option>
+                {console.unit_meter.methods.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
               </select>
               <input
                 type="text"
@@ -467,24 +431,20 @@ export default function AdminConsolePage() {
             </div>
             <button
               type="submit"
-              className="w-full rounded-xl bg-stone-900 py-2 text-xs font-semibold text-white"
+              disabled={busy}
+              className="w-full rounded-xl bg-stone-900 py-2 text-xs font-semibold text-white disabled:opacity-50"
             >
-              Approve & Audit Unit Meter Ownership
+              {console.unit_meter.action.label}
             </button>
           </form>
 
-          <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2.5">
+          <section className="ml-card p-4 space-y-2.5">
             <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-              <Radio className="h-4 w-4 text-emerald-600" />
-              Remote-credit cohorts
+              <Radio className="h-4 w-4 text-ink" />
+              {console.cohorts_title}
             </h3>
-            <p className="text-[11px] text-stone-500">
-              Attest DisCo + digit prefix after a MAP/DisCo letter. This marks{" "}
-              <span className="font-mono">supported</span>, not a live HES
-              session. Do not treat meter prefix 7 as production AMI. Manufacturer
-              is a label only — no Hexing/Conlog client is invented here.
-            </p>
-            {isAdmin ? (
+            <p className="text-[11px] text-stone-500">{console.cohorts_copy}</p>
+            {console.cohort_attest.enabled ? (
               <form onSubmit={handleCreateCohort} className="space-y-2">
                 <div className="grid grid-cols-2 gap-2">
                   <select
@@ -492,7 +452,7 @@ export default function AdminConsolePage() {
                     onChange={(e) => setCohortDisco(e.target.value)}
                     className="rounded-xl border border-stone-300 bg-white px-2.5 py-1.5 text-xs"
                   >
-                    {DISCOS.map((d) => (
+                    {console.discos.map((d) => (
                       <option key={d.code} value={d.code}>
                         {d.code}
                       </option>
@@ -501,7 +461,7 @@ export default function AdminConsolePage() {
                   <input
                     value={cohortPrefix}
                     onChange={(e) => setCohortPrefix(e.target.value)}
-                    placeholder="Digit prefix (e.g. 62)"
+                    placeholder="Digit prefix"
                     className="rounded-xl border border-stone-300 px-2.5 py-1.5 font-mono text-xs"
                     inputMode="numeric"
                   />
@@ -520,40 +480,36 @@ export default function AdminConsolePage() {
                 />
                 <button
                   type="submit"
-                  disabled={cohortBusy}
-                  className="w-full rounded-xl bg-emerald-800 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  disabled={busy}
+                  className="w-full rounded-full bg-ink py-2 text-xs font-semibold text-volt disabled:opacity-50"
                 >
-                  Attest cohort (admin)
+                  {console.cohort_attest.label}
                 </button>
               </form>
             ) : (
               <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                Operators can list. Switch to Segun (Admin) to attest or revoke.
+                {console.cohort_attest.hint || "Admin role required to attest."}
               </p>
             )}
             <ul className="space-y-1.5 max-h-48 overflow-y-auto">
-              {cohorts.length === 0 ? (
+              {console.cohorts.length === 0 ? (
                 <li className="text-[11px] text-stone-400">No cohorts yet.</li>
               ) : (
-                cohorts.map((c) => (
+                console.cohorts.map((c) => (
                   <li
                     key={c.id}
                     className="rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-1.5 text-[11px]"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <div className="font-mono">
-                        {c.disco} · {c.number_prefix}…
-                        {c.manufacturer ? ` · ${c.manufacturer}` : ""}
-                        {c.revoked_at ? " · REVOKED" : c.authorised ? " · live" : ""}
-                      </div>
-                      {isAdmin && !c.revoked_at && (
+                      <div className="font-mono">{c.summary}</div>
+                      {c.action?.enabled && (
                         <button
                           type="button"
-                          disabled={cohortBusy}
-                          onClick={() => handleRevokeCohort(c.id)}
+                          disabled={busy}
+                          onClick={() => runAction(c.action!)}
                           className="text-rose-800 font-semibold hover:underline disabled:opacity-50"
                         >
-                          Revoke
+                          {c.action.label}
                         </button>
                       )}
                     </div>
@@ -566,170 +522,124 @@ export default function AdminConsolePage() {
             </ul>
           </section>
 
-          {/* Provider Switches */}
-          {providers.length > 0 && (
-            <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs space-y-2">
+          {console.providers.length > 0 && (
+            <section className="ml-card p-4 space-y-2">
               <h3 className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-                <Sliders className="h-4 w-4 text-emerald-600" />
-                Provider Circuit Switches (Admin)
+                <Sliders className="h-4 w-4 text-ink" />
+                Providers
               </h3>
-              {providers.map((p) => (
+              {console.providers.map((p) => (
                 <div
                   key={p.name}
                   className="flex items-center justify-between rounded-xl bg-stone-50 px-3 py-2 text-xs"
                 >
-                  <span className="font-mono font-semibold">{p.name}</span>
+                  <div>
+                    <span className="font-mono font-semibold">{p.name}</span>
+                    <span className="ml-2 text-stone-500">{p.status_label}</span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => handleToggleProvider(p.name, !p.enabled)}
-                    className={`rounded-lg px-2.5 py-1 font-semibold ${
+                    disabled={!p.action.enabled || busy}
+                    onClick={() => runAction(p.action)}
+                    className={`rounded-lg px-2.5 py-1 font-semibold disabled:opacity-40 ${
                       p.enabled
-                        ? "bg-emerald-100 text-emerald-900"
+                        ? "bg-volt/20 text-ink"
                         : "bg-rose-100 text-rose-900"
                     }`}
                   >
-                    {p.enabled ? "Enabled (Pause)" : "Paused (Enable)"}
+                    {p.action.label}
                   </button>
                 </div>
               ))}
             </section>
           )}
+
+          <section className="ml-card p-4 space-y-2">
+            <h3 className="text-sm font-bold text-stone-900">{console.audit_title}</h3>
+            <Lines lines={console.audit} empty={console.audit_empty} />
+          </section>
         </div>
 
-        {/* Right Column: Full Transaction Detail */}
         <div className="lg:col-span-7">
-          {!detail ? (
+          {!investigation ? (
             <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-10 text-center text-xs text-stone-500">
-              Select a transaction on the left to inspect its 3-dimension state transitions, balanced ledger postings, M5 redacted notification deliveries, and audit trail.
+              Select a transaction to inspect the server-composed investigation
+              pane: three-dimension state, ledger, notifications and audit.
             </div>
           ) : (
-            <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-4">
-              {(() => {
-                const txObj = (detail.transaction || detail) as TransactionView;
-                const ledger = (detail.ledger || []) as Array<
-                  Record<string, unknown>
-                >;
-                const notifs = (detail.notifications || []) as Array<
-                  Record<string, unknown>
-                >;
-                const audits = (detail.audit || []) as Array<
-                  Record<string, unknown>
-                >;
+            <div className="ml-card space-y-4 p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-stone-900">
+                    {investigation.title}
+                  </h3>
+                  <p className="font-mono text-[11px] text-stone-500">
+                    {investigation.subtitle}
+                  </p>
+                </div>
+                <StatusPill status={investigation.status} />
+              </div>
 
-                return (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h3 className="font-mono text-sm font-bold text-stone-900">
-                          {txObj.transaction_id}
-                        </h3>
-                        <p className="text-xs text-stone-500">
-                          Total {formatNaira(txObj.total_minor)} • Method:{" "}
-                          {txObj.delivery_method}
-                          {txObj.credit_on_meter ? " • on the meter" : ""}
-                        </p>
-                      </div>
-                      <StatusPill status={txObj.status} />
-                    </div>
+              <ThreeDimensionStatus
+                payment={investigation.payment_status}
+                vending={investigation.vending_status}
+                delivery={investigation.delivery_status}
+                method={investigation.delivery_method}
+              />
 
-                    <ThreeDimensionStatus
-                      payment={txObj.payment_status}
-                      vending={txObj.vending_status}
-                      delivery={txObj.delivery_status}
-                      method={txObj.delivery_method}
-                    />
+              <Lines lines={investigation.lines} />
 
-                    {/* Operator Action Buttons */}
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => runAdminAction("reconcile")}
-                        className="inline-flex items-center gap-1 rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-semibold text-white"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" /> Reconcile
-                      </button>
-                      <button
-                        type="button"
-                        disabled={txObj.delivery_status !== "FAILED"}
-                        onClick={() => runAdminAction("fallback-to-token")}
-                        title="Only after confirmed remote failure — never while ACCEPTED"
-                        className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Fallback to Token
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleAuditedReveal}
-                        className="inline-flex items-center gap-1 rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50"
-                      >
-                        <Eye className="h-3.5 w-3.5" /> Audited Token Reveal
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => runAdminAction("requeue")}
-                        className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900"
-                      >
-                        Requeue (Admin)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => runAdminAction("refund")}
-                        className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-900"
-                      >
-                        Operator Refund (Admin)
-                      </button>
-                    </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {investigation.actions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    disabled={!action.enabled || busy}
+                    title={action.hint}
+                    onClick={() => runAction(action)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {action.id === "reconcile" ? (
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    ) : null}
+                    {action.label}
+                  </button>
+                ))}
+              </div>
 
-                    {revealedToken && (
-                      <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 font-mono text-sm font-bold text-stone-950">
-                        Audited Reveal: {formatSTSToken(revealedToken)}
-                      </div>
-                    )}
+              {revealedToken && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 font-mono text-sm font-bold text-stone-950">
+                  Audited reveal: {formatSTSToken(revealedToken)}
+                </div>
+              )}
 
-                    {/* Double-Entry Ledger */}
-                    <div className="space-y-1.5 pt-2 border-t border-stone-100">
-                      <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
-                        Balanced Double-Entry Ledger ({ledger.length})
-                      </p>
-                      {ledger.length === 0 ? (
-                        <p className="text-xs text-stone-400">
-                          No ledger entries posted yet.
-                        </p>
-                      ) : (
-                        <pre className="max-h-40 overflow-auto rounded-xl bg-stone-50 p-3 font-mono text-[11px] text-stone-700 border border-stone-200">
-                          {JSON.stringify(ledger, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-
-                    {/* Redacted Notification Deliveries */}
-                    <div className="space-y-1.5 pt-2 border-t border-stone-100">
-                      <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
-                        Redacted Notification Deliveries ({notifs.length})
-                      </p>
-                      {notifs.length === 0 ? (
-                        <p className="text-xs text-stone-400">
-                          No notification rows recorded.
-                        </p>
-                      ) : (
-                        <pre className="max-h-36 overflow-auto rounded-xl bg-stone-50 p-3 font-mono text-[11px] text-stone-700 border border-stone-200">
-                          {JSON.stringify(notifs, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-
-                    {/* Audit Trail */}
-                    <div className="space-y-1.5 pt-2 border-t border-stone-100">
-                      <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
-                        Immutable Audit Trail ({audits.length})
-                      </p>
-                      <pre className="max-h-40 overflow-auto rounded-xl bg-stone-50 p-3 font-mono text-[11px] text-stone-700 border border-stone-200">
-                        {JSON.stringify(audits, null, 2)}
-                      </pre>
-                    </div>
-                  </>
-                );
-              })()}
+              <div className="space-y-1.5 pt-2 border-t border-stone-100">
+                <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                  Ledger
+                </p>
+                <Lines lines={investigation.ledger} empty={investigation.ledger_empty} />
+              </div>
+              <div className="space-y-1.5 pt-2 border-t border-stone-100">
+                <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                  Notifications
+                </p>
+                <Lines
+                  lines={investigation.notifications}
+                  empty={investigation.notifications_empty}
+                />
+              </div>
+              <div className="space-y-1.5 pt-2 border-t border-stone-100">
+                <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                  History
+                </p>
+                <Lines lines={investigation.history} empty="No state transitions yet." />
+              </div>
+              <div className="space-y-1.5 pt-2 border-t border-stone-100">
+                <p className="text-xs font-bold uppercase tracking-wider text-stone-500">
+                  Audit
+                </p>
+                <Lines lines={investigation.audit} empty={investigation.audit_empty} />
+              </div>
             </div>
           )}
         </div>

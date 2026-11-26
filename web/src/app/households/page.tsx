@@ -90,11 +90,11 @@ export default function HouseholdsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-stone-900 flex items-center gap-2">
-          <Home className="h-5 w-5 text-emerald-700" />
+        <h1 className="font-display flex items-center gap-2 text-3xl font-semibold text-paper">
+          <Home className="h-5 w-5 text-volt" />
           Household
         </h1>
-        <p className="mt-1 text-sm text-stone-600 max-w-2xl">
+        <p className="mt-2 max-w-2xl text-sm text-white/55">
           Your meter, who may buy, someone else can pay. Verified ownership first —
           knowing a meter number is not enough. Invite a flatmate as{" "}
           <span className="font-mono">bola</span> then switch persona to accept.
@@ -105,7 +105,7 @@ export default function HouseholdsPage() {
         <div
           className={`rounded-xl border px-4 py-2.5 text-sm ${
             banner.type === "ok"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              ? "border-stone-200 bg-volt/20 text-ink"
               : "border-rose-200 bg-rose-50 text-rose-900"
           }`}
         >
@@ -115,10 +115,10 @@ export default function HouseholdsPage() {
 
       <form
         onSubmit={create}
-        className="rounded-2xl border border-stone-200 bg-white p-5 shadow-xs space-y-3"
+        className="ml-card space-y-3 p-5"
       >
         <h2 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-          <Plus className="h-4 w-4 text-emerald-600" />
+          <Plus className="h-4 w-4 text-ink" />
           New household
         </h2>
         <p className="text-xs text-stone-500">
@@ -137,7 +137,7 @@ export default function HouseholdsPage() {
           <button
             type="submit"
             disabled={busy}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt hover:bg-black disabled:opacity-50"
           >
             Create
           </button>
@@ -146,7 +146,7 @@ export default function HouseholdsPage() {
 
       {pending.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-sm font-bold text-stone-800">Pending invites</h2>
+          <h2 className="text-sm font-semibold text-white/70">Pending invites</h2>
           {pending.map((v) => (
             <div
               key={v.household.household_id}
@@ -163,7 +163,7 @@ export default function HouseholdsPage() {
                   type="button"
                   disabled={busy}
                   onClick={() => respond(v.household.household_id, true)}
-                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white"
+                  className="inline-flex items-center gap-1 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-volt"
                 >
                   <Check className="h-3.5 w-3.5" /> Accept
                 </button>
@@ -182,9 +182,9 @@ export default function HouseholdsPage() {
       )}
 
       <section className="space-y-2">
-        <h2 className="text-sm font-bold text-stone-800">Your households</h2>
+        <h2 className="text-sm font-semibold text-white/70">Your households</h2>
         {active.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">
+          <div className="rounded-[24px] border border-dashed border-white/15 bg-white/5 p-8 text-center text-sm text-white/50">
             None yet. Create one, or accept an invite from Ada / a landlord.
           </div>
         ) : (
@@ -193,7 +193,7 @@ export default function HouseholdsPage() {
               <Link
                 key={v.household.household_id}
                 href={`/households/${v.household.household_id}`}
-                className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs hover:border-emerald-300 transition"
+                className="ml-card p-4 hover:border-ink/20 transition"
               >
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-semibold text-stone-900">{v.household.name}</p>

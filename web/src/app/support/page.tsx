@@ -198,14 +198,14 @@ export default function SupportPage() {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-      <aside className="rounded-2xl border border-stone-200 bg-white p-4 shadow-xs">
+      <aside className="ml-card p-4">
         <div className="mb-3 flex items-center justify-between">
           <h1 className="text-sm font-semibold text-stone-800">Support</h1>
           <button
             type="button"
             onClick={startThread}
             disabled={busy}
-            className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            className="rounded-full bg-ink px-2.5 py-1 text-xs font-semibold text-volt disabled:opacity-50"
           >
             New chat
           </button>
@@ -217,7 +217,7 @@ export default function SupportPage() {
                 type="button"
                 onClick={() => setActive(th)}
                 className={`w-full rounded-xl px-3 py-2 text-left text-xs ${
-                  active?.id === th.id ? "bg-emerald-50 text-emerald-900" : "hover:bg-stone-50"
+                  active?.id === th.id ? "bg-volt/20 text-ink" : "hover:bg-stone-50"
                 }`}
               >
                 <div className="font-medium">
@@ -233,11 +233,11 @@ export default function SupportPage() {
         </ul>
       </aside>
 
-      <section className="flex min-h-[520px] flex-col rounded-2xl border border-stone-200 bg-white shadow-xs">
+      <section className="flex min-h-[520px] flex-col ml-card shadow-xs">
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 px-5 py-3">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <MessageCircle className="h-4 w-4 text-emerald-600" />
+              <MessageCircle className="h-4 w-4 text-ink" />
               {active?.mode === "HUMAN" ? "Chat with a person" : "Chat with Meterly Agent"}
             </div>
             <p className="mt-0.5 text-[11px] text-stone-500">
@@ -251,7 +251,7 @@ export default function SupportPage() {
               type="button"
               onClick={escalate}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-volt/20 px-3 py-1.5 text-xs font-semibold text-ink hover:bg-volt/20"
             >
               <Lock className="h-3.5 w-3.5" />
               Talk to a person
@@ -262,7 +262,7 @@ export default function SupportPage() {
         {banner && (
           <div
             className={`mx-5 mt-3 rounded-lg px-3 py-2 text-xs ${
-              banner.type === "ok" ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"
+              banner.type === "ok" ? "bg-volt/20 text-ink" : "bg-rose-50 text-rose-800"
             }`}
           >
             {banner.text}
@@ -272,7 +272,7 @@ export default function SupportPage() {
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {!active && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-stone-500">
-              <Sparkles className="h-6 w-6 text-emerald-500" />
+              <Sparkles className="h-6 w-6 text-volt" />
               Ask the agent about tokens, remote credit, Pay-for-Me or your purchases — or talk to a person.
             </div>
           )}
@@ -281,7 +281,7 @@ export default function SupportPage() {
               key={m.id}
               className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
                 m.sender_kind === "CUSTOMER"
-                  ? "ml-auto bg-emerald-600 text-white"
+                  ? "ml-auto bg-ink text-volt"
                   : m.sender_kind === "SYSTEM"
                   ? "mx-auto bg-stone-100 text-stone-600 text-xs"
                   : "bg-stone-100 text-stone-800"
@@ -316,12 +316,12 @@ export default function SupportPage() {
                 : "Ask the Meterly Agent…"
             }
             disabled={!active || busy}
-            className="flex-1 rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-emerald-400"
+            className="flex-1 rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:border-ink"
           />
           <button
             type="submit"
             disabled={!active || busy || !draft.trim()}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-40"
+            className="rounded-full bg-ink px-4 py-2 text-sm font-semibold text-volt hover:bg-volt disabled:opacity-40"
           >
             Send
           </button>

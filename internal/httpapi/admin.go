@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -18,6 +19,7 @@ import (
 // action needs a reason and is audited.
 func (s *Server) adminRoutes(mux *patternMux) {
 	op, admin := s.authed(auth.RoleOperator, false), s.authed(auth.RoleAdmin, false)
+	mux.Handle("GET /v1/admin/console", op(s.adminConsole))
 	mux.Handle("GET /v1/admin/transactions", op(s.adminSearch))
 	mux.Handle("GET /v1/admin/transactions/{transaction_id}", op(s.adminDetail))
 	mux.Handle("POST /v1/admin/transactions/{transaction_id}/reconcile", op(s.adminAction(s.O.Reconcile)))
@@ -73,6 +75,15 @@ func adminView(t *tx.Transaction) map[string]any {
 	// Never the token itself; revealing it is a separate audited action.
 	v["token_available"] = len(t.TokenCiphertext) > 0
 	return v
+}
+
+func (s *Server) adminConsole(w http.ResponseWriter, r *http.Request) {
+	c, err := s.O.AdminConsole(r.Context(), callerOf(r).Principal.Has(auth.RoleAdmin))
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 200, c)
 }
 
 func (s *Server) adminSearch(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +163,7 @@ func (s *Server) adminDetail(w http.ResponseWriter, r *http.Request) {
 		"events":        d.Events,
 		"audit":         d.Audit,
 		"notifications": d.Notifications,
+		"investigation": orchestrator.InvestigationFrom(d, callerOf(r).Principal.Has(auth.RoleAdmin)),
 	})
 }
 
