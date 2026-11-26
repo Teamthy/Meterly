@@ -44,7 +44,7 @@ This maps the *Electricity Technology Platform: Product Requirements, Architectu
 12. ~~Meterly Offline USSD + WhatsApp purchase channels (F5)~~ (M11 done: channel-agnostic `internal/conversation` state machine with DB-persisted `conversation_sessions`, Africa's Talking USSD adapter enforcing IP allowlist + HMAC + `<= 182` char `CON`/`END` + ~180s session TTL with zero orphan transactions, Meta WhatsApp Cloud API adapter with `hub.verify_token` + `X-Hub-Signature-256` + 24h customer-service window free-form text vs approved template fallback + `STOP` opt-out, HMAC phone identity with OIDC auto-link + SMS OTP link + SIM-swap inactivity reverification + daily spend caps, deterministic `ussd:<sessionId>:<step>` / `whatsapp:<sessionId>:<step>` orchestrator idempotency, audited `<= 3/day` caller-scoped `"Last token"` resends, and `FEATURE_USSD` / `FEATURE_WHATSAPP` defaulting to `false`).
 13. ~~Credit-on-meter delivery plane (cohorts, `heshttp` adapter, confirmation webhook, hide STS token while remote)~~ (batch 1). Partner-specific Hexing/Conlog/Mojec translator **only with real partner docs**. Live sandbox verification of Paystack / VTpass / Africa’s Talking / Resend / WhatsApp.
 14. ~~Support chat (Meterly Agent + E2E human operators)~~ (`FEATURE_SUPPORT`, `/support`, `/admin/support`, device-local P-256 ECDH). Hosted API on Render against Supabase still waits on a Render dashboard deploy (`docs/DEPLOY.md`).
-15. Web UI for households and token send (`web/` APIs exist; no screens yet).
+15. ~~Web UI for households and token send~~ (batch 2: `/households`, ownership verify, invite/accept, STS send SMS/email/WhatsApp).
 
 ## Not engineering problems (blocking for production)
 

@@ -18,6 +18,7 @@ import {
   MeterValidationResult,
   NotificationPreferences,
   TokenRevealResponse,
+  TokenShare,
   TransactionView,
 } from "@/lib/types";
 import {
@@ -102,6 +103,9 @@ export default function ConsumerHubPage() {
     Record<string, TokenRevealResponse>
   >({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [tokenShares, setTokenShares] = useState<Record<string, TokenShare[]>>({});
+  const [sendDest, setSendDest] = useState<Record<string, string>>({});
+  const [sendBusy, setSendBusy] = useState<string | null>(null);
   const [saveCardTxnId, setSaveCardTxnId] = useState<string | null>(null);
   const [cardConsent, setCardConsent] = useState(false);
 
@@ -320,6 +324,18 @@ export default function ConsumerHubPage() {
     }
   };
 
+  const loadTokenShares = async (txnId: string) => {
+    try {
+      const res = await apiFetch<{ data: TokenShare[] }>(
+        `/v1/electricity/transactions/${txnId}/token/shares`,
+        { token }
+      );
+      setTokenShares((prev) => ({ ...prev, [txnId]: res.data || [] }));
+    } catch {
+      // listing is optional
+    }
+  };
+
   const handleRevealToken = async (txnId: string) => {
     try {
       const res = await apiFetch<TokenRevealResponse>(
@@ -327,11 +343,42 @@ export default function ConsumerHubPage() {
         { token }
       );
       setRevealedTokens((prev) => ({ ...prev, [txnId]: res }));
+      await loadTokenShares(txnId);
     } catch (err) {
       setBanner({
         type: "err",
         text: err instanceof Error ? err.message : "Token not available",
       });
+    }
+  };
+
+  const handleSendToken = async (
+    txnId: string,
+    channel: "SMS" | "EMAIL" | "WHATSAPP"
+  ) => {
+    const dest = (sendDest[txnId] || "").trim();
+    setSendBusy(`${txnId}:${channel}`);
+    try {
+      await apiFetch(`/v1/electricity/transactions/${txnId}/token/shares`, {
+        method: "POST",
+        token,
+        idempotencyKey: newIdempotencyKey("send"),
+        body: dest ? { channel, destination: dest } : { channel },
+      });
+      await loadTokenShares(txnId);
+      setBanner({
+        type: "ok",
+        text: dest
+          ? `Third-party ${channel} send accepted (requires FEATURE_GIFT_SMS in prod).`
+          : `Token queued to your verified ${channel}. Delivery is tracked separately.`,
+      });
+    } catch (err) {
+      setBanner({
+        type: "err",
+        text: err instanceof Error ? err.message : "Send failed",
+      });
+    } finally {
+      setSendBusy(null);
     }
   };
 
@@ -979,7 +1026,9 @@ export default function ConsumerHubPage() {
                 const meterObj = meters.find((m) => m.meter_id === t.meter_id);
                 const revealed = revealedTokens[t.transaction_id];
                 const canRevealToken =
-                  t.delivery_method === "TOKEN" && t.vending_status === "SUCCEEDED";
+                  t.delivery_method === "TOKEN" &&
+                  (t.token_available === true ||
+                    t.vending_status === "CONFIRMED");
 
                 return (
                   <div
@@ -1059,6 +1108,46 @@ export default function ConsumerHubPage() {
                         <p className="text-[11px] text-emerald-900/80">
                           {revealed.note}
                         </p>
+                        <div className="border-t border-emerald-200/80 pt-2 space-y-2">
+                          <p className="text-[11px] font-semibold text-emerald-950">
+                            Send this token (self = your verified contact; other number needs gift SMS legal flag)
+                          </p>
+                          <input
+                            value={sendDest[t.transaction_id] || ""}
+                            onChange={(e) =>
+                              setSendDest((prev) => ({
+                                ...prev,
+                                [t.transaction_id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Leave empty for yourself, or +234… / email"
+                            className="w-full rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-mono"
+                          />
+                          <div className="flex flex-wrap gap-1.5">
+                            {(["SMS", "EMAIL", "WHATSAPP"] as const).map((ch) => (
+                              <button
+                                key={ch}
+                                type="button"
+                                disabled={sendBusy === `${t.transaction_id}:${ch}`}
+                                onClick={() => handleSendToken(t.transaction_id, ch)}
+                                className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-600/25 hover:bg-emerald-100 disabled:opacity-50"
+                              >
+                                {ch}
+                              </button>
+                            ))}
+                          </div>
+                          {(tokenShares[t.transaction_id] || []).length > 0 && (
+                            <ul className="text-[11px] text-emerald-950/80 space-y-0.5">
+                              {(tokenShares[t.transaction_id] || []).map((s) => (
+                                <li key={s.share_id} className="font-mono">
+                                  {s.channel}
+                                  {s.destination_masked ? ` → ${s.destination_masked}` : ""}{" "}
+                                  · {new Date(s.recorded_at).toLocaleString()}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       </div>
                     )}
 

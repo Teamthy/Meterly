@@ -8,6 +8,7 @@ import {
   Zap,
   Share2,
   Users,
+  Home,
   CalendarClock,
   Building2,
   Smartphone,
@@ -19,6 +20,7 @@ import {
 
 const NAV_ITEMS = [
   { href: "/", label: "On the meter", icon: Zap },
+  { href: "/households", label: "Household", icon: Home },
   { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2 },
   { href: "/pots", label: "Split the Meter", icon: Users },
   { href: "/autopower", label: "AutoPower", icon: CalendarClock },

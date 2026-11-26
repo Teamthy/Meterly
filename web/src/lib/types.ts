@@ -156,6 +156,70 @@ export interface TransactionView {
   refund_reference?: string;
   refund_amount_minor?: number;
   token_available?: boolean;
+  credit_on_meter?: boolean;
+}
+
+export type HouseholdRole =
+  | "OWNER"
+  | "ADMINISTRATOR"
+  | "MEMBER"
+  | "VIEWER"
+  | "RECIPIENT";
+
+export type HouseholdMemberStatus = "INVITED" | "ACTIVE" | "DECLINED" | "REVOKED";
+
+export interface Household {
+  household_id: string;
+  owner_user_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HouseholdMember {
+  member_id: string;
+  household_id: string;
+  user_id: string;
+  role: HouseholdRole;
+  status: HouseholdMemberStatus;
+  invited_by?: string;
+  invited_at: string;
+  accepted_at?: string;
+  revoked_at?: string;
+}
+
+export interface HouseholdMeterLink {
+  household_id: string;
+  meter_id: string;
+  added_by: string;
+  created_at: string;
+}
+
+export interface HouseholdView {
+  household: Household;
+  members: HouseholdMember[];
+  meters: HouseholdMeterLink[];
+  my_role?: HouseholdRole;
+  my_status?: HouseholdMemberStatus;
+}
+
+export interface MeterOwnership {
+  ownership_id: string;
+  meter_id: string;
+  user_id: string;
+  method: "ACCOUNT_NAME_MATCH" | "OPERATOR_ATTESTATION";
+  reason?: string;
+  verified_by: string;
+  verified_at: string;
+  revoked_at?: string;
+}
+
+export interface TokenShare {
+  share_id: string;
+  transaction_id: string;
+  channel: "COPY" | "SMS" | "EMAIL" | "WHATSAPP";
+  recorded_at: string;
+  destination_masked?: string;
 }
 
 export interface TokenRevealResponse {
