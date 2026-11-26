@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/components/AuthContext";
 import {
   apiFetch,
@@ -657,30 +658,53 @@ export default function ConsumerHubPage() {
 
   return (
     <div className="space-y-6">
-      {/* Hero Banner */}
-      <div className="rounded-2xl bg-gradient-to-r from-[#0B1F1A] via-[#113128] to-[#163D32] p-6 text-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="max-w-2xl space-y-1.5">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 px-3 py-0.5 text-xs font-medium text-emerald-300 border border-emerald-400/25">
-              <Radio className="h-3 w-3" /> Credit on the meter — not a code to type
+      <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[#111318] p-6 text-paper sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-6">
+          <div className="max-w-xl">
+            <span className="ml-chip">
+              <Radio className="h-3 w-3" /> On the meter
             </span>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Units land on the meter.
+            <h1 className="font-display mt-4 text-4xl font-semibold leading-[1.02] sm:text-5xl">
+              {selectedUsage?.remaining_kwh != null
+                ? `${selectedUsage.remaining_kwh}`
+                : "Units land here."}
+              {selectedUsage?.remaining_kwh != null && (
+                <span className="ml-2 text-2xl font-medium text-white/40 sm:text-3xl">kWh</span>
+              )}
             </h1>
-            <p className="text-sm text-stone-300 leading-relaxed">
-              On a compatible smart meter we push credit remotely. You do not climb a ladder or punch 20 digits.
-              We only say it is delivered when the meter confirms — network &quot;accepted&quot; is not enough.
-              Keypad meters still get an STS token as fallback.
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-white/55">
+              {selectedUsage?.estimated_hours_remaining != null
+                ? `About ${selectedUsage.estimated_hours_remaining} hours left. We only call it delivered when the meter confirms.`
+                : "We push credit to a compatible smart meter. Network “accepted” is not delivered. Keypad meters still get an STS token."}
             </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Link
+                href="/autopower"
+                className="rounded-full bg-volt px-4 py-2 text-xs font-semibold text-volt-ink"
+              >
+                Set auto-renew
+              </Link>
+              <button
+                type="button"
+                onClick={loadAll}
+                className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-xs font-semibold text-paper"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={loadAll}
-            className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-semibold text-white border border-white/15 hover:bg-white/15"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            Refresh State
-          </button>
+          {selectedMeter && (
+            <div className="min-w-[200px] rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/70">
+              <p className="font-mono text-paper">{selectedMeter.masked_meter_number}</p>
+              <p className="mt-1">{selectedMeter.disco} · {selectedMeter.label || selectedMeter.meter_type}</p>
+              {selectedUsage?.consumption && (
+                <p className="mt-2 text-white/45">
+                  {selectedUsage.consumption.kwh_per_day} kWh/day
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -831,7 +855,7 @@ export default function ConsumerHubPage() {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 rounded-xl bg-[#0B1F1A] px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-950"
+                  className="flex-1 rounded-full bg-ink px-4 py-2 text-xs font-semibold text-volt"
                 >
                   Save Meter
                 </button>
@@ -1135,7 +1159,7 @@ export default function ConsumerHubPage() {
               <button
                 type="submit"
                 disabled={purchasing || !selectedMeterId}
-                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
+                className="w-full rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt disabled:opacity-50"
               >
                 {purchasing
                   ? confirmQuote

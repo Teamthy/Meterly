@@ -1,10 +1,54 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-manrope), "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-syne), var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #08090b;
+  --color-paper: #f4f1ea;
+  --color-volt: #d8ff3e;
+  --color-volt-ink: #10140a;
+}
+
 @layer base {
+  html {
+    background: var(--color-ink);
+  }
   body {
-    background-color: #f7f8f5;
-    color: #1c1917;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    background: var(--color-ink);
+    color: #1a1915;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
     -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.04em;
+  }
+}
+
+@layer components {
+  .ml-shell {
+    min-height: 100dvh;
+    background:
+      radial-gradient(1200px 500px at 10% -10%, rgba(216, 255, 62, 0.08), transparent 55%),
+      radial-gradient(800px 400px at 100% 0%, rgba(80, 140, 255, 0.08), transparent 50%),
+      var(--color-ink);
+    color: var(--color-paper);
+  }
+  .ml-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    border: 1px solid rgba(216, 255, 62, 0.35);
+    background: rgba(216, 255, 62, 0.1);
+    padding: 0.2rem 0.65rem;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-volt);
   }
 }

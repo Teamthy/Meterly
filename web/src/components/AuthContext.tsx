@@ -221,16 +221,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
 
       {checkout && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-stone-100 bg-[#0B1F1A] px-5 py-4 text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-white/10 bg-paper shadow-2xl">
+            <div className="flex items-center justify-between bg-ink px-5 py-4 text-paper">
               <div className="flex items-center gap-2.5">
-                <ShieldCheck className="h-5 w-5 text-emerald-400" />
+                <ShieldCheck className="h-5 w-5 text-volt" />
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-emerald-300/90">
-                    CBN-Licensed PSP Checkout
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-volt">
+                    CBN-licensed PSP
                   </p>
-                  <h3 className="text-sm font-semibold">{checkout.title}</h3>
+                  <h3 className="font-display text-base font-semibold">{checkout.title}</h3>
                 </div>
               </div>
               <button
@@ -297,7 +297,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     type="button"
                     disabled={busy}
                     onClick={() => settleMockPayment(true)}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
+                    className="flex w-full items-center justify-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt disabled:opacity-50"
                   >
                     <CreditCard className="h-4 w-4" />
                     {busy
@@ -319,7 +319,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   href={checkout.checkoutUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs transition hover:bg-emerald-700"
+                  className="flex w-full items-center justify-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-volt"
                 >
                   Continue to Paystack Checkout
                   <ExternalLink className="h-4 w-4" />
