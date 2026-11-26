@@ -205,6 +205,19 @@ type RemoteCreditProvider interface {
 	GetCreditStatus(ctx context.Context, idempotencyKey string) (RemoteCreditResult, error)
 }
 
+// RemoteCreditWebhook is a hint that a HES may have moved a credit command.
+// Callers MUST still GetCreditStatus; never trust a status in the body.
+type RemoteCreditWebhook struct {
+	IdempotencyKey string
+	Relevant       bool
+}
+
+// RemoteCreditWebhookParser is optional. Adapters that can receive partner
+// callbacks implement it; in-process mocks used only in unit tests may not.
+type RemoteCreditWebhookParser interface {
+	ParseWebhook(h http.Header, body []byte) (RemoteCreditWebhook, error)
+}
+
 // ---- Remote meter reading (AMI / HES) -------------------------------------
 
 // ErrReadingUnavailable means no confirmed meter balance reading is available.

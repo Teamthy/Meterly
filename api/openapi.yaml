@@ -36,7 +36,7 @@ tags:
   - name: OfflineChannels
     description: Meterly Offline USSD (`*xxx#`) and WhatsApp purchase channels, webhook authentication, and SMS OTP phone linking.
   - name: Webhooks
-    description: Signature-verified payment provider webhooks.
+    description: Signature-verified payment and remote-credit (HES) provider webhooks.
   - name: Support
     description: Meterly Agent plus end-to-end encrypted human support chat. Agent messages are processed by Meterly; human messages are ciphertext the server cannot read.
   - name: Admin
@@ -607,6 +607,48 @@ paths:
       operationId: receivePaymentWebhook
       tags: [Webhooks]
       summary: Receive an HMAC-authenticated payment webhook hint and trigger server-side verification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Webhook acknowledged (`received` or `ignored`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/webhooks/remote-credit/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Active remote-credit provider slug (`mockhes` or `heshttp`).
+        schema:
+          type: string
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: receiveRemoteCreditWebhook
+      tags: [Webhooks]
+      summary: Receive an HMAC-authenticated HES confirmation hint and trigger GetCreditStatus
+      description: |
+        The body is never trusted for delivery outcome. Meterly looks up the
+        transaction from `idempotency_key` (`credit:<txn-uuid>`) and queries
+        the HES. ACCEPTED is not delivered; only CONFIRMED means credit is on
+        the meter.
       security: []
       requestBody:
         required: true
@@ -2323,6 +2365,93 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/remote-credit/cohorts:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: adminListRemoteCreditCohorts
+      tags: [Admin]
+      summary: List operator-attested AMI remote-credit cohorts
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Cohort list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: adminCreateRemoteCreditCohort
+      tags: [Admin]
+      summary: Attest an AMI meter cohort (DisCo + number prefix)
+      description: |
+        Production remote eligibility comes from this matrix plus a live HES
+        CheckEligibility. Meter-number prefixes must not be hard-coded.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [disco, number_prefix, evidence]
+              properties:
+                disco: { type: string }
+                number_prefix: { type: string }
+                manufacturer: { type: string }
+                evidence: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        "201":
+          description: Cohort created.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/remote-credit/cohorts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: adminRevokeRemoteCreditCohort
+      tags: [Admin]
+      summary: Revoke an AMI remote-credit cohort
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Cohort revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/orgs:
     post:
       operationId: createOrg
@@ -3235,6 +3364,7 @@ components:
         - TRANSACTION_NOT_FOUND
         - PAYMENT_UNCONFIRMED
         - DELIVERY_FAILED
+        - CREDIT_ON_METER
         - IDEMPOTENCY_CONFLICT
         - PROVIDER_NOT_FOUND
         - INVALID_SIGNATURE

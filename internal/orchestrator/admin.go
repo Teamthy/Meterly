@@ -46,6 +46,9 @@ func (o *Orchestrator) Token(ctx context.Context, customerID string, id uuid.UUI
 	if t.CustomerID != customerID {
 		return "", nil, tx.ErrNotFound // do not reveal existence
 	}
+	if t.DeliveryMethod == tx.MethodRemote {
+		return "", t, ErrCreditOnMeter
+	}
 	if t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 || t.DeliveryMethod != tx.MethodToken {
 		return "", t, ErrTokenUnavailable
 	}

@@ -72,5 +72,5 @@ METERLY_API_ORIGIN=https://meterly-api.onrender.com
 ## 5. What this hosted stack cannot do yet
 
 - Live Paystack / VTpass / Africa’s Talking / WhatsApp / OIDC — still fakes in `MODE=dev` until keys are pasted.
-- Remote meter credit (AMI/HES) — no partner docs, so `REMOTE_PROVIDER=none`.
+- Remote meter credit — `REMOTE_PROVIDER=none` until a partner implements Meterly's `heshttp` gateway (or we write a documented translator). Cohorts and confirmation webhooks are in code.
 - Production feature flags (`FEATURE_SPLIT_METER`, gift SMS, USSD, …) pending legal sign-off.

@@ -30,6 +30,7 @@ import (
 	"github.com/teamthy/meterly/internal/platform/config"
 	"github.com/teamthy/meterly/internal/platform/migrate"
 	"github.com/teamthy/meterly/internal/providers"
+	"github.com/teamthy/meterly/internal/providers/heshttp"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/providers/paystack"
 	"github.com/teamthy/meterly/internal/providers/vtpass"
@@ -72,6 +73,7 @@ type App struct {
 	MockEmail    *notifications.MockSender
 	MockWhatsApp *notifications.MockSender
 	payments     providers.PaymentProvider
+	remoteRaw    providers.RemoteCreditProvider
 	authn        auth.Authenticator
 	wrapPublic   func(http.Handler) http.Handler
 
@@ -174,10 +176,20 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	vend := observability.WrapVendingProvider(rawVend, a.Metrics, a.Tracer)
 
 	var rawRemote providers.RemoteCreditProvider = opts.RemoteProvider
-	if rawRemote == nil && cfg.RemoteProvider == "mock" {
-		a.mockRemote = mock.NewRemoteCredit()
-		rawRemote = a.mockRemote
+	if rawRemote == nil {
+		switch cfg.RemoteProvider {
+		case "mock":
+			a.mockRemote = mock.NewRemoteCredit()
+			rawRemote = a.mockRemote
+		case "http":
+			rc, err := heshttp.New(heshttp.Config{BaseURL: cfg.RemoteHESBaseURL, HMACSecret: cfg.RemoteHESHMACSecret})
+			if err != nil {
+				return fail(err)
+			}
+			rawRemote = rc
+		}
 	}
+	a.remoteRaw = rawRemote
 	remote := observability.WrapRemoteCreditProvider(rawRemote, a.Metrics, a.Tracer)
 
 	var rawReadings providers.MeterReadingProvider = opts.MeterReadingProvider
@@ -411,6 +423,7 @@ func (a *App) Handler() http.Handler {
 		SupportDisabled:    !a.Cfg.FeatureSupport,
 		HouseholdsDisabled: !a.Cfg.FeatureHouseholds,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
+		Remote:             a.remoteRaw,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}
 	h := s.Routes()

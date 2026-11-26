@@ -21,7 +21,7 @@
 | 4 | After keys: `MODE=staging`, `VENDING_PROVIDER=vtpass`, `PAYMENT_PROVIDER=paystack`, `REMOTE_PROVIDER=none` | Human | VTpass + Paystack sandbox keys |
 | 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
 | 6 | Web UI for households + token send | Eng | APIs exist; `web/` has no household screens yet |
-| 7 | Real AMI/HES adapter (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — UI is already remote-first |
+| 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook are in |
 | 8 | Distributed rate limits (Redis) | Eng | only if >1 API replica |
 | 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
 
@@ -221,7 +221,7 @@ Purchaser **self-send** of a token to their own verified SMS/email/WhatsApp does
 
 ### Engineering, blocked on documents / partners
 
-- AMI/HES remote-credit adapter — **interface + mock only**. No partner API. Do not invent.
+- Vendor HES translator (Hexing/Conlog/Mojec) — **do not invent**. `REMOTE_PROVIDER=http` (`heshttp`) plus `remote_credit_cohorts` and `POST /v1/webhooks/remote-credit/{provider}` are the production plane. Point them at a partner gateway when docs exist.
 - Benin Electric and any undocumented DisCo.
 - Native mobile apps.
 

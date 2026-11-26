@@ -59,7 +59,14 @@ Public docs only: [authentication](https://www.vtpass.com/documentation/authenti
 - **5xx, timeout, empty or unparseable body** → `ErrAmbiguous`. The stateful fake applies the pay then returns 500 so Resume can requery the token.
 - **Amount** is whole naira (`minor/100`). **Phone** is `VTPASS_DEFAULT_PHONE` (required); VTpass pay needs an MSISDN.
 - **DisCo codes** map only to documented `serviceID`s. Unknown codes are rejected locally.
-- **AMI/HES is still `none`.** No undocumented remote-credit API is invented.
+- **AMI/HES is still not a vendor client.** No Hexing/Conlog/Mojec API is invented. `REMOTE_PROVIDER=http` speaks Meterly's signed HES gateway contract (`internal/providers/heshttp`). `REMOTE_PROVIDER=none` in staging/production until a partner implements that contract or we write a documented translator.
+
+## Credit on the meter (STS-over-AMI)
+
+- **Licensed vend still happens first.** VTpass (or mock) mints an STS token; the HES injects that token into the meter. The purchaser does not see a keypad token while `delivery_method=REMOTE`. Operator `FallbackToToken` after a **confirmed** remote failure releases the same token.
+- **ACCEPTED ≠ delivered.** Only meter confirmation (`CONFIRMED`) sets `credit_on_meter`. HES webhooks are a hint: we always `GetCreditStatus` by `credit:<txn-uuid>`.
+- **Capability truth:** `supported` comes from the vending adapter **or** an operator-attested `remote_credit_cohorts` row (DisCo + digit prefix + evidence). `authorised` requires a live RemoteCreditProvider and `CheckEligibility`. Application code must not hard-code `7…` as production AMI. Mock vending may still report prefix 7 as supported.
+- **Lost accepted command:** if the HES later returns NOT_FOUND for an ACCEPTED credit, MANUAL_REVIEW — never auto re-send (double-credit).
 
 ## Auth, admin and audit (M4)
 
