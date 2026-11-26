@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { apiFetch, extractMockPayRef, formatNaira } from "@/lib/api";
+import { apiFetch, extractMockPayRef, formatNaira, setDefaultIdentityHeaders } from "@/lib/api";
 import { ShieldCheck, CreditCard, AlertTriangle, X, ExternalLink } from "lucide-react";
 
 export interface Persona {
@@ -9,6 +9,8 @@ export interface Persona {
   label: string;
   token: string;
   email: string;
+  phone: string;
+  displayName: string;
   roleBadge: string;
 }
 
@@ -18,6 +20,8 @@ export const PERSONAS: Persona[] = [
     label: "Adaeze (Customer)",
     token: "ada",
     email: "ada@meterly.ng",
+    phone: "+2348011111111",
+    displayName: "Adaeze Okafor",
     roleBadge: "Customer",
   },
   {
@@ -25,6 +29,8 @@ export const PERSONAS: Persona[] = [
     label: "Bola (Flatmate)",
     token: "bola",
     email: "bola@meterly.ng",
+    phone: "+2348022222222",
+    displayName: "Bola Adeyemi",
     roleBadge: "Customer",
   },
   {
@@ -32,6 +38,8 @@ export const PERSONAS: Persona[] = [
     label: "Chief Tunde (Landlord)",
     token: "landlord-tunde",
     email: "tunde@lekkiestates.ng",
+    phone: "+2348033333333",
+    displayName: "Chief Tunde",
     roleBadge: "Org Owner",
   },
   {
@@ -39,6 +47,8 @@ export const PERSONAS: Persona[] = [
     label: "Dayo (Estate Manager)",
     token: "manager-dayo",
     email: "dayo@lekkiestates.ng",
+    phone: "+2348044444444",
+    displayName: "Dayo Balogun",
     roleBadge: "Org Manager",
   },
   {
@@ -46,6 +56,8 @@ export const PERSONAS: Persona[] = [
     label: "Kemi (Operator)",
     token: "operator:kemi",
     email: "kemi.ops@meterly.ng",
+    phone: "+2348055555555",
+    displayName: "Kemi Ops",
     roleBadge: "Staff Operator",
   },
   {
@@ -53,6 +65,8 @@ export const PERSONAS: Persona[] = [
     label: "Segun (Admin)",
     token: "admin:segun",
     email: "segun.admin@meterly.ng",
+    phone: "+2348066666666",
+    displayName: "Segun Admin",
     roleBadge: "Staff Admin",
   },
 ];
@@ -120,6 +134,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const activePersona = PERSONAS.find((p) => p.token === token) || null;
+
+  useEffect(() => {
+    const headers: Record<string, string> = {};
+    if (email) headers["X-Dev-Verified-Email"] = email;
+    if (activePersona?.phone) headers["X-Dev-Verified-Phone"] = activePersona.phone;
+    if (activePersona?.displayName) headers["X-Dev-Display-Name"] = activePersona.displayName;
+    setDefaultIdentityHeaders(headers);
+  }, [token, email, activePersona]);
 
   const settleMockPayment = async (success: boolean) => {
     if (!checkout) return;

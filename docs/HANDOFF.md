@@ -20,7 +20,7 @@
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | step 2 |
 | 4 | After keys: `MODE=staging`, `VENDING_PROVIDER=vtpass`, `PAYMENT_PROVIDER=paystack`, `REMOTE_PROVIDER=none` | Human | VTpass + Paystack sandbox keys |
 | 5 | Live sandbox verification (Paystack, VTpass, AT, Resend, WhatsApp, OIDC) | Eng + keys | outbound to those hosts; this Arena sandbox cannot call them |
-| 6 | Web UI for households + token send | Eng | APIs exist; `web/` has no household screens yet |
+| 6 | ~~Web UI for households + token send~~ | Eng | `/households` + STS send on Buy Power |
 | 7 | Partner-specific HES translator (Hexing/Conlog/Mojec/DisCo) | Eng | **partner API docs only** — Meterly `heshttp` gateway + cohorts + confirmation webhook are in |
 | 8 | Distributed rate limits (Redis) | Eng | only if >1 API replica |
 | 9 | Legal sign-off before prod flags | Founder/legal | NDPA / NCC / CBN |
@@ -73,7 +73,7 @@ internal/tokenshares    COPY metadata + send channels (no raw tokens)
 internal/notificationservice   outbox → deliveries; TOKEN_SHARE send path
 internal/httpapi        /v1 REST + admin + public pay/pots + channels + households
 api/openapi.yaml        OpenAPI 3.1 vs mux + writeErr AST
-web/                    Next.js 15 (no household UI yet)
+web/                    Next.js 15 (`/households` + token send on Buy Power)
 migrations/             0001 … 0016_token_share_send.sql
 ```
 

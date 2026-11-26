@@ -19,6 +19,13 @@ export function newIdempotencyKey(prefix = "web"): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+let defaultIdentityHeaders: Record<string, string> = {};
+
+/** Dev OIDC-stand-in: verified email/phone/name captured on every authed call. */
+export function setDefaultIdentityHeaders(headers: Record<string, string>) {
+  defaultIdentityHeaders = { ...headers };
+}
+
 export async function apiFetch<T>(
   path: string,
   options: {
@@ -30,6 +37,7 @@ export async function apiFetch<T>(
   } = {}
 ): Promise<T> {
   const headers: Record<string, string> = {
+    ...defaultIdentityHeaders,
     ...(options.headers || {}),
   };
   if (options.token) {
