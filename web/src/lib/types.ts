@@ -159,6 +159,19 @@ export interface TransactionView {
   credit_on_meter?: boolean;
 }
 
+/** Operator-attested AMI group (DisCo + digit prefix). Not a live HES session. */
+export interface RemoteCohort {
+  id: string;
+  disco: string;
+  number_prefix: string;
+  manufacturer?: string;
+  authorised: boolean;
+  evidence: string;
+  created_by: string;
+  created_at: string;
+  revoked_at?: string;
+}
+
 export type HouseholdRole =
   | "OWNER"
   | "ADMINISTRATOR"

@@ -156,6 +156,30 @@ export default function ConsumerHubPage() {
     loadAll();
   }, [loadAll]);
 
+  const refreshTxns = useCallback(async () => {
+    try {
+      const tRes = await apiFetch<{ data: TransactionView[] }>(
+        "/v1/electricity/transactions",
+        { token }
+      );
+      setTxns(tRes.data || []);
+    } catch {
+      // poll: keep the last good list
+    }
+  }, [token]);
+
+  useEffect(() => {
+    const waiting = txns.some(
+      (t) =>
+        t.delivery_method === "REMOTE" && t.delivery_status === "ACCEPTED"
+    );
+    if (!waiting) return;
+    const id = window.setInterval(() => {
+      void refreshTxns();
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [txns, refreshTxns]);
+
   const selectedMeter = meters.find((m) => m.meter_id === selectedMeterId);
   const selectedSupportsRemote =
     selectedMeter?.capabilities?.remote_credit?.supported &&
@@ -309,7 +333,10 @@ export default function ConsumerHubPage() {
             await loadAll();
             setBanner({
               type: "ok",
-              text: "Payment verified server-side. Check your transaction status below.",
+              text:
+                txn.delivery_method === "REMOTE"
+                  ? "Payment verified. Credit is being pushed to the meter — ACCEPTED is not delivered until the meter confirms."
+                  : "Payment verified server-side. Reveal the STS token when vending is CONFIRMED.",
             });
           },
         });
@@ -1050,6 +1077,18 @@ export default function ConsumerHubPage() {
                               Gift{t.recipient_name ? `: ${t.recipient_name}` : ""}
                             </span>
                           )}
+                          {t.credit_on_meter && (
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-600/25">
+                              On the meter
+                            </span>
+                          )}
+                          {t.delivery_method === "REMOTE" &&
+                            !t.credit_on_meter &&
+                            t.delivery_status === "ACCEPTED" && (
+                              <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-900 ring-1 ring-sky-600/25">
+                                Pushing — not confirmed
+                              </span>
+                            )}
                         </div>
                         <p className="mt-0.5 text-xs text-stone-500 font-mono">
                           {meterObj
@@ -1077,8 +1116,44 @@ export default function ConsumerHubPage() {
                       </p>
                     )}
 
+                    {t.delivery_method === "REMOTE" && (
+                      <div
+                        className={`rounded-xl border p-3.5 text-xs space-y-1 ${
+                          t.credit_on_meter
+                            ? "border-emerald-300 bg-emerald-50/70 text-emerald-950"
+                            : t.delivery_status === "FAILED"
+                              ? "border-rose-200 bg-rose-50 text-rose-950"
+                              : "border-sky-200 bg-sky-50/80 text-sky-950"
+                        }`}
+                      >
+                        <p className="font-semibold uppercase tracking-wider text-[11px]">
+                          Credit on the meter
+                        </p>
+                        {t.credit_on_meter || t.delivery_status === "CONFIRMED" ? (
+                          <p>
+                            The meter confirmed the units. There is no keypad token
+                            for this purchase — copy/send stay blocked.
+                          </p>
+                        ) : t.delivery_status === "ACCEPTED" ? (
+                          <p>
+                            Pushed to the meter network. ACCEPTED ≠ delivered.
+                            Waiting for the meter to confirm (sandbox: use the
+                            button below).
+                          </p>
+                        ) : t.delivery_status === "FAILED" ? (
+                          <p>
+                            Remote push failed. An operator can release the STS
+                            token only after confirming the HES did not credit the
+                            meter.
+                          </p>
+                        ) : (
+                          <p>Remote delivery status: {t.delivery_status}.</p>
+                        )}
+                      </div>
+                    )}
+
                     {/* Revealed STS Token Box */}
-                    {revealed && (
+                    {revealed && t.delivery_method !== "REMOTE" && (
                       <div className="rounded-xl border border-emerald-300 bg-emerald-50/70 p-3.5 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-900">
