@@ -153,6 +153,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/meters/{meter_id}/reading", user(s.getMeterReading))
 	mux.Handle("GET /v1/meters/{meter_id}/usage", user(s.getMeterUsage))
 	mux.Handle("GET /v1/meters/usage", user(s.listMeterUsage))
+	mux.Handle("GET /v1/meters/{meter_id}/buy-options", user(s.getBuyOptions))
+	mux.Handle("GET /v1/electricity/catalog", user(s.getCatalog))
 	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
 	mux.Handle("GET /v1/beneficiaries", user(s.listBeneficiaries))
 	s.householdRoutes(mux, user, write)
@@ -533,19 +535,27 @@ func (s *Server) createQuote(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		MeterID            uuid.UUID                       `json:"meter_id"`
 		AmountMinor        int64                           `json:"amount_minor"`
+		PackID             string                          `json:"pack_id"`
 		Currency           string                          `json:"currency"`
 		DeliveryPreference orchestrator.DeliveryPreference `json:"delivery_preference"`
 	}
 	if !decode(r, &req) || req.MeterID == uuid.Nil || req.Currency != "NGN" {
-		writeErr(w, 400, "INVALID_REQUEST", "meter_id, amount_minor and currency=NGN are required")
+		writeErr(w, 400, "INVALID_REQUEST", "meter_id, currency=NGN and pack_id or amount_minor are required")
 		return
 	}
-	q, err := s.O.CreateQuote(r.Context(), userID(r), req.MeterID, req.AmountMinor, req.DeliveryPreference)
+	if req.PackID == "" && req.AmountMinor <= 0 {
+		writeErr(w, 400, "INVALID_REQUEST", "pack_id or amount_minor is required")
+		return
+	}
+	q, err := s.O.IssueQuote(r.Context(), orchestrator.QuoteSpec{
+		CustomerID: userID(r), MeterID: req.MeterID, AmountMinor: req.AmountMinor, PackID: req.PackID, Pref: req.DeliveryPreference,
+	})
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
-	writeJSON(w, 201, q)
+	m, _ := s.O.Meters.Get(r.Context(), q.MeterID)
+	writeJSON(w, 201, quoteView(q, orchestrator.QuoteConfirmation(q, m)))
 }
 
 func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
@@ -595,7 +605,7 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, "PROVIDER_UNAVAILABLE", "payment provider unavailable; retry with the same Idempotency-Key")
 		return
 	}
-	writeJSON(w, 202, view(t))
+	writeJSON(w, 202, s.viewTxn(r.Context(), t))
 }
 
 func view(t *tx.Transaction) map[string]any {
@@ -628,7 +638,7 @@ func (s *Server) txnFromPath(w http.ResponseWriter, r *http.Request) (*tx.Transa
 
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 	if t, ok := s.txnFromPath(w, r); ok {
-		writeJSON(w, 200, view(t))
+		writeJSON(w, 200, s.viewTxn(r.Context(), t))
 	}
 }
 
@@ -872,7 +882,8 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 422, "INVALID_REQUEST", "destination has opted out of this channel")
 	case errors.Is(err, orchestrator.ErrTokenShareRateLimited):
 		writeErr(w, 429, "RATE_LIMITED", "daily token send limit reached")
-	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference):
+	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference),
+		errors.Is(err, orchestrator.ErrInvalidPack):
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrQuoteExpired), errors.Is(err, orchestrator.ErrQuoteNotFound):
 		writeErr(w, 422, "QUOTE_EXPIRED", err.Error())

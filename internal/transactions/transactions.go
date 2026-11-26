@@ -301,4 +301,14 @@ type Quote struct {
 	ExpiresAt       time.Time        `json:"expires_at"`
 	Used            bool             `json:"-"`
 	CreatedAt       time.Time        `json:"-"`
+
+	// Pricing snapshot served on confirmation/checkout. Amount is what is
+	// vended (and charged, minus fee); CreditMinor is the pack face value.
+	PackID              string `json:"pack_id,omitempty"`
+	DiscoCode           string `json:"disco_code,omitempty"`
+	TariffBand          string `json:"tariff_band,omitempty"`
+	KoboPerKWh          int64  `json:"kobo_per_kwh,omitempty"`
+	EstimatedUnitsMilli int64  `json:"-"`
+	CreditMinor         int64  `json:"credit_minor,omitempty"`
+	DiscountMinor       int64  `json:"discount_minor,omitempty"`
 }

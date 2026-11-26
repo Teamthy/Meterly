@@ -5,19 +5,20 @@ import { useAuth } from "@/components/AuthContext";
 import {
   apiFetch,
   DISCOS,
-  extractQuoteFeeMinor,
   extractQuoteId,
   extractQuoteTotalMinor,
-  extractQuoteUnits,
   formatNaira,
   formatSTSToken,
   newIdempotencyKey,
 } from "@/lib/api";
 import {
+  BuyOptions,
+  ElectricityCatalog,
   Meter,
   MeterUsage,
   MeterValidationResult,
   NotificationPreferences,
+  Quote,
   TokenRevealResponse,
   TokenShare,
   TransactionView,
@@ -93,8 +94,12 @@ export default function ConsumerHubPage() {
 
   // Purchase flow state
   const [selectedMeterId, setSelectedMeterId] = useState<string>("");
-  const [amountNaira, setAmountNaira] = useState<string>("5000");
+  const [amountNaira, setAmountNaira] = useState<string>("");
   const [deliveryPref, setDeliveryPref] = useState<"AUTO" | "TOKEN" | "REMOTE">("AUTO");
+  const [catalog, setCatalog] = useState<ElectricityCatalog | null>(null);
+  const [buyOptions, setBuyOptions] = useState<BuyOptions | null>(null);
+  const [confirmQuote, setConfirmQuote] = useState<Quote | null>(null);
+  const [selectedPackId, setSelectedPackId] = useState<string>("");
   const [buyerEmail, setBuyerEmail] = useState<string>(email);
   const [isGift, setIsGift] = useState(false);
   const [recipientName, setRecipientName] = useState("");
@@ -125,7 +130,7 @@ export default function ConsumerHubPage() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [mRes, tRes, pRes, uRes] = await Promise.all([
+      const [mRes, tRes, pRes, uRes, catRes] = await Promise.all([
         apiFetch<{ data: Meter[] }>("/v1/meters", { token }),
         apiFetch<{ data: TransactionView[] }>("/v1/electricity/transactions", {
           token,
@@ -136,7 +141,11 @@ export default function ConsumerHubPage() {
         apiFetch<{ data: MeterUsage[] }>("/v1/meters/usage", { token }).catch(() => ({
           data: [] as MeterUsage[],
         })),
+        apiFetch<ElectricityCatalog>("/v1/electricity/catalog", { token }).catch(
+          () => null
+        ),
       ]);
+      if (catRes) setCatalog(catRes);
       const meterList = mRes.data || [];
       setMeters(meterList);
       const usageMap: Record<string, MeterUsage> = {};
@@ -190,8 +199,30 @@ export default function ConsumerHubPage() {
     return () => window.clearInterval(id);
   }, [txns, refreshTxns]);
 
+  useEffect(() => {
+    if (!token || !selectedMeterId) {
+      setBuyOptions(null);
+      return;
+    }
+    let cancelled = false;
+    apiFetch<BuyOptions>(`/v1/meters/${selectedMeterId}/buy-options`, { token })
+      .then((opts) => {
+        if (cancelled) return;
+        setBuyOptions(opts);
+        setSelectedPackId(opts.recommended_pack_id || "");
+        setConfirmQuote(null);
+      })
+      .catch(() => {
+        if (!cancelled) setBuyOptions(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, selectedMeterId]);
+
   const selectedMeter = meters.find((m) => m.meter_id === selectedMeterId);
   const selectedUsage = selectedMeterId ? usageByMeter[selectedMeterId] : undefined;
+  const discoList = catalog?.discos?.length ? catalog.discos : DISCOS;
   const selectedSupportsRemote =
     selectedMeter?.capabilities?.remote_credit?.supported &&
     selectedMeter?.capabilities?.remote_credit?.authorised &&
@@ -282,39 +313,62 @@ export default function ConsumerHubPage() {
     }
   };
 
-  const handleBuyElectricity = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const requestQuote = async (body: Record<string, unknown>) => {
     if (!selectedMeterId) {
       setBanner({ type: "err", text: "Save and select a meter first." });
-      return;
-    }
-    const naira = Number(amountNaira);
-    if (!Number.isFinite(naira) || naira <= 0) {
-      setBanner({ type: "err", text: "Enter a valid Naira amount." });
       return;
     }
     setPurchasing(true);
     setBanner(null);
     try {
-      const amountMinor = Math.round(naira * 100);
-      const quote = await apiFetch<Record<string, unknown>>(
-        "/v1/electricity/quotes",
-        {
-          method: "POST",
-          token,
-          body: {
-            meter_id: selectedMeterId,
-            amount_minor: amountMinor,
-            currency: "NGN",
-            delivery_preference: deliveryPref,
-          },
-        }
-      );
-      const quoteId = extractQuoteId(quote);
-      const totalMinor = extractQuoteTotalMinor(quote);
-      const feeMinor = extractQuoteFeeMinor(quote);
-      const estUnits = extractQuoteUnits(quote);
+      const quote = await apiFetch<Quote>("/v1/electricity/quotes", {
+        method: "POST",
+        token,
+        body: {
+          meter_id: selectedMeterId,
+          currency: "NGN",
+          delivery_preference: deliveryPref,
+          ...body,
+        },
+      });
+      setConfirmQuote(quote);
+    } catch (err) {
+      setBanner({
+        type: "err",
+        text: err instanceof Error ? err.message : "Could not price this purchase",
+      });
+    } finally {
+      setPurchasing(false);
+    }
+  };
 
+  const handleBuyElectricity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (confirmQuote?.quote_id) {
+      await confirmPurchase();
+      return;
+    }
+    if (selectedPackId) {
+      await requestQuote({ pack_id: selectedPackId });
+      return;
+    }
+    const naira = Number(amountNaira);
+    if (!Number.isFinite(naira) || naira <= 0) {
+      setBanner({ type: "err", text: "Choose a pack or enter an amount." });
+      return;
+    }
+    await requestQuote({ amount_minor: Math.round(naira * 100) });
+  };
+
+  const confirmPurchase = async () => {
+    if (!confirmQuote?.quote_id) return;
+    setPurchasing(true);
+    setBanner(null);
+    try {
+      const quoteId = extractQuoteId(confirmQuote as unknown as Record<string, unknown>);
+      const totalMinor = extractQuoteTotalMinor(
+        confirmQuote as unknown as Record<string, unknown>
+      );
       const txn = await apiFetch<TransactionView>(
         "/v1/electricity/transactions",
         {
@@ -331,15 +385,16 @@ export default function ConsumerHubPage() {
           },
         }
       );
+      setConfirmQuote(null);
       await loadAll();
       if (txn.checkout_url) {
         openCheckout({
           checkoutUrl: txn.checkout_url,
-          totalMinor: txn.total_minor || totalMinor,
-          title: `Buy Electricity • ${selectedMeter?.masked_meter_number || ""}`,
-          subtitle: `Includes ${formatNaira(feeMinor)} platform fee • Est. ${estUnits.toFixed(
-            1
-          )} kWh (${txn.delivery_method})`,
+          totalMinor: txn.checkout?.total_minor || txn.total_minor || totalMinor,
+          title: txn.checkout?.title || "Checkout",
+          subtitle: txn.checkout?.subtitle,
+          lines: txn.checkout?.lines,
+          ctaLabel: txn.checkout?.cta_label,
           onComplete: async () => {
             await loadAll();
             setBanner({
@@ -706,7 +761,7 @@ export default function ConsumerHubPage() {
                     onChange={(e) => setDisco(e.target.value)}
                     className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
                   >
-                    {DISCOS.map((d) => (
+                    {discoList.map((d) => (
                       <option key={d.code} value={d.code}>
                         {d.name}
                       </option>
@@ -884,10 +939,59 @@ export default function ConsumerHubPage() {
                 </div>
               )}
 
+              {buyOptions && (
+                <div className="rounded-xl border border-stone-200 bg-stone-50/80 px-3 py-2 text-xs text-stone-700">
+                  <p className="font-semibold text-stone-900">{buyOptions.disco.name}</p>
+                  <p className="mt-0.5">{buyOptions.tariff.label}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-stone-700 mb-1.5">
+                  Amount
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(buyOptions?.packs || catalog?.packs || []).map((pack) => {
+                    const selected = selectedPackId === pack.id && !amountNaira;
+                    return (
+                      <button
+                        key={pack.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPackId(pack.id);
+                          setAmountNaira("");
+                          setConfirmQuote(null);
+                        }}
+                        className={`rounded-xl border px-2 py-2.5 text-left transition ${
+                          selected
+                            ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600"
+                            : "border-stone-200 bg-white hover:border-emerald-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-sm font-bold text-stone-900">{pack.label}</span>
+                          {pack.recommended && (
+                            <span className="rounded-full bg-emerald-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
+                              Rec
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-[11px] font-medium text-emerald-800">
+                          {pack.pay_label}
+                        </div>
+                        <div className="text-[10px] tabular-nums text-stone-500">
+                          {pack.estimated_units_kwh} kWh
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-stone-700 mb-1">
-                    Amount (₦ Naira)
+                    {buyOptions?.custom.label || "Enter amount"}
                   </label>
                   <input
                     type="number"
@@ -895,8 +999,12 @@ export default function ConsumerHubPage() {
                     max={500000}
                     step={100}
                     value={amountNaira}
-                    onChange={(e) => setAmountNaira(e.target.value)}
-                    required
+                    onChange={(e) => {
+                      setAmountNaira(e.target.value);
+                      setSelectedPackId("");
+                      setConfirmQuote(null);
+                    }}
+                    placeholder="Custom ₦"
                     className="w-full rounded-xl border border-stone-300 px-3 py-2 font-mono text-sm tabular-nums focus:border-emerald-600 focus:outline-none"
                   />
                 </div>
@@ -922,19 +1030,6 @@ export default function ConsumerHubPage() {
                     )}
                   </select>
                 </div>
-              </div>
-
-              <div className="flex gap-1.5">
-                {[2000, 5000, 10000, 25000].map((preset) => (
-                  <button
-                    key={preset}
-                    type="button"
-                    onClick={() => setAmountNaira(String(preset))}
-                    className="flex-1 rounded-lg border border-stone-200 bg-stone-50 py-1 font-mono text-xs font-medium text-stone-700 hover:bg-stone-100"
-                  >
-                    ₦{preset.toLocaleString()}
-                  </button>
-                ))}
               </div>
 
               <div>
@@ -1003,18 +1098,52 @@ export default function ConsumerHubPage() {
                 </p>
               )}
 
+              {confirmQuote?.confirmation && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-emerald-900">
+                    {confirmQuote.confirmation.title}
+                  </p>
+                  {confirmQuote.confirmation.subtitle && (
+                    <p className="text-xs text-stone-600">{confirmQuote.confirmation.subtitle}</p>
+                  )}
+                  <dl className="space-y-1">
+                    {(confirmQuote.confirmation.lines || []).map((line) => (
+                      <div key={line.label} className="flex items-baseline justify-between gap-3 text-xs">
+                        <dt className="text-stone-500">{line.label}</dt>
+                        <dd
+                          className={
+                            line.emphasis
+                              ? "font-semibold tabular-nums text-stone-900"
+                              : "tabular-nums text-stone-800"
+                          }
+                        >
+                          {line.value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmQuote(null)}
+                    className="text-[11px] text-stone-500 underline"
+                  >
+                    Change amount
+                  </button>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={purchasing || !selectedMeterId}
                 className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
               >
                 {purchasing
-                  ? "Pricing…"
-                  : selectedSupportsRemote && deliveryPref !== "TOKEN"
-                    ? `Push ₦${Number(amountNaira).toLocaleString()} to the meter`
-                    : `Pay for STS token (${formatNaira(
-                        Math.round((Number(amountNaira) || 0) * 100) + 10000
-                      )} incl. fee)`}
+                  ? confirmQuote
+                    ? "Opening checkout…"
+                    : "Pricing…"
+                  : confirmQuote?.confirmation?.cta_label
+                    ? confirmQuote.confirmation.cta_label
+                    : "Continue"}
               </button>
             </form>
           </section>

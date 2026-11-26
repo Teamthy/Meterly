@@ -51,3 +51,20 @@ func (r readingRepo) ListSamples(ctx context.Context, meterID uuid.UUID, since t
 	}
 	return out, mapErr(rows.Err())
 }
+
+func (r readingRepo) ListDistinctMeterIDs(ctx context.Context, since time.Time) ([]uuid.UUID, error) {
+	rows, err := r.db.Query(ctx, `SELECT DISTINCT meter_id FROM meter_reading_samples WHERE read_at >= $1`, since.UTC())
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, mapErr(rows.Err())
+}

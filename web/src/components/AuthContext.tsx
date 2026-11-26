@@ -76,6 +76,8 @@ export interface CheckoutSession {
   totalMinor: number;
   title: string;
   subtitle?: string;
+  lines?: { label: string; value: string; emphasis?: boolean }[];
+  ctaLabel?: string;
   onComplete?: () => Promise<void> | void;
 }
 
@@ -253,6 +255,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 {checkout.subtitle && (
                   <p className="mt-1 text-xs text-stone-600">{checkout.subtitle}</p>
                 )}
+                {checkout.lines && checkout.lines.length > 0 && (
+                  <dl className="mt-3 space-y-1.5">
+                    {checkout.lines.map((line) => (
+                      <div
+                        key={line.label}
+                        className="flex items-baseline justify-between gap-3 text-xs"
+                      >
+                        <dt className="text-stone-500">{line.label}</dt>
+                        <dd
+                          className={
+                            line.emphasis
+                              ? "font-semibold tabular-nums text-stone-900"
+                              : "tabular-nums text-stone-800"
+                          }
+                        >
+                          {line.value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
               </div>
 
               <p className="text-xs text-stone-600 leading-relaxed">
@@ -279,7 +302,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     <CreditCard className="h-4 w-4" />
                     {busy
                       ? "Verifying & Vending..."
-                      : `Pay ${formatNaira(checkout.totalMinor)} (Card •••• 4081)`}
+                      : `${checkout.ctaLabel || `Pay ${formatNaira(checkout.totalMinor)}`} (Card •••• 4081)`}
                   </button>
                   <button
                     type="button"

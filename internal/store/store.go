@@ -96,6 +96,7 @@ type Repos interface {
 	RemoteCohorts() RemoteCohortRepo
 	Auth() AuthRepo
 	Readings() MeterReadingRepo
+	LowUnitAlerts() LowUnitAlertRepo
 }
 
 // MeterReadingRepo stores observed remote kWh samples used to compute
@@ -103,6 +104,13 @@ type Repos interface {
 type MeterReadingRepo interface {
 	InsertSample(ctx context.Context, s meters.ReadingSample) error
 	ListSamples(ctx context.Context, meterID uuid.UUID, since time.Time, limit int) ([]meters.ReadingSample, error)
+	ListDistinctMeterIDs(ctx context.Context, since time.Time) ([]uuid.UUID, error)
+}
+
+// LowUnitAlertRepo records the last low-unit notification per meter+user so
+// the poller is idempotent across workers (atomic claim + cooldown).
+type LowUnitAlertRepo interface {
+	Claim(ctx context.Context, meterID uuid.UUID, userID string, remainingMilli int64, now time.Time, cooldown time.Duration) (claimed bool, err error)
 }
 
 // RemoteCohortRepo is the operator-attested AMI meter matrix. Longest matching
@@ -188,6 +196,8 @@ type MeterRepo interface {
 	UpsertGrant(ctx context.Context, g meters.Grant) error
 	ActiveGrant(ctx context.Context, meterID uuid.UUID, userID string) (*meters.Grant, error)
 	ListForUser(ctx context.Context, userID string) ([]meters.Listed, error)
+	// ListActiveUserIDs returns user IDs with an un-revoked grant on the meter.
+	ListActiveUserIDs(ctx context.Context, meterID uuid.UUID) ([]string, error)
 	// Revoke callers must hold the meter lock in the surrounding InTx.
 	Revoke(ctx context.Context, meterID uuid.UUID, userID string, at time.Time) error
 }

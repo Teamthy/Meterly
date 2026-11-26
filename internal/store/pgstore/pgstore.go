@@ -140,6 +140,7 @@ func (r *repos) Households() store.HouseholdRepo                         { retur
 func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
 func (r *repos) Auth() store.AuthRepo                                    { return authRepo{r} }
 func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
+func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

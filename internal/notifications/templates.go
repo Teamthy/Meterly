@@ -38,6 +38,7 @@ const (
 	TemplateAutoPowerMissed     = "autopower_run_missed"
 	TemplateOfflineToken        = "offline_token_delivery"
 	TemplateTokenShare          = "token_share"
+	TemplateLowUnits            = "meter_low_units"
 
 	CurrentTemplateVersion = "v1"
 )
@@ -107,6 +108,10 @@ var purchaserCatalog = map[string]map[string]localeEntry{
 			Subject: "AutoPower scheduled window missed",
 			Body:    "A scheduled AutoPower window passed without charging and was skipped so you are never charged unexpectedly.",
 		},
+		TemplateLowUnits: {
+			Subject: "Your meter is running low",
+			Body:    "Your meter is running low on units. Open Meterly to buy electricity before it goes out.",
+		},
 	},
 }
 
@@ -124,6 +129,7 @@ var whatsAppTemplateNames = map[string]string{
 	TemplateTokenShare:          "meterly_offline_token_v1",
 	TemplateAutoPowerSkippedCap: "meterly_autopower_skipped_cap_v1",
 	TemplateAutoPowerMissed:     "meterly_autopower_missed_v1",
+	TemplateLowUnits:            "meterly_low_units_v1",
 }
 
 // NormalizeLocale returns a supported locale tag, defaulting to LocaleEN.
@@ -333,6 +339,18 @@ func AutoPowerTemplateSpecFor(e events.Event) (spec TemplateSpec, ok bool) {
 		ID:                   id,
 		Version:              CurrentTemplateVersion,
 		WhatsAppTemplateName: whatsAppTemplateNames[id],
+	}, true
+}
+
+// LowUnitTemplateSpecFor maps a meter.low_units outbox event to its template.
+func LowUnitTemplateSpecFor(e events.Event) (spec TemplateSpec, ok bool) {
+	if e.ID == uuid.Nil || e.AggregateID == uuid.Nil || e.AggregateType != "meter" || e.Type != "meter.low_units" {
+		return TemplateSpec{}, false
+	}
+	return TemplateSpec{
+		ID:                   TemplateLowUnits,
+		Version:              CurrentTemplateVersion,
+		WhatsAppTemplateName: whatsAppTemplateNames[TemplateLowUnits],
 	}, true
 }
 
