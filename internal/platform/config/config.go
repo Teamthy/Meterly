@@ -94,6 +94,8 @@ type Config struct {
 	AccountErasureInterval      time.Duration
 	AccountErasureBatchSize     int
 	FeatureAccountErasure       bool
+	FeaturePartnerAPI           bool
+	RatePartnerPerMin           int
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
 	AuthMode        string
@@ -452,6 +454,16 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_ACCOUNT_ERASURE: must be true or false"))
 	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_PARTNER_API"))) {
+	case "":
+		c.FeaturePartnerAPI = c.Mode == Dev
+	case "true", "1":
+		c.FeaturePartnerAPI = true
+	case "false", "0":
+		c.FeaturePartnerAPI = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_PARTNER_API: must be true or false"))
+	}
 	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_RISK_ENGINE"))) {
 	case "":
 		c.FeatureRiskEngine = c.Mode == Dev || c.Mode == Staging
@@ -533,6 +545,7 @@ func Load(getenv func(string) string) (Config, error) {
 	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
 	c.RatePublicPayPerMin = int(integer("RATE_LIMIT_PUBLIC_PAY_PER_MIN", 60))
 	c.RatePublicLinkPerMin = int(integer("RATE_LIMIT_PUBLIC_LINK_PER_MIN", 10))
+	c.RatePartnerPerMin = int(integer("RATE_LIMIT_PARTNER_PER_MIN", 60))
 	c.ClientIPHeader = getenv("CLIENT_IP_HEADER")
 	c.RedisURL = strings.TrimSpace(getenv("REDIS_URL"))
 

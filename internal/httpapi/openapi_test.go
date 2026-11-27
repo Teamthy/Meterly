@@ -224,6 +224,17 @@ var p2p4AdminRoutes = []string{
 	"DELETE /v1/admin/pilot/allowlist",
 	"POST /v1/admin/pilot/pause",
 	"POST /v1/admin/pilot/resume",
+	"POST /v1/admin/partners",
+	"GET /v1/admin/partners",
+	"GET /v1/admin/partners/{id}",
+	"POST /v1/admin/partners/{id}/activate",
+	"POST /v1/admin/partners/{id}/suspend",
+	"POST /v1/admin/partners/{id}/keys",
+	"GET /v1/admin/partners/{id}/keys",
+	"POST /v1/admin/partners/{id}/keys/{key_id}/rotate",
+	"POST /v1/admin/partners/{id}/keys/{key_id}/revoke",
+	"GET /v1/admin/partners/{id}/usage",
+	"GET /v1/partner/me",
 }
 
 func TestOpenAPIDriftDetection(t *testing.T) {
