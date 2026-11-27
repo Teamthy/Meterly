@@ -50,7 +50,7 @@ OPay airtime works because every phone has a **network account** the telco can c
 | Households, token send, support E2E, Power Desk, USSD, pots | ✅ code, flags mostly off outside dev | feature flags §7 |
 | Hosted API (Render) + migrations `0018`–`0021` | ⏳ | `docs/DEPLOY.md` |
 
-**Git:** `origin/main` @ `9cac48b` (merge #23) is merged into this branch. Review-fix content from `b573cff` is `b6c4f7d` here. PR #24. CI `test` job failed on `go test -race ./...` with `DATABASE_URL` (gofmt/vet passed); logs were not readable from this sandbox. Local `go test -race ./...` without Postgres is green.
+**Git:** `origin/main` @ `9cac48b` (merge #23) is merged into this branch. Review-fix content from `b573cff` is `b6c4f7d` here. PR #24. CI `test` went red at `cfeaca2` because `IssueQuote` re-verifies the meter: `TestObservabilityMetricsAndOTLPTracing` (Postgres-only) still expected `validate_meter` count 1. That assertion is now 2. P1 is **not live-certified**.
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -274,7 +274,8 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
-- **2026-11-27: P1 certify harness.** `internal/certify` + `cmd/certify`. Untagged tests run the scenarios against in-repo fakes (pass). `go test -tags certify` and `cmd/certify` skip every provider here (no keys) and write a 30-scenario skipped report. Paystack fake gained documented `/charge`; VTpass fake rejects non-dates as `085`. Unverified: every live sandbox; CI Postgres job on PR #24. Next is P2 settlement/reconciliation (`0022`).
+- **2026-11-27: CI Postgres failure from quote re-verify.** `TestObservabilityMetricsAndOTLPTracing` expected one `mockvend.validate_meter`; register + quote is two. Actions logs are not readable from this sandbox (`results-receiver.githubusercontent.com`). Unverified: CI green after the assertion change; P2 settlement not started.
+- **2026-11-27: P1 certify harness.** `internal/certify` + `cmd/certify`. Untagged tests run the scenarios against in-repo fakes (pass). `go test -tags certify` and `cmd/certify` skip every provider here (no keys) and write a 30-scenario skipped report. Paystack fake gained documented `/charge`; VTpass fake rejects non-dates as `085`. Unverified: every live sandbox. Next is P2 settlement/reconciliation (`0022`).
 - **2026-11-27: review fixes of PRs #5–#23 landed here.** Guest-payer cards cannot be saved; session IP binds once; passkey UV + step-up to add; attested key preferred; prepaid vend needs an STS token; VTpass `083` is pending; AutoPower Paystack refs use `apchg-`; ownership name-match is flagged off outside dev. `origin/main` (`9cac48b`) merged.
 - **2026-11-26: 100 edge cases.** `docs/EDGE_CASES.md` — IN / OPS / GAP. Quote gates, in-flight, digits, wallet, dispute pause are in code.
 - **2026-11-26: Operating pack.** Catch-22 (supply must be on), first 200 = Ikeja/IE Energy Lagos Mojec, 2am runbook, fraud, fee leak, legal drafts `/legal/*`, Lagos entity rename, feature freeze (later), no kill date.
