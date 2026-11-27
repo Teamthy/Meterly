@@ -18,6 +18,7 @@ import (
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/channels/ussd"
 	"github.com/teamthy/meterly/internal/dataexport"
+	"github.com/teamthy/meterly/internal/erasure"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/notificationconsumer"
@@ -496,6 +497,8 @@ func (a *App) Handler() http.Handler {
 		HouseholdsDisabled: !a.Cfg.FeatureHouseholds,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
 		ExportTTL:          a.Cfg.DataExportTTL,
+		ErasureDisabled:    !a.Cfg.FeatureAccountErasure,
+		ErasureCooling:     a.Cfg.AccountErasureCooling,
 		Remote:             a.remoteRaw,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}
@@ -791,6 +794,23 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 		}
 		if n > 0 {
 			a.Log.Info("data exports built", "count", n)
+		}
+	})
+	erEvery := a.Cfg.AccountErasureInterval
+	if erEvery <= 0 {
+		erEvery = 5 * time.Second
+	}
+	start("account-erasure", erEvery, func(ctx context.Context) {
+		if ctx.Err() != nil {
+			return
+		}
+		n, err := erasure.Process(drainCtx, a.Store, time.Now().UTC(), a.Cfg.AccountErasureBatchSize, a.Log)
+		if err != nil {
+			a.Log.Warn("account erasure worker failed", "err", err)
+			return
+		}
+		if n > 0 {
+			a.Log.Info("account erasures completed", "count", n)
 		}
 	})
 	if !a.Cfg.NotificationCandidatesSince.IsZero() {

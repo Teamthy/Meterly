@@ -1257,6 +1257,76 @@ paths:
         "410":
           description: Link already used or expired.
 
+  /v1/me/delete-account:
+    post:
+      operationId: createDeleteAccount
+      tags: [Privacy]
+      summary: Start a 7-day cooling-off before personal data is erased (step-up)
+      description: |
+        Sign-in remains allowed during cooling-off. After the cooling-off the
+        worker anonymises financial rows onto a tombstone user and deletes
+        identity. Optional `reason` is accepted and discarded (not stored, not
+        audited).
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "201":
+          description: Cooling-off started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErasureJob"
+        "200":
+          description: Existing open erasure request returned (idempotent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErasureJob"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/me/delete-account/cancel:
+    post:
+      operationId: cancelDeleteAccount
+      tags: [Privacy]
+      summary: Cancel a pending account deletion during cooling-off
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Cooling-off cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErasureJob"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/payments/webhooks/{provider}:
     parameters:
       - name: provider
@@ -4805,6 +4875,8 @@ components:
         - EXPORT_EXPIRED
         - EXPORT_USED
         - EXPORT_NOT_READY
+        - ACCOUNT_ERASED
+        - ERASURE_NOT_PENDING
         - INTERNAL_ERROR
 
     ErrorEnvelope:
@@ -5548,6 +5620,30 @@ components:
       type: object
       additionalProperties: true
       description: Subject-access JSON. Profile, masked meters, token-free receipts, consents, preferences, own households (no other members' contacts), own support threads, security events. No STS tokens or raw meter numbers.
+
+    ErasureJob:
+      type: object
+      required: [erasure_id, status, due_at]
+      additionalProperties: false
+      properties:
+        erasure_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [COOLING_OFF, CANCELLED, READY, RUNNING, COMPLETED, BLOCKED, FAILED]
+        due_at:
+          type: string
+          format: date-time
+        block_code:
+          type: string
+          description: Machine code when status is BLOCKED (open_dispute, unresolved_transaction, pot_with_funds, unpaid_obligation).
+        cancelled_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
 
     AdminReasonRequest:
       type: object

@@ -19,7 +19,7 @@
   4. Each bug fix has a regression test, and you show that the test **fails without the fix**.
   5. Update `docs/HANDOFF.md` (state, gotchas, one session-log entry at the top: what was done, how verified, what is unverified, what is blocked) and `docs/DECISIONS.md`. Commit and push.
   6. Open the PR using the repo's PR template headings. Wait for CI green. Fix root causes, never skip or disable a test.
-- **Git:** new migrations only (`0027_…` onward — B1 took `0025_privacy.sql`, B2 took `0026_data_export.sql`; never edit an applied one); never force-push, merge `origin/main` instead of rebasing; no model identifiers in commits, PRs or code.
+- **Git:** new migrations only (`0028_…` onward — B1 took `0025_privacy.sql`, B2 took `0026_data_export.sql`, B3 took `0027_account_erasure.sql`; never edit an applied one); never force-push, merge `origin/main` instead of rebasing; no model identifiers in commits, PRs or code.
 - **Flags:** every customer-facing capability gets `FEATURE_<NAME>`, default **off** outside `MODE=dev`, validated in config.
 - **Never** touch the hosted Supabase database or Render service from a dev session. Never put secrets, real tokens or real meter numbers in the repo, tests or logs.
 - **Don't invent partner APIs** (vending, AMI/HES). Without official docs, write an interface plus a TODO and ask.
@@ -109,7 +109,7 @@
 
 **Goal:** the identity and access layer for approved partners. No purchases yet.
 
-- Migration `0027_partners.sql` (B1 used `0025_privacy.sql`, B2 used `0026_data_export.sql`): `partners` (organisation, status PENDING/ACTIVE/SUSPENDED, environment SANDBOX/PRODUCTION, contact reference, created_by), `partner_api_keys` (prefix, **hash only**, scopes, created_by, last_used_at, expires_at, revoked_at), `partner_usage` (daily counters).
+- Migration `0028_partners.sql` (B1 used `0025_privacy.sql`, B2 used `0026_data_export.sql`, B3 used `0027_account_erasure.sql`): `partners` (organisation, status PENDING/ACTIVE/SUSPENDED, environment SANDBOX/PRODUCTION, contact reference, created_by), `partner_api_keys` (prefix, **hash only**, scopes, created_by, last_used_at, expires_at, revoked_at), `partner_usage` (daily counters).
 - Key format `mtr_test_…` / `mtr_live_…`, 32+ random bytes, shown **once**. Store a prefix for lookup and an HMAC/Argon2id hash for verification; constant-time compare.
 - `Authorization: Bearer mtr_…` → partner principal with scopes: `meters:validate`, `quotes:create`, `purchases:create`, `purchases:read`, `webhooks:manage`, `float:read`.
 - Rotation with overlap window; immediate revoke; a suspended partner's keys stop working at once.

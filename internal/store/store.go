@@ -164,6 +164,7 @@ const (
 	UserActive    = "ACTIVE"
 	UserSuspended = "SUSPENDED"
 	UserClosed    = "CLOSED"
+	UserErased    = "ERASED"
 )
 
 type UserRepo interface {
@@ -173,9 +174,9 @@ type UserRepo interface {
 	// LockForUpdate acquires a transaction-scoped row lock on the user so
 	// per-user spend caps serialize across concurrent AutoPower rules.
 	LockForUpdate(ctx context.Context, userID string) error
-	// Status is ACTIVE, SUSPENDED or CLOSED. Missing row is ErrNotFound.
+	// Status is ACTIVE, SUSPENDED, CLOSED or ERASED. Missing row is ErrNotFound.
 	Status(ctx context.Context, userID string) (string, error)
-	// SetStatus updates ACTIVE/SUSPENDED/CLOSED. Chargebacks suspend.
+	// SetStatus updates ACTIVE/SUSPENDED/CLOSED/ERASED. Chargebacks suspend.
 	SetStatus(ctx context.Context, userID, status string) error
 	// UpsertContacts updates encrypted verified contact fields on an existing
 	// user. Non-empty fields replace existing values; empty fields leave the

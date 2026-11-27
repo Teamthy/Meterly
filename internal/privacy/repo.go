@@ -34,4 +34,16 @@ type Repo interface {
 	ListPendingExports(ctx context.Context, limit int) ([]ExportJob, error)
 	ExpireDueExports(ctx context.Context, now time.Time, batch int) (int, error)
 	PurgeDataExports(ctx context.Context, cutoff time.Time, batch int, dryRun bool, held map[string]bool) (int, error)
+
+	EnsureTombstone(ctx context.Context) (string, error)
+	CreateErasure(ctx context.Context, job ErasureRequest) error
+	GetErasure(ctx context.Context, id uuid.UUID) (ErasureRequest, error)
+	GetOpenErasureForUser(ctx context.Context, userID string) (ErasureRequest, error)
+	UpdateErasure(ctx context.Context, job ErasureRequest) error
+	ListDueErasures(ctx context.Context, now time.Time, limit int) ([]ErasureRequest, error)
+	CountOpenDisputesForUser(ctx context.Context, userID string) (int, error)
+	CountUnresolvedTxnsForUser(ctx context.Context, userID string) (int, error)
+	CountActivePotsForUser(ctx context.Context, userID string) (int, error)
+	CountUnpaidObligationsForUser(ctx context.Context, userID string) (int, error)
+	ApplyErasureStep(ctx context.Context, userID, tombstoneID, step string, now time.Time) error
 }

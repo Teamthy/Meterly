@@ -29,7 +29,7 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Retention periods are engineering defaults pending legal sign-off** (HANDOFF §9). Financial rows are `ANONYMISE` with a 7-year default; the B1 job never deletes them. Operational DELETE: OTPs/challenges 7 days, sessions 90 days after expiry, completed idempotency keys 30 days, risk observations 90 days, closed support threads 2 years, notification destination HMACs 365 days. All overridable via `RETENTION_*` / `NOTIFICATION_HMAC_RETENTION`.
 - **Legal holds** (`legal_holds`) skip that user's rows in every DELETE policy. Open disputes should be recorded as a hold by operators (no automatic hold yet).
 - **Audit:** one `retention_runs` row and one `audit_events` row per job, counts only, no PII.
-- **B4 partners** uses `0027_*.sql`; B1 took `0025_privacy.sql`; B2 took `0026_data_export.sql`.
+- **B4 partners** uses `0028_*.sql`; B1 took `0025_privacy.sql`; B2 took `0026_data_export.sql`; B3 took `0027_account_erasure.sql`.
 
 ## NDPA subject-access export (B2)
 
@@ -39,6 +39,22 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Archive contents** are the data subject's: decrypted email/phone, masked meters, token-free receipts, consents, preferences, own households (name + own role + masked meters; no other members), own payment requests **without** guest payer ciphertext, own support threads (server-sealed AGENT/SYSTEM plaintext; HUMAN E2E is flagged, not decrypted — the server never holds that plaintext), security events (no IP HMAC).
 - **Isolation:** another user's email, meter number, token, support body, or user id must not appear.
 - **Step-up:** `security.ActionDataExport` is a gated action. Dev/OIDC bearers without a passkey session still work (fail-open, same as TOKEN_READ).
+
+## NDPA account erasure (B3)
+
+- **Cooling-off** is 7 days (`ACCOUNT_ERASURE_COOLING`). `POST /v1/me/delete-account` (step-up) starts it; `POST /v1/me/delete-account/cancel` only while `COOLING_OFF`. Sign-in stays allowed; `GET /v1/me` includes the pending job. Optional `reason` is accepted and **discarded** (not stored, not in audit).
+- **Tombstone** user `00000000-0000-0000-0000-00000000e5ed` (`tombstone:erasure`, status `ERASED`) receives financial FKs. Books are never deleted. `FEATURE_ACCOUNT_ERASURE` defaults on in `MODE=dev`.
+- **Resumable job** (`account-erasure` worker): steps `financial → identity → memberships → support → notify → cards → exports`. Each step commits with `erasure_requests.step` so a crash resumes. Re-running a `COMPLETED` job is a no-op.
+- **Anonymise:** quotes/txns/gifts/token shares/pots/contributions/payment requests re-point to the tombstone; gift/pot/request ciphertext is cleared. Payments, refunds, disputes and ledger rows have no user FK and stay as-is.
+- **Delete:** contacts, passkeys, sessions, challenges, security events, notification prefs, consents, legal holds, support threads, phone links, OTPs, conversation sessions, AutoPower rules (cancel) and saved cards (soft-delete + wipe ciphertext).
+- **Shared meters:** if another active grant exists on the meter, `customer_name`/`address` stay; otherwise they are cleared, then the subject's grants are revoked.
+- **Pay-for-Me history for others:** guest `transaction_payers` ciphertext is **kept** (it is the payer's data, not the requester's). The request itself is re-pointed to the tombstone.
+- **Blocks** (job → `BLOCKED`, audited code only): open/reminded dispute; txn `MANUAL_REVIEW` or `RECONCILIATION_PENDING` (no `UNKNOWN` overall status); pot `FUNDED`/`ALLOCATING`/`REFUNDING` or `OPEN` with paid funds; unpaid obligation (OPEN payment request or paid contribution on an unsettled pot).
+- **Paystack authorization revoke** is not implemented — no documented revoke API in-repo. TODO and ask. Local saved methods are still deleted.
+- **Re-register:** email/phone HMACs are nulled so the same contacts can be stored on a new user. `external_id` becomes `erased:{id}` so the same IdP subject creates a fresh user.
+- **Export of an erased user** fails (`ACCOUNT_ERASED` / export job `FAILED` `account_erased`).
+- **Audit:** `erasure.request` / `erasure.cancel` / `erasure.blocked` / `erasure.completed` with status/code/step counts only. No reason text, email, or name.
+- **B4 partners** uses `0028_*.sql`.
 
 ## Chart of accounts (P2 settlement)
 

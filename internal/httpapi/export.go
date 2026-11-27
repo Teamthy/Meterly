@@ -31,6 +31,10 @@ func (s *Server) createDataExport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 401, "UNAUTHENTICATED", "not authenticated")
 		return
 	}
+	if st, err := s.O.Store().Repos().Users().Status(r.Context(), uid); err == nil && st == store.UserErased {
+		writeErr(w, http.StatusConflict, "ACCOUNT_ERASED", "this account has been erased")
+		return
+	}
 	box := s.O.Box()
 	if box == nil {
 		writeErr(w, 503, "UNAVAILABLE", "export encryption is not configured")
