@@ -31,6 +31,7 @@ import (
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/platform/config"
 	"github.com/teamthy/meterly/internal/platform/migrate"
+	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/heshttp"
 	"github.com/teamthy/meterly/internal/providers/mock"
@@ -743,17 +744,33 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 			}
 		}
 	})
-	start("notification-retention", time.Hour, func(ctx context.Context) {
+	retEvery := a.Cfg.RetentionInterval
+	if retEvery <= 0 {
+		retEvery = time.Hour
+	}
+	start("retention", retEvery, func(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		purged, err := a.Notifications.PurgeExpiredHMACs(drainCtx)
+		settings := privacy.Settings{
+			OTP:              a.Cfg.RetentionOTP,
+			Challenge:        a.Cfg.RetentionChallenge,
+			Session:          a.Cfg.RetentionSession,
+			Idempotency:      a.Cfg.RetentionIdempotency,
+			RiskObservation:  a.Cfg.RetentionRiskObservation,
+			Support:          a.Cfg.RetentionSupport,
+			Financial:        a.Cfg.RetentionFinancial,
+			NotificationHMAC: a.Cfg.NotificationHMACRetention,
+			BatchSize:        a.Cfg.RetentionBatchSize,
+			DryRun:           a.Cfg.RetentionDryRun,
+		}
+		res, err := privacy.Run(drainCtx, a.Store.Repos().Privacy(), settings, a.Metrics, time.Now().UTC(), a.Log)
 		if err != nil {
-			a.Log.Warn("notification retention purge failed", "err", err)
+			a.Log.Warn("retention purge failed", "err", err)
 			return
 		}
-		if purged > 0 {
-			a.Log.Info("notification destination HMACs purged", "count", purged)
+		if len(res.Counts) > 0 {
+			a.Log.Info("retention purge", "dry_run", res.DryRun, "counts", res.Counts)
 		}
 	})
 	if !a.Cfg.NotificationCandidatesSince.IsZero() {

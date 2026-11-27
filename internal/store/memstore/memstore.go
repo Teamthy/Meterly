@@ -30,6 +30,7 @@ import (
 	"github.com/teamthy/meterly/internal/pilot"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
@@ -126,6 +127,9 @@ type Store struct {
 	disputes          map[uuid.UUID]*disputes.Dispute
 	disputesByPSP     map[string]uuid.UUID
 	pilotAllow        map[string]*pilot.Entry
+	consents          []privacy.Record
+	legalHolds        map[uuid.UUID]privacy.Hold
+	retentionRuns     []privacy.RetentionRun
 }
 
 func New() *Store {
@@ -148,6 +152,7 @@ func New() *Store {
 		disputes:       map[uuid.UUID]*disputes.Dispute{},
 		disputesByPSP:  map[string]uuid.UUID{},
 		pilotAllow:     map[string]*pilot.Entry{},
+		legalHolds:     map[uuid.UUID]privacy.Hold{},
 		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
@@ -299,6 +304,7 @@ func (r *repos) Reconcile() reconcile.Repo                               { retur
 func (r *repos) Risk() risk.Repo                                         { return riskRepo{r} }
 func (r *repos) Disputes() disputes.Repo                                 { return disputeRepo{r} }
 func (r *repos) Pilot() pilot.Repo                                       { return pilotRepo{r} }
+func (r *repos) Privacy() privacy.Repo                                   { return privacyRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 

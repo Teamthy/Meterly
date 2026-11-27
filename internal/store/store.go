@@ -31,6 +31,7 @@ import (
 	"github.com/teamthy/meterly/internal/pilot"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
@@ -106,6 +107,7 @@ type Repos interface {
 	Risk() risk.Repo
 	Disputes() disputes.Repo
 	Pilot() pilot.Repo
+	Privacy() privacy.Repo
 }
 
 // MeterReadingRepo stores observed remote kWh samples used to compute

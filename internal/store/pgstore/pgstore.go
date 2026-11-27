@@ -20,6 +20,7 @@ import (
 	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/pilot"
+	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
@@ -149,6 +150,7 @@ func (r *repos) Reconcile() reconcile.Repo                               { retur
 func (r *repos) Risk() risk.Repo                                         { return riskRepo{r} }
 func (r *repos) Disputes() disputes.Repo                                 { return disputeRepo{r} }
 func (r *repos) Pilot() pilot.Repo                                       { return pilotRepo{r} }
+func (r *repos) Privacy() privacy.Repo                                   { return privacyRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

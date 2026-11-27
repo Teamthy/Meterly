@@ -38,7 +38,7 @@ Auto-renew later: explicit mandate text, skip, cap, CBN/card-scheme recurring ru
 - Contacts encrypted when stored for notify
 - Gift SMS off
 
-Still needed from humans: privacy policy, cookie/localStorage notice (passkeys, auto-renew prefs, E2E chat keys), deletion request path (`/support` is enough at launch if you actually delete).
+Still needed from humans: privacy policy, cookie/localStorage notice (passkeys, auto-renew prefs, E2E chat keys), deletion request path (`/support` is enough at launch if you actually delete). Engineering data map: `docs/PRIVACY_ENGINEERING.md`. Retention periods need counsel sign-off (defaults in HANDOFF §9).
 
 ---
 
