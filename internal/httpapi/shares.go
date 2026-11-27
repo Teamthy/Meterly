@@ -18,18 +18,43 @@ func (s *Server) recordTokenCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Channel string `json:"channel"`
+		Channel     string `json:"channel"`
+		Destination string `json:"destination"`
 	}
-	if !decode(r, &body) || body.Channel != tokenshares.Copy {
-		writeErr(w, 400, "INVALID_REQUEST", "only the COPY channel is supported; no message is sent")
+	if !decode(r, &body) {
+		writeErr(w, 400, "INVALID_REQUEST", "invalid request body")
 		return
 	}
-	share, err := s.O.RecordTokenCopy(r.Context(), userID(r), id, key)
+	ch, err := tokenshares.ParseChannel(body.Channel)
+	if err != nil {
+		writeErr(w, 400, "INVALID_REQUEST", "channel must be COPY, SMS, EMAIL or WHATSAPP")
+		return
+	}
+	if ch == tokenshares.Copy {
+		if body.Destination != "" {
+			writeErr(w, 400, "INVALID_REQUEST", "COPY does not accept a destination")
+			return
+		}
+		share, err := s.O.RecordTokenCopy(r.Context(), userID(r), id, key)
+		if err != nil {
+			s.mapErr(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"share": share,
+			"note":  "Copy action reported by the purchaser. This does not confirm copying or delivery. The token works only on its own meter; sharing does not transfer credit between meters.",
+		})
+		return
+	}
+	share, err := s.O.RecordTokenSend(r.Context(), userID(r), id, key, ch, body.Destination)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"share": share, "note": "Copy action reported by the purchaser. This does not confirm copying or delivery. The token works only on its own meter; sharing does not transfer credit between meters."})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"share": share,
+		"note":  "Token send accepted. Delivery is tracked separately and is not proof the recipient received or entered the token. The token works only on its own meter; sharing does not transfer credit between meters.",
+	})
 }
 func (s *Server) listTokenCopies(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")

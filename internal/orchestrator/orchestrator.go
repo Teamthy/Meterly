@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,7 @@ import (
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
-	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
@@ -47,6 +48,13 @@ type Config struct {
 	// PaymentExpiry: a payment still unpaid (per the provider) after this
 	// long is marked FAILED. A later successful payment goes to review.
 	PaymentExpiry time.Duration
+	// PotMaxHold caps how long a Funding Pot may hold contributor funds before
+	// automatic expiry and refund (default 72h, ceiling 7d).
+	PotMaxHold time.Duration
+	// AutoPowerDailyMaxMinor caps per-user daily AutoPower spend in Africa/Lagos.
+	AutoPowerDailyMaxMinor int64
+	// AutoPowerPollInterval sets the cadence for low-balance meter readings.
+	AutoPowerPollInterval time.Duration
 	// Resume worker scheduling.
 	ResumeStaleAfter  time.Duration // only touch transactions idle this long
 	ResumeLease       time.Duration // claim lease so workers don't overlap
@@ -60,8 +68,11 @@ func DefaultConfig() Config {
 	return Config{
 		FeeMinor: 10000, MinAmountMinor: 50000, MaxAmountMinor: 50000000,
 		QuoteTTL: 15 * time.Minute, ProviderTimeout: 20 * time.Second, IdempotencyTTL: 24 * time.Hour,
-		PaymentExpiry:    2 * time.Hour,
-		ResumeStaleAfter: 2 * time.Minute, ResumeLease: 2 * time.Minute,
+		PaymentExpiry:          2 * time.Hour,
+		PotMaxHold:             72 * time.Hour,
+		AutoPowerDailyMaxMinor: 10000000, // ₦100,000.00/day default guard
+		AutoPowerPollInterval:  4 * time.Hour,
+		ResumeStaleAfter:       2 * time.Minute, ResumeLease: 2 * time.Minute,
 		ResumeBaseBackoff: 30 * time.Second, ResumeMaxBackoff: 30 * time.Minute,
 		ResumeMaxAttempts: 12, ResumeBatch: 50,
 	}
@@ -76,16 +87,25 @@ const (
 )
 
 var (
-	ErrAmountOutOfRange  = errors.New("amount out of allowed range")
-	ErrNotEligible       = errors.New("meter is not eligible for remote credit delivery")
-	ErrQuoteExpired      = errors.New("quote expired or already used")
-	ErrQuoteNotFound     = errors.New("quote not found")
-	ErrPaymentMismatch   = errors.New("verified payment does not match the transaction")
-	ErrTokenUnavailable  = errors.New("token not available for this transaction")
+	ErrAmountOutOfRange = errors.New("amount out of allowed range")
+	ErrNotEligible      = errors.New("meter is not eligible for remote credit delivery")
+	ErrQuoteExpired     = errors.New("quote expired or already used")
+	ErrQuoteNotFound    = errors.New("quote not found")
+	ErrPaymentMismatch  = errors.New("verified payment does not match the transaction")
+	ErrTokenUnavailable = errors.New("token not available for this transaction")
+	// ErrCreditOnMeter: delivery is remote; the purchaser does not get a
+	// keypad token unless an operator falls back after a confirmed failure.
+	ErrCreditOnMeter     = errors.New("credit is on the meter; no keypad token")
 	ErrInvalidPreference = errors.New("unknown delivery preference")
+	ErrInvalidPack       = errors.New("unknown amount pack")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
+
+	ErrTokenShareContact     = errors.New("no verified contact for this channel")
+	ErrTokenShareDisabled    = errors.New("sending a token to another destination is not enabled")
+	ErrTokenShareRateLimited = errors.New("daily token send limit reached")
+	ErrTokenShareOptedOut    = errors.New("destination has opted out of this channel")
 )
 
 // errSkip aborts a mutate without writing: the transaction is already past
@@ -93,15 +113,19 @@ var (
 var errSkip = errors.New("skip")
 
 type Orchestrator struct {
-	cfg      Config
-	st       store.Store
-	Meters   *registry.Registry
-	box      *secure.Box
-	payments providers.PaymentProvider
-	vending  providers.VendingProvider
-	remote   providers.RemoteCreditProvider // nil if no AMI/HES integration
-	log      *slog.Logger
-	Now      func() time.Time
+	cfg            Config
+	st             store.Store
+	Meters         *registry.Registry
+	box            *secure.Box
+	payments       providers.PaymentProvider
+	vending        providers.VendingProvider
+	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
+	readings       providers.MeterReadingProvider // nil if no remote balance reading
+	notifProviders []string
+	featureGiftSMS bool
+	metrics        *observability.Registry
+	log            *slog.Logger
+	Now            func() time.Time
 }
 
 func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
@@ -114,6 +138,28 @@ func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
 }
 
 func (o *Orchestrator) Store() store.Store { return o.st }
+func (o *Orchestrator) Box() *secure.Box   { return o.box }
+
+func (o *Orchestrator) SetMetrics(m *observability.Registry) { o.metrics = m }
+
+// SetMeterReadingProvider attaches an optional remote meter reading provider
+// used by AutoPower low-balance mode.
+func (o *Orchestrator) SetMeterReadingProvider(r providers.MeterReadingProvider) { o.readings = r }
+
+// RegisterNotificationProviders makes configured notification providers visible
+// to operator status and kill-switch endpoints.
+func (o *Orchestrator) RegisterNotificationProviders(names ...string) {
+	for _, n := range names {
+		if n != "" {
+			o.notifProviders = append(o.notifProviders, n)
+		}
+	}
+}
+
+// SetFeatureGiftSMS gates third-party token-bearing SMS/email/WhatsApp shares
+// (the same NDPA control as gift-recipient SMS). Self-send to the purchaser's
+// own verified contact is always allowed.
+func (o *Orchestrator) SetFeatureGiftSMS(v bool) { o.featureGiftSMS = v }
 
 func (o *Orchestrator) pctx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, o.cfg.ProviderTimeout)
@@ -167,51 +213,22 @@ func emit(ctx context.Context, r store.Repos, typ string, id uuid.UUID, payload 
 	return r.Outbox().Add(ctx, events.New(typ, id, payload))
 }
 
-func post(ctx context.Context, r store.Repos, ref string, id uuid.UUID, desc string, entries ...ledger.Entry) error {
-	_, err := r.Ledger().Post(ctx, ledger.Transaction{Reference: ref, SourceType: "electricity_transaction", SourceID: id, Description: desc, Entries: entries})
+func (o *Orchestrator) post(ctx context.Context, r store.Repos, ref string, id uuid.UUID, desc string, entries ...ledger.Entry) error {
+	_, err := r.Ledger().Post(ctx, ledger.Transaction{
+		Reference:   ref,
+		SourceType:  "electricity_transaction",
+		SourceID:    id,
+		Description: desc,
+		PostedAt:    o.Now().UTC(),
+		Entries:     entries,
+	})
 	return err
 }
 
 // ---- Quotes ----------------------------------------------------------------
 
 func (o *Orchestrator) CreateQuote(ctx context.Context, customerID string, meterID uuid.UUID, amountMinor int64, pref DeliveryPreference) (*tx.Quote, error) {
-	if amountMinor < o.cfg.MinAmountMinor || amountMinor > o.cfg.MaxAmountMinor {
-		return nil, fmt.Errorf("%w: %d–%d kobo", ErrAmountOutOfRange, o.cfg.MinAmountMinor, o.cfg.MaxAmountMinor)
-	}
-	m, err := o.Meters.Authorize(ctx, customerID, meterID, meters.PermPurchase)
-	if err != nil {
-		return nil, err
-	}
-	options := []tx.DeliveryMethod{tx.MethodToken}
-	remoteOK := o.remote != nil && m.Capabilities.RemoteCreditUsable()
-	if remoteOK {
-		options = append([]tx.DeliveryMethod{tx.MethodRemote}, options...)
-	}
-	method := tx.MethodToken
-	switch pref {
-	case PrefRemote:
-		if !remoteOK {
-			return nil, ErrNotEligible
-		}
-		method = tx.MethodRemote
-	case PrefAuto, "":
-		if remoteOK {
-			method = tx.MethodRemote
-		}
-	case PrefToken:
-	default:
-		return nil, fmt.Errorf("%w %q", ErrInvalidPreference, pref)
-	}
-	amt := money.New(amountMinor, money.NGN)
-	fee := money.New(o.cfg.FeeMinor, money.NGN)
-	total, _ := amt.Add(fee)
-	now := o.Now()
-	q := &tx.Quote{ID: uuid.New(), CustomerID: customerID, MeterID: meterID, Amount: amt, Fee: fee, Total: total,
-		DeliveryMethod: method, DeliveryOptions: options, ExpiresAt: now.Add(o.cfg.QuoteTTL), CreatedAt: now}
-	if err := o.st.Repos().Quotes().Create(ctx, q); err != nil {
-		return nil, err
-	}
-	return q, nil
+	return o.IssueQuote(ctx, QuoteSpec{CustomerID: customerID, MeterID: meterID, AmountMinor: amountMinor, Pref: pref})
 }
 
 func (o *Orchestrator) GetQuote(ctx context.Context, customerID string, id uuid.UUID) (*tx.Quote, error) {
@@ -371,6 +388,10 @@ func (o *Orchestrator) EnsurePaymentInitialised(ctx context.Context, id uuid.UUI
 func (o *Orchestrator) HandlePaymentNotification(ctx context.Context, providerRef string) (*tx.Transaction, error) {
 	t, err := o.st.Repos().Transactions().ByPaymentRef(ctx, providerRef)
 	if errors.Is(err, store.ErrNotFound) {
+		potTxn, handled, perr := o.handlePotContributionPayment(ctx, providerRef)
+		if handled || perr != nil {
+			return potTxn, perr
+		}
 		return nil, tx.ErrNotFound
 	}
 	if err != nil {
@@ -389,6 +410,10 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 	pctx, cancel := o.pctx(ctx)
 	v, err := o.payments.VerifyPayment(pctx, t.PaymentProviderRef)
 	cancel()
+	if errors.Is(err, providers.ErrPaymentNotFound) {
+		v = providers.PaymentVerification{ProviderRef: t.PaymentProviderRef, Status: providers.PaymentPending}
+		err = nil
+	}
 	if err != nil {
 		return t, fmt.Errorf("verify payment: %w", err) // unchanged; retried later
 	}
@@ -413,9 +438,15 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := t.SetPayment(tx.PayFailed, "expired: provider reports unpaid after "+o.cfg.PaymentExpiry.String()); err != nil {
 				return err
 			}
+			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
+				return err
+			}
 			return emit(ctx, r, "payment.failed", t.ID, map[string]any{"reason": "expired"})
 		case providers.PaymentFailed:
 			if err := t.SetPayment(tx.PayFailed, "provider reports failure"); err != nil {
+				return err
+			}
+			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
 				return err
 			}
 			return emit(ctx, r, "payment.failed", t.ID, nil)
@@ -429,7 +460,7 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := t.SetPayment(tx.PayConfirmed, "verified with "+o.payments.Name()); err != nil {
 				return err
 			}
-			if err := post(ctx, r, "pay:"+t.ID.String(), t.ID, "Customer payment confirmed",
+			if err := o.post(ctx, r, "pay:"+t.ID.String(), t.ID, "Customer payment confirmed",
 				ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Debit, Amount: t.Total},
 				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: t.Total},
 			); err != nil {
@@ -445,6 +476,9 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 	if mismatch {
 		o.log.Warn("payment amount mismatch; flagged for review", "txn", t.ID)
 		return t, ErrPaymentMismatch
+	}
+	if t != nil && t.Payment == tx.PayFailed {
+		o.trySyncAutoPowerTxn(ctx, t.ID)
 	}
 	return o.advance(ctx, t.ID)
 }
@@ -474,6 +508,16 @@ func (o *Orchestrator) advance(ctx context.Context, id uuid.UUID) (*tx.Transacti
 func vendKey(id uuid.UUID) string   { return "vend:" + id.String() }
 func creditKey(id uuid.UUID) string { return "credit:" + id.String() }
 
+func (o *Orchestrator) vendIdempotencyKey(t *tx.Transaction) string {
+	if t != nil && strings.TrimSpace(t.VendIdempotencyKey) != "" {
+		return t.VendIdempotencyKey
+	}
+	if t == nil {
+		return ""
+	}
+	return vendKey(t.ID)
+}
+
 // vend claims the vending step (NOT_STARTED -> PENDING) and calls the provider.
 func (o *Orchestrator) vend(ctx context.Context, id uuid.UUID) (*tx.Transaction, error) {
 	if err := o.requireEnabled(ctx, o.vending.Name()); err != nil {
@@ -486,6 +530,9 @@ func (o *Orchestrator) vend(ctx context.Context, id uuid.UUID) (*tx.Transaction,
 			return errSkip
 		}
 		t.VendProviderName = o.vending.Name()
+		if strings.TrimSpace(t.VendIdempotencyKey) == "" {
+			t.VendIdempotencyKey = o.vending.NewVendKey(t.ID.String(), o.Now())
+		}
 		if err := t.SetVending(tx.VendPending, "vend requested via "+o.vending.Name()); err != nil {
 			return err
 		}
@@ -513,7 +560,8 @@ func (o *Orchestrator) callVend(ctx context.Context, t *tx.Transaction) (*tx.Tra
 	}
 	pctx, cancel := o.pctx(ctx)
 	res, err := o.vending.Vend(pctx, providers.VendRequest{
-		TransactionID: t.ID.String(), MeterNumber: number, DiscoCode: m.DiscoCode, Amount: t.Amount, IdempotencyKey: vendKey(t.ID),
+		TransactionID: t.ID.String(), MeterNumber: number, DiscoCode: m.DiscoCode, Amount: t.Amount,
+		IdempotencyKey: o.vendIdempotencyKey(t), MeterType: m.MeterType,
 	})
 	cancel()
 	if err != nil {
@@ -558,7 +606,7 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 			if t.Fee.Minor > 0 {
 				entries = append(entries, ledger.Entry{Account: ledger.PlatformFeeRevenue, Direction: ledger.Credit, Amount: t.Fee})
 			}
-			if err := post(ctx, r, "vend:"+t.ID.String(), t.ID, "Electricity vended", entries...); err != nil {
+			if err := o.post(ctx, r, "vend:"+t.ID.String(), t.ID, "Electricity vended", entries...); err != nil {
 				return err
 			}
 			return emit(ctx, r, "electricity.vending.completed", t.ID, map[string]any{"units_kwh": res.UnitsKWh})
@@ -566,6 +614,7 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 		if err != nil {
 			return t, err
 		}
+		o.trySyncAutoPowerTxn(ctx, id)
 		return o.deliver(ctx, id)
 	case providers.VendFailed:
 		t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
@@ -625,6 +674,9 @@ func (o *Orchestrator) deliver(ctx context.Context, id uuid.UUID) (*tx.Transacti
 		return emit(ctx, r, "token.available", t.ID, map[string]any{"gift": t.IsGift})
 	})
 	if err != nil || !claimed {
+		if err == nil && t != nil && t.Delivery == tx.DelConfirmed && t.EffectiveFundingSource() == tx.FundingPot {
+			o.trySettleAllocatedPot(ctx, t.ID)
+		}
 		return t, err
 	}
 	return o.sendRemoteCredit(ctx, t)
@@ -677,7 +729,7 @@ func (o *Orchestrator) applyCreditResult(ctx context.Context, id uuid.UUID, res 
 	default:
 		return nil, fmt.Errorf("unexpected credit status %q", res.Status)
 	}
-	return o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
+	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
 		switch t.Delivery {
 		case tx.DelPending, tx.DelAccepted, tx.DelUnknown:
 		default:
@@ -702,6 +754,10 @@ func (o *Orchestrator) applyCreditResult(ctx context.Context, id uuid.UUID, res 
 		}
 		return emit(ctx, r, evt, t.ID, map[string]any{"method": "REMOTE"})
 	})
+	if err == nil && t != nil && t.Delivery == tx.DelConfirmed && t.EffectiveFundingSource() == tx.FundingPot {
+		o.trySettleAllocatedPot(ctx, t.ID)
+	}
+	return t, err
 }
 
 // requireEnabled returns ErrProviderDisabled if an operator switched the
@@ -720,10 +776,21 @@ func (o *Orchestrator) requireEnabled(ctx context.Context, name string) error {
 // ---- Refunds -----------------------------------------------------------------------
 
 // refund is used only when vending definitively failed, so the customer
-// provably received no electricity.
+// provably received no electricity. Branches on FundingSource so POT-funded
+// transactions return funds to POT_FUNDS_HELD instead of calling the PSP.
 func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) (*tx.Transaction, error) {
+	cur, err := o.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if cur.EffectiveFundingSource() == tx.FundingPot {
+		return o.refundPotFunded(ctx, id, reason, nil)
+	}
 	claimed := false
 	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
+		if t.EffectiveFundingSource() == tx.FundingPot {
+			return errSkip
+		}
 		if t.Payment != tx.PayConfirmed || t.Vending != tx.VendFailed || t.ReviewReason != "" {
 			return errSkip
 		}
@@ -731,7 +798,7 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 		if err := t.SetPayment(tx.PayRefundPending, reason); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
+		if err := o.post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
 			ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Debit, Amount: t.Total},
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: t.Total},
 		); err != nil {
@@ -743,12 +810,16 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 	if err != nil || !claimed {
 		return t, err // a concurrent worker owns the refund call (or Resume retries it)
 	}
+	o.trySyncAutoPowerTxn(ctx, id)
 	return o.executeRefund(ctx, t)
 }
 
 // executeRefund asks the PSP to refund (idempotent by our reference) and
 // records completion. On failure it stays REFUND_PENDING for Resume.
 func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*tx.Transaction, error) {
+	if t.EffectiveFundingSource() == tx.FundingPot {
+		return o.refundPotFunded(ctx, t.ID, t.RefundReason, nil)
+	}
 	pctx, cancel := o.pctx(ctx)
 	ref, err := o.payments.RefundPayment(pctx, providers.RefundRequest{ProviderRef: t.PaymentProviderRef, Amount: t.RefundAmount, Reference: "refund:" + t.ID.String()})
 	cancel()
@@ -756,7 +827,7 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		o.log.Warn("refund call failed; stays REFUND_PENDING", "txn", t.ID, "err", err)
 		return t, nil
 	}
-	return o.mutate(ctx, t.ID, func(t *tx.Transaction, r store.Repos) error {
+	t, err = o.mutate(ctx, t.ID, func(t *tx.Transaction, r store.Repos) error {
 		if t.Payment != tx.PayRefundPending {
 			return errSkip
 		}
@@ -764,7 +835,7 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		if err := t.SetPayment(tx.PayRefunded, "refund "+ref); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-paid:"+t.ID.String(), t.ID, "Refund paid",
+		if err := o.post(ctx, r, "refund-paid:"+t.ID.String(), t.ID, "Refund paid",
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Debit, Amount: t.RefundAmount},
 			ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Credit, Amount: t.RefundAmount},
 		); err != nil {
@@ -772,6 +843,10 @@ func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*t
 		}
 		return emit(ctx, r, "electricity.refund.completed", t.ID, nil)
 	})
+	if err == nil && t != nil && t.Payment == tx.PayRefunded {
+		o.trySyncAutoPowerTxn(ctx, t.ID)
+	}
+	return t, err
 }
 
 // HashGiftRequest protects low-entropy recipient contact in idempotency records.

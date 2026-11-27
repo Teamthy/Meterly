@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -16,8 +17,9 @@ import (
 // Admin API (spec §11). Operators investigate and nudge transactions;
 // admins can also refund from review and switch providers. Every mutating
 // action needs a reason and is audited.
-func (s *Server) adminRoutes(mux *http.ServeMux) {
+func (s *Server) adminRoutes(mux *patternMux) {
 	op, admin := s.authed(auth.RoleOperator, false), s.authed(auth.RoleAdmin, false)
+	mux.Handle("GET /v1/admin/console", op(s.adminConsole))
 	mux.Handle("GET /v1/admin/transactions", op(s.adminSearch))
 	mux.Handle("GET /v1/admin/transactions/{transaction_id}", op(s.adminDetail))
 	mux.Handle("POST /v1/admin/transactions/{transaction_id}/reconcile", op(s.adminAction(s.O.Reconcile)))
@@ -28,6 +30,12 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/providers", op(s.adminProviders))
 	mux.Handle("POST /v1/admin/providers/{name}/enable", admin(s.adminSetProvider(true)))
 	mux.Handle("POST /v1/admin/providers/{name}/disable", admin(s.adminSetProvider(false)))
+	mux.Handle("POST /v1/admin/unit-meters/{id}/verify", op(s.adminVerifyUnitMeter))
+	mux.Handle("POST /v1/admin/meters/{meter_id}/ownership", op(s.adminAttestOwnership))
+	mux.Handle("POST /v1/admin/remote-credit/cohorts", admin(s.adminCreateRemoteCohort))
+	mux.Handle("GET /v1/admin/remote-credit/cohorts", op(s.adminListRemoteCohorts))
+	mux.Handle("DELETE /v1/admin/remote-credit/cohorts/{id}", admin(s.adminRevokeRemoteCohort))
+	s.adminSupportRoutes(mux)
 }
 
 // actor builds the audit actor from the caller and a {"reason": "..."} body.
@@ -67,6 +75,15 @@ func adminView(t *tx.Transaction) map[string]any {
 	// Never the token itself; revealing it is a separate audited action.
 	v["token_available"] = len(t.TokenCiphertext) > 0
 	return v
+}
+
+func (s *Server) adminConsole(w http.ResponseWriter, r *http.Request) {
+	c, err := s.O.AdminConsole(r.Context(), callerOf(r).Principal.Has(auth.RoleAdmin))
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 200, c)
 }
 
 func (s *Server) adminSearch(w http.ResponseWriter, r *http.Request) {
@@ -130,12 +147,24 @@ func (s *Server) adminDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	d, err := s.O.Detail(r.Context(), id)
+	actor := audit.Actor{
+		UserID:        userID(r),
+		Type:          audit.ActorOperator,
+		CorrelationID: audit.CorrelationFrom(r.Context()),
+	}
+	d, err := s.O.DetailForOperator(r.Context(), id, actor)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"transaction": adminView(d.Transaction), "ledger": d.Ledger, "events": d.Events, "audit": d.Audit})
+	writeJSON(w, 200, map[string]any{
+		"transaction":   adminView(d.Transaction),
+		"ledger":        d.Ledger,
+		"events":        d.Events,
+		"audit":         d.Audit,
+		"notifications": d.Notifications,
+		"investigation": orchestrator.InvestigationFrom(d, callerOf(r).Principal.Has(auth.RoleAdmin)),
+	})
 }
 
 func (s *Server) adminAction(fn func(ctx context.Context, id uuid.UUID, a audit.Actor) (*tx.Transaction, error)) http.HandlerFunc {
@@ -201,4 +230,30 @@ func (s *Server) adminSetProvider(enabled bool) http.HandlerFunc {
 		}
 		writeJSON(w, 200, map[string]any{"name": name, "enabled": enabled})
 	}
+}
+
+func (s *Server) adminAttestOwnership(w http.ResponseWriter, r *http.Request) {
+	if s.HouseholdsDisabled {
+		writeErr(w, http.StatusNotFound, "FEATURE_DISABLED", "households are not enabled")
+		return
+	}
+	mid, ok := parsePathUUID(w, r, "meter_id")
+	if !ok {
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+		UserID string `json:"user_id"`
+	}
+	if !decode(r, &body) || len(body.Reason) < 5 || len(body.Reason) > 500 || body.UserID == "" {
+		writeErr(w, 400, "INVALID_REQUEST", "user_id and a reason (5–500 characters) are required")
+		return
+	}
+	actor := audit.Actor{UserID: userID(r), Type: audit.ActorOperator, Reason: body.Reason, CorrelationID: audit.CorrelationFrom(r.Context())}
+	own, err := s.O.AttestOwnership(r.Context(), actor, mid, body.UserID)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 201, own)
 }

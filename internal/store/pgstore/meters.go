@@ -138,6 +138,28 @@ func (r meterRepo) ActiveGrant(ctx context.Context, meterID uuid.UUID, userID st
 	return &g, nil
 }
 
+func (r meterRepo) ListAll(ctx context.Context, limit int) ([]*meters.Meter, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+meterCols+` FROM meters m
+		JOIN distribution_companies d ON d.id = m.disco_id
+		ORDER BY m.created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := make([]*meters.Meter, 0)
+	for rows.Next() {
+		m, err := scanMeter(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (r meterRepo) ListForUser(ctx context.Context, userID string) ([]meters.Listed, error) {
 	rows, err := r.db.Query(ctx, `SELECT `+meterCols+`, coalesce(g.label, ''), g.permission
 		FROM meter_access_grants g
@@ -165,6 +187,24 @@ func (r meterRepo) ListForUser(ctx context.Context, userID string) ([]meters.Lis
 	return out, rows.Err()
 }
 
+func (r meterRepo) ListActiveUserIDs(ctx context.Context, meterID uuid.UUID) ([]string, error) {
+	rows, err := r.db.Query(ctx, `SELECT DISTINCT user_id::text FROM meter_access_grants
+		WHERE meter_id = $1 AND revoked_at IS NULL`, meterID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (r meterRepo) Revoke(ctx context.Context, meterID uuid.UUID, userID string, at time.Time) error {
 	_, err := r.db.Exec(ctx, `UPDATE meter_access_grants SET revoked_at = $3
 		WHERE meter_id = $1 AND user_id = $2 AND revoked_at IS NULL`, meterID, userID, at)
@@ -182,10 +222,12 @@ func (r quoteRepo) Create(ctx context.Context, q *tx.Quote) error {
 	}
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO quotes (id, customer_id, meter_id, amount_minor, fee_minor, total_minor, currency,
-		                    delivery_method, delivery_options, expires_at, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'OPEN', $11)`,
+		                    delivery_method, delivery_options, expires_at, status, created_at,
+		                    pack_id, tariff_band, kobo_per_kwh, estimated_units_milli, credit_minor, discount_minor)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'OPEN', $11, $12, $13, $14, $15, $16, $17)`,
 		q.ID, q.CustomerID, q.MeterID, q.Amount.Minor, q.Fee.Minor, q.Total.Minor, string(q.Total.Currency),
-		q.DeliveryMethod, opts, q.ExpiresAt, q.CreatedAt)
+		q.DeliveryMethod, opts, q.ExpiresAt, q.CreatedAt,
+		q.PackID, q.TariffBand, q.KoboPerKWh, q.EstimatedUnitsMilli, q.CreditMinor, q.DiscountMinor)
 	return mapErr(err)
 }
 
@@ -194,9 +236,13 @@ func (r quoteRepo) get(ctx context.Context, id uuid.UUID, lock string) (*tx.Quot
 	var cur, status string
 	var opts []string
 	err := r.db.QueryRow(ctx, `SELECT id, customer_id::text, meter_id, amount_minor, fee_minor, total_minor, currency,
-		delivery_method, delivery_options, expires_at, status, created_at FROM quotes WHERE id = $1 `+lock, id).
+		delivery_method, delivery_options, expires_at, status, created_at,
+		coalesce(pack_id, ''), coalesce(tariff_band, ''), coalesce(kobo_per_kwh, 0),
+		coalesce(estimated_units_milli, 0), coalesce(credit_minor, 0), coalesce(discount_minor, 0)
+		FROM quotes WHERE id = $1 `+lock, id).
 		Scan(&q.ID, &q.CustomerID, &q.MeterID, &q.Amount.Minor, &q.Fee.Minor, &q.Total.Minor, &cur,
-			&q.DeliveryMethod, &opts, &q.ExpiresAt, &status, &q.CreatedAt)
+			&q.DeliveryMethod, &opts, &q.ExpiresAt, &status, &q.CreatedAt,
+			&q.PackID, &q.TariffBand, &q.KoboPerKWh, &q.EstimatedUnitsMilli, &q.CreditMinor, &q.DiscountMinor)
 	if err != nil {
 		return nil, mapErr(err)
 	}

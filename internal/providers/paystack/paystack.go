@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/teamthy/meterly/internal/money"
+	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 )
 
@@ -78,6 +79,14 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("paystack: %s (HTTP %d)", e.Message, e.HTTPStatus)
 }
 
+func (e *APIError) Unwrap() error {
+	msg := strings.ToLower(e.Message)
+	if e.HTTPStatus == http.StatusNotFound || strings.Contains(msg, "transaction reference not found") {
+		return providers.ErrPaymentNotFound
+	}
+	return nil
+}
+
 type envelope struct {
 	Status  bool            `json:"status"`
 	Message string          `json:"message"`
@@ -103,6 +112,7 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	observability.InjectHTTP(ctx, req.Header)
 	res, err := c.http.Do(req)
 	if err != nil {
 		// Never include the URL-bearing error text verbatim in callers' logs
@@ -176,13 +186,30 @@ func (c *Client) InitializePayment(ctx context.Context, req providers.PaymentIni
 	return providers.PaymentInitResult{ProviderRef: data.Reference, CheckoutURL: data.AuthorizationURL}, nil
 }
 
+type authData struct {
+	AuthorizationCode string `json:"authorization_code"`
+	CardType          string `json:"card_type"`
+	Brand             string `json:"brand"`
+	Last4             string `json:"last4"`
+	ExpMonth          string `json:"exp_month"`
+	ExpYear           string `json:"exp_year"`
+	Channel           string `json:"channel"`
+	Reusable          bool   `json:"reusable"`
+	Signature         string `json:"signature"`
+}
+
 type txnData struct {
 	ID        int64      `json:"id"`
 	Status    string     `json:"status"`
 	Reference string     `json:"reference"`
 	Amount    int64      `json:"amount"`
 	Currency  string     `json:"currency"`
+	Channel   string     `json:"channel"`
 	PaidAt    *time.Time `json:"paid_at"`
+	Customer  struct {
+		Email string `json:"email"`
+	} `json:"customer"`
+	Authorization *authData `json:"authorization"`
 }
 
 // mapStatus is deliberately conservative: only "success" counts as paid,
@@ -193,9 +220,86 @@ func mapStatus(s string) providers.PaymentStatus {
 		return providers.PaymentSucceeded
 	case "failed", "reversed":
 		return providers.PaymentFailed
-	default: // abandoned, ongoing, pending, processing, queued, unknown values
+	default: // abandoned, ongoing, pending, processing, queued, send_otp, unknown values
 		return providers.PaymentPending
 	}
+}
+
+func parseCardAuth(d txnData) *providers.CardAuthorization {
+	a := d.Authorization
+	if a == nil || strings.TrimSpace(a.AuthorizationCode) == "" {
+		return nil
+	}
+	expMonth, _ := strconv.Atoi(strings.TrimSpace(a.ExpMonth))
+	expYear, _ := strconv.Atoi(strings.TrimSpace(a.ExpYear))
+	if expYear > 0 && expYear < 100 {
+		expYear += 2000
+	}
+	brand := strings.ToLower(strings.TrimSpace(a.Brand))
+	if brand == "" {
+		parts := strings.Fields(strings.ToLower(strings.TrimSpace(a.CardType)))
+		if len(parts) > 0 {
+			brand = parts[0]
+		}
+	}
+	ch := strings.ToLower(strings.TrimSpace(a.Channel))
+	if ch == "" {
+		ch = strings.ToLower(strings.TrimSpace(d.Channel))
+	}
+	return &providers.CardAuthorization{
+		AuthorizationCode: strings.TrimSpace(a.AuthorizationCode),
+		Reusable:          a.Reusable,
+		CardBrand:         brand,
+		Last4:             strings.TrimSpace(a.Last4),
+		ExpMonth:          expMonth,
+		ExpYear:           expYear,
+		Channel:           ch,
+		Signature:         strings.TrimSpace(a.Signature),
+		CustomerEmail:     strings.ToLower(strings.TrimSpace(d.Customer.Email)),
+	}
+}
+
+func toVerification(d txnData) providers.PaymentVerification {
+	return providers.PaymentVerification{
+		ProviderRef:   d.Reference,
+		Status:        mapStatus(d.Status),
+		Amount:        money.New(d.Amount, money.Currency(d.Currency)),
+		PaidAt:        d.PaidAt,
+		Authorization: parseCardAuth(d),
+	}
+}
+
+func (c *Client) ChargeSaved(ctx context.Context, req providers.ChargeRequest) (providers.PaymentVerification, error) {
+	if strings.TrimSpace(req.AuthorizationRef) == "" {
+		return providers.PaymentVerification{}, &APIError{Message: "authorization_code is required"}
+	}
+	if strings.TrimSpace(req.Email) == "" {
+		return providers.PaymentVerification{}, &APIError{Message: "customer email is required"}
+	}
+	if strings.TrimSpace(req.Reference) == "" {
+		return providers.PaymentVerification{}, &APIError{Message: "reference is required"}
+	}
+	if req.Amount.Currency != money.NGN || req.Amount.Minor <= 0 {
+		return providers.PaymentVerification{}, &APIError{Message: "amount must be a positive NGN value"}
+	}
+	body := map[string]any{
+		"authorization_code": req.AuthorizationRef,
+		"email":              req.Email,
+		"amount":             strconv.FormatInt(req.Amount.Minor, 10),
+		"currency":           string(req.Amount.Currency),
+		"reference":          req.Reference,
+	}
+	var d txnData
+	if err := c.call(ctx, http.MethodPost, "/transaction/charge_authorization", body, &d); err != nil {
+		return providers.PaymentVerification{}, err
+	}
+	if d.Reference == "" {
+		return providers.PaymentVerification{}, fmt.Errorf("%w: paystack charge_authorization returned no reference", providers.ErrAmbiguous)
+	}
+	if d.Reference != req.Reference {
+		return providers.PaymentVerification{}, fmt.Errorf("%w: paystack charge_authorization returned reference %q for %q", providers.ErrAmbiguous, d.Reference, req.Reference)
+	}
+	return toVerification(d), nil
 }
 
 func (c *Client) verify(ctx context.Context, ref string) (txnData, error) {
@@ -212,18 +316,14 @@ func (c *Client) VerifyPayment(ctx context.Context, ref string) (providers.Payme
 	if d.Reference != ref {
 		return providers.PaymentVerification{}, fmt.Errorf("%w: paystack verify returned reference %q for %q", providers.ErrAmbiguous, d.Reference, ref)
 	}
-	return providers.PaymentVerification{
-		ProviderRef: d.Reference,
-		Status:      mapStatus(d.Status),
-		Amount:      money.New(d.Amount, money.Currency(d.Currency)),
-		PaidAt:      d.PaidAt,
-	}, nil
+	return toVerification(d), nil
 }
 
 type refundData struct {
-	ID     int64  `json:"id"`
-	Status string `json:"status"`
-	Amount int64  `json:"amount"`
+	ID           int64  `json:"id"`
+	Status       string `json:"status"`
+	Amount       int64  `json:"amount"`
+	MerchantNote string `json:"merchant_note"`
 }
 
 func (c *Client) RefundPayment(ctx context.Context, req providers.RefundRequest) (string, error) {
@@ -232,13 +332,23 @@ func (c *Client) RefundPayment(ctx context.Context, req providers.RefundRequest)
 		return "", err
 	}
 	// Idempotency: Paystack has no idempotency key for refunds, so look for
-	// an existing refund on this transaction before creating one.
+	// an existing non-failed refund matching our merchant_note (or amount
+	// when merchant_note was not echoed) before creating one.
 	var existing []refundData
 	if err := c.call(ctx, http.MethodGet, "/refund?transaction="+strconv.FormatInt(d.ID, 10), nil, &existing); err != nil {
 		return "", err
 	}
 	for _, r := range existing {
-		if r.Status != "failed" {
+		if r.Status == "failed" {
+			continue
+		}
+		if r.MerchantNote != "" {
+			if r.MerchantNote == req.Reference {
+				return strconv.FormatInt(r.ID, 10), nil
+			}
+			continue
+		}
+		if r.Amount == req.Amount.Minor {
 			return strconv.FormatInt(r.ID, 10), nil
 		}
 	}

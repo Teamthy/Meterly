@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/teamthy/meterly/internal/channels/ussd"
+	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/orchestrator"
+	"github.com/teamthy/meterly/internal/pots"
 )
 
 type Mode string
@@ -35,27 +38,97 @@ type Config struct {
 	KeyVersion   string
 
 	PaymentProvider string // mock | paystack
-	VendingProvider string // mock
+	VendingProvider string // mock | vtpass
 
-	PaystackSecretKey   string
-	PaystackBaseURL     string
-	PaystackCallbackURL string
-	RemoteProvider      string // mock | none
-	ProviderEnvironment string // SANDBOX | PRODUCTION
+	PaystackSecretKey    string
+	PaystackBaseURL      string
+	PaystackCallbackURL  string
+	VTPassAPIKey         string
+	VTPassSecretKey      string
+	VTPassPublicKey      string
+	VTPassBaseURL        string
+	VTPassDefaultPhone   string
+	RemoteProvider       string // mock | none | http
+	RemoteHESBaseURL     string
+	RemoteHESHMACSecret  string
+	MeterReadingProvider string // mock | none
+	ProviderEnvironment  string // SANDBOX | PRODUCTION
+
+	// Notification providers and gates (M5).
+	SMSProvider                 string // mock | africastalking | none
+	EmailProvider               string // mock | resend | none
+	WhatsAppProvider            string // mock | whatsapp | none
+	AfricasTalkingUsername      string
+	AfricasTalkingAPIKey        string
+	AfricasTalkingSenderID      string
+	AfricasTalkingWebhookSecret string
+	AfricasTalkingBaseURL       string
+	ResendAPIKey                string
+	ResendFrom                  string
+	ResendWebhookSecret         string
+	ResendBaseURL               string
+	WhatsAppPhoneNumberID       string
+	WhatsAppAccessToken         string
+	WhatsAppAppSecret           string
+	WhatsAppVerifyToken         string
+	WhatsAppAPIVersion          string
+	WhatsAppBaseURL             string
+	FeatureGiftSMS              bool
+	NotificationInterval        time.Duration
+	NotificationHMACRetention   time.Duration
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
-	AuthMode       string
-	OIDCIssuer     string
-	OIDCAudience   string
-	OIDCJWKSURL    string
-	OIDCRolesClaim string
-	OIDCMFAValues  []string // staff roles require one of these in "amr"
+	AuthMode        string
+	OIDCIssuer      string
+	OIDCAudience    string
+	OIDCJWKSURL     string
+	OIDCRolesClaim  string
+	OIDCMFAValues   []string // staff roles require one of these in "amr"
+	WebAuthnOrigins []string // browser origins allowed to register/login passkeys
+
+	// Observability (M6).
+	MetricsAddr            string        // internal Prometheus bind address (default ":9090", "off" disables)
+	MetricsRefreshInterval time.Duration // gauge refresh period (default 1m)
+	OTelEndpoint           string        // OTEL_EXPORTER_OTLP_ENDPOINT; empty = no-op tracer
+
+	// Pay-for-Me shareable payment request links (M7).
+	FeaturePayForMe      bool
+	PublicBaseURL        string
+	RatePublicPayPerMin  int
+	RatePublicLinkPerMin int
+
+	// Split the Meter Funding Pots (M8).
+	FeatureSplitMeter bool
+	PotMaxHold        time.Duration
+
+	// AutoPower scheduled auto-recharge with spend guard (M9).
+	FeatureAutoPower  bool
+	AutoPowerInterval time.Duration
+
+	// Landlord Power Desk organisations, unit meters & bulk top-ups (M10).
+	FeaturePowerDesk bool
+
+	// Meterly Offline USSD & WhatsApp purchase channels (M11).
+	FeatureUSSD     bool
+	FeatureWhatsApp bool
+	// Support chat (agent + E2E human operators).
+	FeatureSupport bool
+	// Households: verified ownership + membership (FR-008).
+	FeatureHouseholds              bool
+	USSDSharedSecret               string
+	USSDAllowedIPs                 []string
+	OfflineReverifyAfter           time.Duration
+	OfflineUnverifiedDailyMaxMinor int64
+	OfflineVerifiedDailyMaxMinor   int64
 
 	// Rate limits (per minute) and client IP source.
 	RateWritesPerMin       int
 	RateAuthFailuresPerMin int
 	RateWebhooksPerMin     int
 	ClientIPHeader         string
+	// RedisURL, when set (redis:// or rediss://), shares rate-limit buckets
+	// across API replicas. Empty keeps in-process token buckets.
+	RedisURL string
 
 	Orchestrator   orchestrator.Config
 	ResumeInterval time.Duration
@@ -67,7 +140,13 @@ type Config struct {
 
 // UsesMocks reports whether any provider is an in-process mock.
 func (c Config) UsesMocks() bool {
-	return c.PaymentProvider == "mock" || c.VendingProvider == "mock" || c.RemoteProvider == "mock"
+	return c.PaymentProvider == "mock" ||
+		c.VendingProvider == "mock" ||
+		c.RemoteProvider == "mock" ||
+		c.MeterReadingProvider == "mock" ||
+		c.SMSProvider == "mock" ||
+		c.EmailProvider == "mock" ||
+		c.WhatsAppProvider == "mock"
 }
 
 // Load reads configuration using getenv (os.Getenv in production).
@@ -117,22 +196,195 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	c := Config{
-		Mode:                Mode(get("MODE", "")),
-		HTTPAddr:            ":" + get("PORT", "8080"),
-		DatabaseURL:         getenv("DATABASE_URL"),
-		TokenEncKey:         key("TOKEN_ENC_KEY"),
-		MeterHMACKey:        key("METER_HMAC_KEY"),
-		KeyVersion:          get("KEY_VERSION", "v1"),
-		PaymentProvider:     get("PAYMENT_PROVIDER", "mock"),
-		VendingProvider:     get("VENDING_PROVIDER", "mock"),
-		RemoteProvider:      get("REMOTE_PROVIDER", "mock"),
-		ProviderEnvironment: get("PROVIDER_ENVIRONMENT", "SANDBOX"),
-		PaystackSecretKey:   getenv("PAYSTACK_SECRET_KEY"),
-		PaystackBaseURL:     get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
-		PaystackCallbackURL: getenv("PAYSTACK_CALLBACK_URL"),
-		ResumeInterval:      dur("RESUME_INTERVAL", 15*time.Second),
-		OutboxInterval:      dur("OUTBOX_INTERVAL", 2*time.Second),
-		ShutdownTimeout:     dur("SHUTDOWN_TIMEOUT", 15*time.Second),
+		Mode:                   Mode(get("MODE", "")),
+		HTTPAddr:               ":" + get("PORT", "8080"),
+		MetricsAddr:            get("METRICS_ADDR", ":9090"),
+		MetricsRefreshInterval: dur("METRICS_REFRESH_INTERVAL", time.Minute),
+		OTelEndpoint:           strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+		DatabaseURL:            getenv("DATABASE_URL"),
+		TokenEncKey:            key("TOKEN_ENC_KEY"),
+		MeterHMACKey:           key("METER_HMAC_KEY"),
+		KeyVersion:             get("KEY_VERSION", "v1"),
+		PaymentProvider:        get("PAYMENT_PROVIDER", "mock"),
+		VendingProvider:        get("VENDING_PROVIDER", "mock"),
+		RemoteProvider:         get("REMOTE_PROVIDER", map[bool]string{true: "mock", false: "none"}[Mode(get("MODE", "")) == Dev]),
+		RemoteHESBaseURL:       strings.TrimSpace(getenv("REMOTE_HES_BASE_URL")),
+		RemoteHESHMACSecret:    strings.TrimSpace(getenv("REMOTE_HES_HMAC_SECRET")),
+		ProviderEnvironment:    get("PROVIDER_ENVIRONMENT", "SANDBOX"),
+		PaystackSecretKey:      getenv("PAYSTACK_SECRET_KEY"),
+		PaystackBaseURL:        get("PAYSTACK_BASE_URL", "https://api.paystack.co"),
+		PaystackCallbackURL:    getenv("PAYSTACK_CALLBACK_URL"),
+		VTPassAPIKey:           strings.TrimSpace(getenv("VTPASS_API_KEY")),
+		VTPassSecretKey:        strings.TrimSpace(getenv("VTPASS_SECRET_KEY")),
+		VTPassPublicKey:        strings.TrimSpace(getenv("VTPASS_PUBLIC_KEY")),
+		VTPassBaseURL:          strings.TrimSpace(getenv("VTPASS_BASE_URL")),
+		VTPassDefaultPhone:     strings.TrimSpace(getenv("VTPASS_DEFAULT_PHONE")),
+		ResumeInterval:         dur("RESUME_INTERVAL", 15*time.Second),
+		OutboxInterval:         dur("OUTBOX_INTERVAL", 2*time.Second),
+		ShutdownTimeout:        dur("SHUTDOWN_TIMEOUT", 15*time.Second),
+	}
+
+	notifDefault := "none"
+	if c.Mode == Dev {
+		notifDefault = "mock"
+	}
+	c.MeterReadingProvider = get("METER_READING_PROVIDER", notifDefault)
+	c.SMSProvider = get("SMS_PROVIDER", notifDefault)
+	c.EmailProvider = get("EMAIL_PROVIDER", notifDefault)
+	c.WhatsAppProvider = get("WHATSAPP_PROVIDER", notifDefault)
+	c.AfricasTalkingUsername = strings.TrimSpace(getenv("AFRICASTALKING_USERNAME"))
+	c.AfricasTalkingAPIKey = strings.TrimSpace(getenv("AFRICASTALKING_API_KEY"))
+	c.AfricasTalkingSenderID = strings.TrimSpace(getenv("AFRICASTALKING_SENDER_ID"))
+	c.AfricasTalkingWebhookSecret = strings.TrimSpace(getenv("AFRICASTALKING_WEBHOOK_SECRET"))
+	c.AfricasTalkingBaseURL = strings.TrimSpace(getenv("AFRICASTALKING_BASE_URL"))
+	c.ResendAPIKey = strings.TrimSpace(getenv("RESEND_API_KEY"))
+	c.ResendFrom = strings.TrimSpace(getenv("RESEND_FROM"))
+	c.ResendWebhookSecret = strings.TrimSpace(getenv("RESEND_WEBHOOK_SECRET"))
+	c.ResendBaseURL = strings.TrimSpace(getenv("RESEND_BASE_URL"))
+	c.WhatsAppPhoneNumberID = strings.TrimSpace(getenv("WHATSAPP_PHONE_NUMBER_ID"))
+	c.WhatsAppAccessToken = strings.TrimSpace(getenv("WHATSAPP_ACCESS_TOKEN"))
+	c.WhatsAppAppSecret = strings.TrimSpace(getenv("WHATSAPP_APP_SECRET"))
+	c.WhatsAppVerifyToken = strings.TrimSpace(getenv("WHATSAPP_VERIFY_TOKEN"))
+	c.WhatsAppAPIVersion = get("WHATSAPP_API_VERSION", "v21.0")
+	c.WhatsAppBaseURL = strings.TrimSpace(getenv("WHATSAPP_BASE_URL"))
+	c.NotificationInterval = dur("NOTIFICATION_INTERVAL", 2*time.Second)
+	c.NotificationHMACRetention = dur("NOTIFICATION_HMAC_RETENTION", 365*24*time.Hour)
+
+	// FEATURE_GIFT_SMS defaults to false everywhere until legal sign-off.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_GIFT_SMS"))) {
+	case "", "false", "0":
+		c.FeatureGiftSMS = false
+	case "true", "1":
+		c.FeatureGiftSMS = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_GIFT_SMS: must be true or false"))
+	}
+
+	// FEATURE_PAY_FOR_ME defaults to true in MODE=dev and false outside dev.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_PAY_FOR_ME"))) {
+	case "":
+		c.FeaturePayForMe = c.Mode == Dev
+	case "false", "0":
+		c.FeaturePayForMe = false
+	case "true", "1":
+		c.FeaturePayForMe = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_PAY_FOR_ME: must be true or false"))
+	}
+
+	// FEATURE_SPLIT_METER defaults to true in MODE=dev and false outside dev
+	// until Nigerian regulatory / PSP fund-holding sign-off (docs/DECISIONS.md).
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_SPLIT_METER"))) {
+	case "":
+		c.FeatureSplitMeter = c.Mode == Dev
+	case "false", "0":
+		c.FeatureSplitMeter = false
+	case "true", "1":
+		c.FeatureSplitMeter = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_SPLIT_METER: must be true or false"))
+	}
+	c.PotMaxHold = dur("POT_MAX_HOLD", pots.DefaultMaxHold)
+	if c.PotMaxHold > pots.HardMaxHold {
+		errs = append(errs, fmt.Errorf("POT_MAX_HOLD: cannot exceed %s", pots.HardMaxHold))
+	}
+
+	// FEATURE_AUTOPOWER defaults to false everywhere until explicitly enabled.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_AUTOPOWER"))) {
+	case "", "false", "0":
+		c.FeatureAutoPower = false
+	case "true", "1":
+		c.FeatureAutoPower = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_AUTOPOWER: must be true or false"))
+	}
+	c.AutoPowerInterval = dur("AUTOPOWER_INTERVAL", 30*time.Second)
+
+	// FEATURE_POWER_DESK defaults to false everywhere until explicitly enabled.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_POWER_DESK"))) {
+	case "", "false", "0":
+		c.FeaturePowerDesk = false
+	case "true", "1":
+		c.FeaturePowerDesk = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_POWER_DESK: must be true or false"))
+	}
+
+	// FEATURE_USSD and FEATURE_WHATSAPP default to false everywhere until explicitly enabled.
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_USSD"))) {
+	case "", "false", "0":
+		c.FeatureUSSD = false
+	case "true", "1":
+		c.FeatureUSSD = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_USSD: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_WHATSAPP"))) {
+	case "", "false", "0":
+		c.FeatureWhatsApp = false
+	case "true", "1":
+		c.FeatureWhatsApp = true
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_WHATSAPP: must be true or false"))
+	}
+	defUSSDSecret := ""
+	defUSSDIPs := ""
+	if c.Mode == Dev {
+		defUSSDSecret = "dev-ussd-secret"
+		defUSSDIPs = "127.0.0.1/32,::1/128"
+	}
+	c.USSDSharedSecret = get("USSD_SHARED_SECRET", defUSSDSecret)
+	if rawIPs := get("USSD_ALLOWED_IPS", defUSSDIPs); rawIPs != "" {
+		for _, item := range strings.Split(rawIPs, ",") {
+			if s := strings.TrimSpace(item); s != "" {
+				c.USSDAllowedIPs = append(c.USSDAllowedIPs, s)
+			}
+		}
+		if _, err := ussd.ParseAllowlist(c.USSDAllowedIPs); err != nil {
+			errs = append(errs, fmt.Errorf("USSD_ALLOWED_IPS: %w", err))
+		}
+	}
+	if c.FeatureUSSD && c.Mode != Dev {
+		if c.USSDSharedSecret == "" {
+			errs = append(errs, errors.New("USSD_SHARED_SECRET is required when FEATURE_USSD=true outside dev"))
+		}
+		if len(c.USSDAllowedIPs) == 0 {
+			errs = append(errs, errors.New("USSD_ALLOWED_IPS is required when FEATURE_USSD=true outside dev"))
+		}
+	}
+	if c.FeatureWhatsApp && c.Mode != Dev {
+		if strings.TrimSpace(c.WhatsAppAppSecret) == "" || strings.TrimSpace(c.WhatsAppVerifyToken) == "" {
+			errs = append(errs, errors.New("WHATSAPP_APP_SECRET and WHATSAPP_VERIFY_TOKEN are required when FEATURE_WHATSAPP=true outside dev"))
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_SUPPORT"))) {
+	case "", "true", "1":
+		c.FeatureSupport = true
+	case "false", "0":
+		c.FeatureSupport = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_SUPPORT: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_HOUSEHOLDS"))) {
+	case "":
+		c.FeatureHouseholds = c.Mode == Dev
+	case "true", "1":
+		c.FeatureHouseholds = true
+	case "false", "0":
+		c.FeatureHouseholds = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_HOUSEHOLDS: must be true or false"))
+	}
+
+	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)
+	c.OfflineUnverifiedDailyMaxMinor = integer("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR", conversation.DefaultUnverifiedDailyCapMinor)
+	c.OfflineVerifiedDailyMaxMinor = integer("OFFLINE_VERIFIED_DAILY_MAX_MINOR", conversation.DefaultVerifiedDailyCapMinor)
+	if c.OfflineUnverifiedDailyMaxMinor <= 0 || c.OfflineVerifiedDailyMaxMinor < c.OfflineUnverifiedDailyMaxMinor {
+		errs = append(errs, errors.New("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR must be positive and not exceed OFFLINE_VERIFIED_DAILY_MAX_MINOR"))
+	}
+	c.PublicBaseURL = strings.TrimRight(get("PUBLIC_BASE_URL", "https://meterly.ng"), "/")
+	if c.Mode != Dev && !strings.HasPrefix(c.PublicBaseURL, "https://") {
+		errs = append(errs, errors.New("PUBLIC_BASE_URL must be https outside dev"))
 	}
 
 	// No default: opting in requires an explicit fixed event-time boundary.
@@ -150,6 +402,17 @@ func Load(getenv func(string) string) (Config, error) {
 	c.OIDCAudience = getenv("OIDC_AUDIENCE")
 	c.OIDCJWKSURL = getenv("OIDC_JWKS_URL")
 	c.OIDCRolesClaim = get("OIDC_ROLES_CLAIM", "roles")
+	for _, p := range strings.Split(getenv("WEBAUTHN_ORIGINS"), ",") {
+		p = strings.TrimRight(strings.TrimSpace(p), "/")
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "https://") || (c.Mode == Dev && strings.HasPrefix(p, "http://")) {
+			c.WebAuthnOrigins = append(c.WebAuthnOrigins, p)
+			continue
+		}
+		errs = append(errs, errors.New("WEBAUTHN_ORIGINS entries must be https origins (http allowed in MODE=dev)"))
+	}
 	if v := get("OIDC_MFA_AMR", "mfa,otp,hwk,swk"); v != "none" {
 		for _, x := range strings.Split(v, ",") {
 			if x = strings.TrimSpace(x); x != "" {
@@ -160,7 +423,10 @@ func Load(getenv func(string) string) (Config, error) {
 	c.RateWritesPerMin = int(integer("RATE_LIMIT_WRITES_PER_MIN", 30))
 	c.RateAuthFailuresPerMin = int(integer("RATE_LIMIT_AUTH_FAILURES_PER_MIN", 20))
 	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
+	c.RatePublicPayPerMin = int(integer("RATE_LIMIT_PUBLIC_PAY_PER_MIN", 60))
+	c.RatePublicLinkPerMin = int(integer("RATE_LIMIT_PUBLIC_LINK_PER_MIN", 10))
 	c.ClientIPHeader = getenv("CLIENT_IP_HEADER")
+	c.RedisURL = strings.TrimSpace(getenv("REDIS_URL"))
 
 	o := orchestrator.DefaultConfig()
 	o.FeeMinor = integer("FEE_MINOR", o.FeeMinor)
@@ -169,6 +435,9 @@ func Load(getenv func(string) string) (Config, error) {
 	o.QuoteTTL = dur("QUOTE_TTL", o.QuoteTTL)
 	o.ProviderTimeout = dur("PROVIDER_TIMEOUT", o.ProviderTimeout)
 	o.PaymentExpiry = dur("PAYMENT_EXPIRY", o.PaymentExpiry)
+	o.PotMaxHold = c.PotMaxHold
+	o.AutoPowerDailyMaxMinor = integer("AUTOPOWER_DAILY_MAX_MINOR", o.AutoPowerDailyMaxMinor)
+	o.AutoPowerPollInterval = dur("AUTOPOWER_POLL_INTERVAL", o.AutoPowerPollInterval)
 	o.ResumeStaleAfter = dur("RESUME_STALE_AFTER", o.ResumeStaleAfter)
 	o.ResumeLease = dur("RESUME_LEASE", o.ResumeLease)
 	o.ResumeBaseBackoff = dur("RESUME_BASE_BACKOFF", o.ResumeBaseBackoff)
@@ -212,14 +481,101 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("PAYMENT_PROVIDER: unsupported value %q (available: mock, paystack)", c.PaymentProvider))
 	}
-	if c.VendingProvider != "mock" {
-		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock)", c.VendingProvider))
+	switch c.VendingProvider {
+	case "mock":
+	case "vtpass":
+		if c.VTPassAPIKey == "" || c.VTPassSecretKey == "" {
+			errs = append(errs, errors.New("VTPASS_API_KEY and VTPASS_SECRET_KEY are required when VENDING_PROVIDER=vtpass"))
+		}
+		if digits := strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, c.VTPassDefaultPhone); len(digits) < 10 {
+			errs = append(errs, errors.New("VTPASS_DEFAULT_PHONE is required when VENDING_PROVIDER=vtpass (VTpass pay needs a customer MSISDN)"))
+		}
+		if c.VTPassBaseURL == "" {
+			if c.ProviderEnvironment == "PRODUCTION" {
+				c.VTPassBaseURL = "https://vtpass.com/api"
+			} else {
+				c.VTPassBaseURL = "https://sandbox.vtpass.com/api"
+			}
+		}
+		if c.Mode != Dev && !strings.HasPrefix(c.VTPassBaseURL, "https://") {
+			errs = append(errs, errors.New("VTPASS_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("VENDING_PROVIDER: unsupported value %q (available: mock, vtpass)", c.VendingProvider))
 	}
-	if c.RemoteProvider != "mock" && c.RemoteProvider != "none" {
-		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none)", c.RemoteProvider))
+	switch c.RemoteProvider {
+	case "mock", "none":
+	case "http":
+		if len(c.RemoteHESHMACSecret) < 16 {
+			errs = append(errs, errors.New("REMOTE_HES_HMAC_SECRET is required (min 16 characters) when REMOTE_PROVIDER=http"))
+		}
+		if c.RemoteHESBaseURL == "" {
+			errs = append(errs, errors.New("REMOTE_HES_BASE_URL is required when REMOTE_PROVIDER=http"))
+		}
+		if c.Mode != Dev && c.RemoteHESBaseURL != "" && !strings.HasPrefix(c.RemoteHESBaseURL, "https://") {
+			errs = append(errs, errors.New("REMOTE_HES_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("REMOTE_PROVIDER: unsupported value %q (available: mock, none, http)", c.RemoteProvider))
+	}
+	if c.MeterReadingProvider != "mock" && c.MeterReadingProvider != "none" {
+		errs = append(errs, fmt.Errorf("METER_READING_PROVIDER: unsupported value %q (available: mock, none)", c.MeterReadingProvider))
+	}
+	if o.AutoPowerDailyMaxMinor <= 0 {
+		errs = append(errs, errors.New("AUTOPOWER_DAILY_MAX_MINOR must be positive"))
 	}
 	if c.ProviderEnvironment != "SANDBOX" && c.ProviderEnvironment != "PRODUCTION" {
 		errs = append(errs, fmt.Errorf("PROVIDER_ENVIRONMENT: must be SANDBOX or PRODUCTION"))
+	}
+
+	switch c.SMSProvider {
+	case "mock", "none":
+	case "africastalking":
+		if c.AfricasTalkingUsername == "" || c.AfricasTalkingAPIKey == "" {
+			errs = append(errs, errors.New("AFRICASTALKING_USERNAME and AFRICASTALKING_API_KEY are required when SMS_PROVIDER=africastalking"))
+		}
+		if c.Mode == Production && c.AfricasTalkingUsername == "sandbox" {
+			errs = append(errs, errors.New("AFRICASTALKING_USERNAME cannot be sandbox in MODE=production"))
+		}
+		if c.Mode != Dev && c.AfricasTalkingBaseURL != "" && !strings.HasPrefix(c.AfricasTalkingBaseURL, "https://") {
+			errs = append(errs, errors.New("AFRICASTALKING_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("SMS_PROVIDER: unsupported value %q (available: mock, africastalking, none)", c.SMSProvider))
+	}
+
+	switch c.EmailProvider {
+	case "mock", "none":
+	case "resend":
+		if c.ResendAPIKey == "" || c.ResendFrom == "" {
+			errs = append(errs, errors.New("RESEND_API_KEY and RESEND_FROM are required when EMAIL_PROVIDER=resend"))
+		}
+		if c.Mode != Dev && c.ResendBaseURL != "" && !strings.HasPrefix(c.ResendBaseURL, "https://") {
+			errs = append(errs, errors.New("RESEND_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("EMAIL_PROVIDER: unsupported value %q (available: mock, resend, none)", c.EmailProvider))
+	}
+
+	switch c.WhatsAppProvider {
+	case "mock", "none":
+	case "whatsapp":
+		if c.WhatsAppPhoneNumberID == "" || c.WhatsAppAccessToken == "" {
+			errs = append(errs, errors.New("WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN are required when WHATSAPP_PROVIDER=whatsapp"))
+		}
+		if c.Mode != Dev && c.WhatsAppAppSecret == "" {
+			errs = append(errs, errors.New("WHATSAPP_APP_SECRET is required outside dev when WHATSAPP_PROVIDER=whatsapp"))
+		}
+		if c.Mode != Dev && c.WhatsAppBaseURL != "" && !strings.HasPrefix(c.WhatsAppBaseURL, "https://") {
+			errs = append(errs, errors.New("WHATSAPP_BASE_URL must be https outside dev"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("WHATSAPP_PROVIDER: unsupported value %q (available: mock, whatsapp, none)", c.WhatsAppProvider))
 	}
 
 	switch c.AuthMode {
@@ -257,9 +613,18 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("TOKEN_ENC_KEY and METER_HMAC_KEY are required outside dev"))
 		}
 		if c.UsesMocks() {
-			errs = append(errs, errors.New("mock providers are only allowed in MODE=dev; no real provider adapters are configured yet"))
+			errs = append(errs, errors.New("mock providers are only allowed in MODE=dev"))
 		}
 	}
+	switch strings.ToLower(c.MetricsAddr) {
+	case "off", "none", "disabled":
+		c.MetricsAddr = ""
+	default:
+		if c.MetricsAddr == c.HTTPAddr {
+			errs = append(errs, errors.New("METRICS_ADDR must not equal the public HTTP listen address"))
+		}
+	}
+
 	if c.DatabaseURL == "" && !c.RunWorker {
 		errs = append(errs, errors.New("the in-memory store needs RUN_WORKER=true (there is no shared state for a separate worker)"))
 	}

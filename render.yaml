@@ -1,0 +1,54 @@
+# Meterly API on Render, Postgres on Supabase.
+#
+# Blueprint runs MODE=dev (AUTH_MODE=dev, in-process worker) until you paste
+# Paystack + VTpass keys and set VENDING_PROVIDER=vtpass / PAYMENT_PROVIDER=paystack.
+# Config refuses mocks outside dev. AMI/HES stays none without partner docs.
+#
+# One-click: https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
+#
+# Required env you paste from the Supabase dashboard (Settings → Database):
+#   DATABASE_URL  session pooler URI, sslmode=require (port 5432, not 6543)
+#   TOKEN_ENC_KEY 64 hex chars
+#   METER_HMAC_KEY 64 hex chars
+
+previewsEnabled: false
+
+services:
+  - type: web
+    name: meterly-api
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    preDeployCommand: /migrate
+    envVars:
+      - key: MODE
+        value: dev
+      - key: PORT
+        value: "8080"
+      - key: RUN_WORKER
+        value: "true"
+      - key: METRICS_ADDR
+        value: "off"
+      - key: CLIENT_IP_HEADER
+        value: x-forwarded-for
+      - key: PUBLIC_BASE_URL
+        value: https://meterly-iota.vercel.app
+      - key: FEATURE_SUPPORT
+        value: "true"
+      - key: FEATURE_PAY_FOR_ME
+        value: "true"
+      - key: FEATURE_SPLIT_METER
+        value: "true"
+      - key: FEATURE_AUTOPOWER
+        value: "true"
+      - key: FEATURE_POWER_DESK
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: TOKEN_ENC_KEY
+        sync: false
+      - key: METER_HMAC_KEY
+        sync: false

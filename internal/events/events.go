@@ -22,8 +22,20 @@ type Event struct {
 
 // New builds an event for an electricity transaction.
 func New(typ string, txnID uuid.UUID, payload map[string]any) Event {
+	return NewForAggregate("electricity_transaction", typ, txnID, payload)
+}
+
+// NewForAggregate builds an outbox event for any domain aggregate.
+func NewForAggregate(aggregateType, typ string, aggregateID uuid.UUID, payload map[string]any) Event {
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	return Event{ID: uuid.New(), Type: typ, AggregateType: "electricity_transaction", AggregateID: txnID, Payload: payload, CreatedAt: time.Now().UTC()}
+	return Event{
+		ID:            uuid.New(),
+		Type:          typ,
+		AggregateType: aggregateType,
+		AggregateID:   aggregateID,
+		Payload:       payload,
+		CreatedAt:     time.Now().UTC(),
+	}
 }

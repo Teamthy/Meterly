@@ -10,6 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/autopower"
+	"github.com/teamthy/meterly/internal/events"
+	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/secure"
@@ -50,7 +53,15 @@ func (g *Registry) probe(ctx context.Context, number, disco string) (providers.M
 		RemoteReading: meters.Capability{Supported: res.RemoteReadingSupported, LastVerifiedAt: &now},
 		RemoteCredit:  meters.Capability{Supported: res.RemoteCreditSupported, LastVerifiedAt: &now},
 	}
-	if res.RemoteCreditSupported && g.remote != nil {
+	// Operator-attested cohorts are the production signal. Never infer AMI
+	// from a hard-coded meter-number prefix here — mocks may still report
+	// RemoteCreditSupported from the vending adapter.
+	if c, err := g.st.Repos().RemoteCohorts().Match(ctx, disco, number); err == nil && c.Authorised {
+		caps.RemoteCredit.Supported = true
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return res, meters.Capabilities{}, err
+	}
+	if caps.RemoteCredit.Supported && g.remote != nil {
 		if eligible, reachable, err := g.remote.CheckEligibility(ctx, number); err == nil {
 			caps.RemoteCredit.Authorised = eligible
 			caps.RemoteCredit.Reachable = reachable
@@ -66,11 +77,15 @@ func (g *Registry) upsert(ctx context.Context, r store.Repos, number, disco stri
 	for attempt := 0; attempt < 2; attempt++ {
 		m, err := r.Meters().GetByHash(ctx, hash)
 		if err == nil {
-			// Keep evidence of a confirmed remote delivery across re-validation.
+			// Keep evidence of confirmed remote capabilities across re-validation.
 			confirmed := m.Capabilities.RemoteCredit.Confirmed && caps.RemoteCredit.Supported
+			readAuth := m.Capabilities.RemoteReading.Authorised && caps.RemoteReading.Supported
+			readConf := m.Capabilities.RemoteReading.Confirmed && caps.RemoteReading.Supported
 			m.MeterType, m.CustomerName, m.Address, m.ValidatedAt = res.MeterType, res.CustomerName, res.Address, now
 			m.Capabilities = caps
 			m.Capabilities.RemoteCredit.Confirmed = confirmed
+			m.Capabilities.RemoteReading.Authorised = readAuth
+			m.Capabilities.RemoteReading.Confirmed = readConf
 			return m, r.Meters().Update(ctx, m)
 		}
 		if !errors.Is(err, store.ErrNotFound) {
@@ -162,17 +177,62 @@ func authorizeGrant(ctx context.Context, r store.Repos, userID string, id uuid.U
 		return nil, notFound(err)
 	}
 	gr, err := r.Meters().ActiveGrant(ctx, id, userID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && !gr.Permission.Allows(want)) {
-		return nil, meters.ErrForbidden
+	if err == nil && gr.Permission.Allows(want) {
+		return m, nil
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	return m, nil
+	// Household membership is a separate authorization path. Legacy MANAGE
+	// grants are never treated as verified ownership.
+	if hp, herr := r.Households().PermissionForMeter(ctx, userID, id); herr == nil && hp.Allows(want) {
+		return m, nil
+	} else if herr != nil && !errors.Is(herr, store.ErrNotFound) {
+		return nil, herr
+	}
+	return nil, meters.ErrForbidden
 }
 
 func (g *Registry) ListForUser(ctx context.Context, userID string) ([]meters.Listed, error) {
-	return g.st.Repos().Meters().ListForUser(ctx, userID)
+	listed, err := g.st.Repos().Meters().ListForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, l := range listed {
+		seen[l.ID] = true
+	}
+	ids, err := g.st.Repos().Households().HouseholdIDsForUser(ctx, userID)
+	if err != nil {
+		return listed, nil
+	}
+	r := g.st.Repos()
+	for _, hid := range ids {
+		mem, err := r.Households().Member(ctx, hid, userID)
+		if err != nil || mem.Status != households.StatusActive {
+			continue
+		}
+		perm := households.PermissionForRole(mem.Role)
+		if perm == "" {
+			continue
+		}
+		links, err := r.Households().ListMeters(ctx, hid)
+		if err != nil {
+			return nil, err
+		}
+		for _, link := range links {
+			if seen[link.MeterID] {
+				continue
+			}
+			m, err := r.Meters().Get(ctx, link.MeterID)
+			if err != nil {
+				continue
+			}
+			listed = append(listed, meters.Listed{Meter: *m, Label: "Household", Permission: perm})
+			seen[link.MeterID] = true
+		}
+	}
+	return listed, nil
 }
 
 // Number decrypts the meter number for provider calls only.
@@ -192,10 +252,29 @@ func MarkRemoteCreditConfirmedIn(ctx context.Context, r store.Repos, id uuid.UUI
 	return r.Meters().Update(ctx, m)
 }
 
+// MarkRemoteReadingConfirmedIn records, inside r's transaction, that remote
+// balance reading is authorised and confirmed for this meter.
+func MarkRemoteReadingConfirmedIn(ctx context.Context, r store.Repos, id uuid.UUID, at time.Time) error {
+	m, err := r.Meters().GetForUpdate(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !m.Capabilities.RemoteReading.Supported {
+		return meters.ErrInvalidMeter
+	}
+	ts := at.UTC()
+	m.Capabilities.RemoteReading.Authorised = true
+	m.Capabilities.RemoteReading.Confirmed = true
+	m.Capabilities.RemoteReading.LastVerifiedAt = &ts
+	return r.Meters().Update(ctx, m)
+}
+
 // RemoveSavedMeter revokes only the caller's own active access, not that of
-// household members. In-flight purchases are not cancelled. A later
-// self-service registration may restore purchase access.
+// household members. In-flight purchases are not cancelled. Active AutoPower
+// rules for (userID, id) are atomically paused and their unstarted runs
+// cancelled so revoked meters are never charged.
 func (g *Registry) RemoveSavedMeter(ctx context.Context, userID string, id uuid.UUID) error {
+	now := g.Now().UTC()
 	return g.st.InTx(ctx, func(r store.Repos) error {
 		if _, err := r.Meters().GetForUpdate(ctx, id); err != nil {
 			return notFound(err)
@@ -205,10 +284,53 @@ func (g *Registry) RemoveSavedMeter(ctx context.Context, userID string, id uuid.
 		} else if err != nil {
 			return err
 		}
-		if err := r.Meters().Revoke(ctx, id, userID, g.Now().UTC()); err != nil {
+		if err := r.Meters().Revoke(ctx, id, userID, now); err != nil {
 			return err
 		}
 		actor := audit.Actor{UserID: userID, Type: audit.ActorUser, CorrelationID: audit.CorrelationFrom(ctx)}
+		userRules, err := r.AutoPower().ListRulesForUser(ctx, userID)
+		if err != nil {
+			return err
+		}
+		for _, candidate := range userRules {
+			if candidate.MeterID != id || candidate.Status == autopower.RuleCancelled {
+				continue
+			}
+			rl, err := r.AutoPower().GetRuleForUpdate(ctx, candidate.ID)
+			if err != nil {
+				return err
+			}
+			if rl.Status == autopower.RuleCancelled {
+				continue
+			}
+			wasActive := rl.Status == autopower.RuleActive
+			rl.Status = autopower.RulePaused
+			rl.PauseReason = autopower.PauseMeterAccessRevoked
+			rl.NextScheduledAt = nil
+			rl.NextPollAt = nil
+			rl.LeaseUntil = time.Time{}
+			rl.UpdatedAt = now
+			if err := r.AutoPower().UpdateRule(ctx, rl); err != nil {
+				return err
+			}
+			if err := r.AutoPower().CancelScheduledRunsForRule(ctx, rl.ID, now); err != nil {
+				return err
+			}
+			if err := r.Audit().Add(ctx, actor.Event("autopower.rule.paused", "autopower_rule", rl.ID, map[string]any{
+				"reason": autopower.PauseMeterAccessRevoked,
+			})); err != nil {
+				return err
+			}
+			if wasActive {
+				ev := events.NewForAggregate("autopower_rule", "autopower.rule.paused", rl.ID, map[string]any{
+					"reason": autopower.PauseMeterAccessRevoked,
+				})
+				ev.CreatedAt = now
+				if err := r.Outbox().Add(ctx, ev); err != nil {
+					return err
+				}
+			}
+		}
 		return r.Audit().Add(ctx, actor.Event("meter.self_access_removed", "meter", id, nil))
 	})
 }

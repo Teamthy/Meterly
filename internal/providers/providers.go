@@ -45,10 +45,33 @@ type PaymentInitResult struct {
 }
 
 type PaymentVerification struct {
-	ProviderRef string
-	Status      PaymentStatus
-	Amount      money.Amount
-	PaidAt      *time.Time
+	ProviderRef   string
+	Status        PaymentStatus
+	Amount        money.Amount
+	PaidAt        *time.Time
+	Authorization *CardAuthorization // present when provider reports a card authorization
+}
+
+// CardAuthorization captures reusable card metadata returned by the payment
+// provider on VerifyPayment. AuthorizationCode is a sensitive credential and
+// must never be logged or returned in API responses.
+type CardAuthorization struct {
+	AuthorizationCode string
+	Reusable          bool
+	CardBrand         string
+	Last4             string
+	ExpMonth          int
+	ExpYear           int
+	Channel           string
+	Signature         string
+	CustomerEmail     string
+}
+
+type ChargeRequest struct {
+	AuthorizationRef string // provider authorization_code (sensitive)
+	Email            string
+	Amount           money.Amount
+	Reference        string // deterministic reference for status reconciliation
 }
 
 type RefundRequest struct {
@@ -57,9 +80,17 @@ type RefundRequest struct {
 	Reference   string
 }
 
+// ErrPaymentNotFound means the payment provider definitively confirmed it has
+// no transaction record for the queried reference.
+var ErrPaymentNotFound = errors.New("provider: payment reference not found")
+
 type PaymentProvider interface {
 	Name() string
 	InitializePayment(ctx context.Context, req PaymentInit) (PaymentInitResult, error)
+	// ChargeSaved initiates an off-session charge against a saved reusable
+	// card authorization. Callers MUST still treat the outcome as unverified
+	// until VerifyPayment confirms it (invariant 1).
+	ChargeSaved(ctx context.Context, req ChargeRequest) (PaymentVerification, error)
 	// VerifyPayment is the server-side source of truth. Webhook bodies are
 	// only a hint to call this.
 	VerifyPayment(ctx context.Context, providerRef string) (PaymentVerification, error)
@@ -105,6 +136,10 @@ type VendRequest struct {
 	DiscoCode      string
 	Amount         money.Amount
 	IdempotencyKey string
+	// MeterType is PREPAID or POSTPAID when known from a prior validation.
+	MeterType string
+	// Phone is the customer or recipient MSISDN some aggregators require on pay.
+	Phone string
 }
 
 type VendStatus string
@@ -126,6 +161,10 @@ type VendResult struct {
 
 type VendingProvider interface {
 	Name() string
+	// NewVendKey returns the provider-facing idempotency key for one
+	// transaction. It must stay stable for the life of that vend attempt
+	// once the caller records it (some aggregators require a dated prefix).
+	NewVendKey(transactionID string, at time.Time) string
 	ValidateMeter(ctx context.Context, req MeterValidationRequest) (MeterValidationResult, error)
 	Vend(ctx context.Context, req VendRequest) (VendResult, error)
 	// GetVendStatus looks up by our idempotency key so it works even when the
@@ -164,4 +203,27 @@ type RemoteCreditProvider interface {
 	CheckEligibility(ctx context.Context, meterNumber string) (eligible bool, reachable *bool, err error)
 	InitiateCredit(ctx context.Context, req RemoteCreditRequest) (RemoteCreditResult, error)
 	GetCreditStatus(ctx context.Context, idempotencyKey string) (RemoteCreditResult, error)
+}
+
+// RemoteCreditWebhook is a hint that a HES may have moved a credit command.
+// Callers MUST still GetCreditStatus; never trust a status in the body.
+type RemoteCreditWebhook struct {
+	IdempotencyKey string
+	Relevant       bool
+}
+
+// RemoteCreditWebhookParser is optional. Adapters that can receive partner
+// callbacks implement it; in-process mocks used only in unit tests may not.
+type RemoteCreditWebhookParser interface {
+	ParseWebhook(h http.Header, body []byte) (RemoteCreditWebhook, error)
+}
+
+// ---- Remote meter reading (AMI / HES) -------------------------------------
+
+// ErrReadingUnavailable means no confirmed meter balance reading is available.
+var ErrReadingUnavailable = errors.New("provider: meter reading unavailable")
+
+type MeterReadingProvider interface {
+	Name() string
+	LatestReading(ctx context.Context, meterNumber string) (kWh float64, at time.Time, err error)
 }

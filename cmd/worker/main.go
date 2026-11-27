@@ -1,6 +1,7 @@
 // Command worker runs the background loops: the resume/reconciliation
-// sweep and the outbox publisher. Run any number of replicas; claims use
-// SKIP LOCKED so they never process the same row at once.
+// sweep, the outbox publisher and notification delivery loops. Run any
+// number of replicas; claims use SKIP LOCKED so they never process the same
+// row at once.
 package main
 
 import (
@@ -36,7 +37,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	bctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	a, err := app.Build(bctx, cfg, log)
 	cancel()
 	if err != nil {
@@ -45,5 +46,8 @@ func main() {
 	}
 	defer a.Close()
 	log.Info("worker started", "mode", cfg.Mode)
-	a.RunWorker(ctx)
+	if err := a.ServeWorker(ctx); err != nil {
+		log.Error("worker failed", "err", err)
+		os.Exit(1)
+	}
 }

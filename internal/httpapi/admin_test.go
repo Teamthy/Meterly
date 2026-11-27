@@ -56,7 +56,7 @@ func TestAdminAPI(t *testing.T) {
 
 		// Customers can't reach the admin API at all.
 		for _, r := range []struct{ method, path string }{
-			{"GET", "/v1/admin/transactions"}, {"GET", "/v1/admin/transactions/" + id},
+			{"GET", "/v1/admin/console"}, {"GET", "/v1/admin/transactions"}, {"GET", "/v1/admin/transactions/" + id},
 			{"POST", "/v1/admin/transactions/" + id + "/token-reveal"}, {"POST", "/v1/admin/providers/mockvend/disable"},
 		} {
 			if code, _ := e.c.do(r.method, r.path, "ada", reason, nil); code != 403 {
@@ -121,6 +121,71 @@ func TestAdminAPI(t *testing.T) {
 			if pm["name"] == "mockvend" && pm["enabled"] != false {
 				t.Fatalf("providers %v", ps)
 			}
+		}
+	})
+}
+
+func TestAdminConsoleFromServer(t *testing.T) {
+	eachStore(t, func(t *testing.T, st store.Store) {
+		e := newAdminEnv(t, st, httpapi.Limits{})
+		id := e.underpaid(t)
+
+		if code, _ := e.c.do("GET", "/v1/admin/console", "ada", nil, nil); code != 403 {
+			t.Fatalf("customer: %d", code)
+		}
+		if code, _ := e.c.do("GET", "/v1/admin/console", "", nil, nil); code != 401 {
+			t.Fatalf("anonymous: %d", code)
+		}
+
+		code, cons := e.c.do("GET", "/v1/admin/console", "operator:ola", nil, nil)
+		if code != 200 || cons["role"] != "OPERATOR" || cons["can_admin"] != false {
+			t.Fatalf("operator console %d %v", code, cons)
+		}
+		review, _ := cons["review"].([]any)
+		if len(review) != 1 {
+			t.Fatalf("review queue %v", cons["review"])
+		}
+		code, cons = e.c.do("GET", "/v1/admin/console", "admin:bo", nil, nil)
+		if code != 200 || cons["role"] != "ADMIN" || cons["can_admin"] != true {
+			t.Fatalf("admin console %d %v", code, cons)
+		}
+
+		code, d := e.c.do("GET", "/v1/admin/transactions/"+id, "operator:ola", nil, nil)
+		if code != 200 {
+			t.Fatalf("detail %d %v", code, d)
+		}
+		inv, _ := d["investigation"].(map[string]any)
+		if inv == nil {
+			t.Fatalf("missing investigation %v", d)
+		}
+		if _, has := inv["token"]; has {
+			t.Fatal("investigation must never include the token")
+		}
+		if inv["status"] != "MANUAL_REVIEW" {
+			t.Fatalf("investigation status %v", inv["status"])
+		}
+		refundEnabled := true
+		for _, a := range inv["actions"].([]any) {
+			am := a.(map[string]any)
+			if am["id"] == "refund" {
+				refundEnabled = am["enabled"] == true
+			}
+		}
+		if refundEnabled {
+			t.Fatalf("operator refund action should be disabled %v", inv["actions"])
+		}
+
+		_, d = e.c.do("GET", "/v1/admin/transactions/"+id, "admin:bo", nil, nil)
+		inv = d["investigation"].(map[string]any)
+		found := false
+		for _, a := range inv["actions"].([]any) {
+			am := a.(map[string]any)
+			if am["id"] == "refund" && am["enabled"] == true {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("admin refund should be enabled %v", inv["actions"])
 		}
 	})
 }

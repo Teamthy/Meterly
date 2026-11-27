@@ -171,8 +171,8 @@ func endToEnd(t *testing.T, st store.Store) {
 	if code, _ := c.do("POST", path, "eve", map[string]any{"channel": "COPY"}, key); code != 404 {
 		t.Fatalf("other user recorded copy: %d", code)
 	}
-	if code, _ := c.do("POST", path, "ada", map[string]any{"channel": "SMS"}, key); code != 400 {
-		t.Fatalf("unsupported send accepted: %d", code)
+	if code, _ := c.do("POST", path, "ada", map[string]any{"channel": "SMS"}, key); code != 422 {
+		t.Fatalf("SMS send without a verified phone must be 422, got %d", code)
 	}
 	code, share := c.do("POST", path, "ada", map[string]any{"channel": "COPY"}, key)
 	if code != 201 {

@@ -19,13 +19,14 @@ type txnRepo struct{ *repos }
 
 const txnSelect = `
 SELECT t.id, t.customer_id::text, t.meter_id, t.quote_id, t.is_gift, coalesce(g.recipient_name, ''),
-       t.amount_minor, t.fee_minor, t.total_minor, t.currency,
+       t.amount_minor, t.fee_minor, t.total_minor, t.currency, t.funding_source,
        t.payment_status, t.vending_status, t.delivery_status, t.delivery_method,
        coalesce(pp.name, ''), coalesce(p.provider_reference, ''), coalesce(p.checkout_url, ''),
-       coalesce(vp.name, ''), coalesce(v.provider_reference, ''), v.token_ciphertext,
+       coalesce(vp.name, ''), coalesce(v.provider_reference, ''), coalesce(v.idempotency_key, ''), v.token_ciphertext,
        coalesce(v.token_key_version, ''), coalesce(v.units_kwh::text, ''),
        coalesce(dp.name, ''), coalesce(d.provider_reference, ''),
-       coalesce(t.failure_code, ''), coalesce(rf.reason, ''), coalesce(rf.provider_reference, ''), coalesce(rf.amount_minor, 0),
+       coalesce(t.failure_code, ''), coalesce(NULLIF(rf.reason, ''), t.refund_reason, ''),
+       coalesce(rf.provider_reference, ''), CASE WHEN coalesce(rf.amount_minor, 0) > 0 THEN rf.amount_minor ELSE t.refund_amount_minor END,
        t.review_reason, t.check_attempts, t.next_check_at, t.version, t.created_at, t.updated_at
 FROM electricity_transactions t
 LEFT JOIN gift_transactions g ON g.transaction_id = t.id
@@ -40,13 +41,13 @@ LEFT JOIN refunds rf          ON rf.transaction_id = t.id
 
 func (r txnRepo) load(ctx context.Context, where string, arg any) (*tx.Transaction, error) {
 	var t tx.Transaction
-	var cur string
+	var cur, fundingSrc string
 	err := r.db.QueryRow(ctx, txnSelect+where, arg).Scan(
 		&t.ID, &t.CustomerID, &t.MeterID, &t.QuoteID, &t.IsGift, &t.RecipientName,
-		&t.Amount.Minor, &t.Fee.Minor, &t.Total.Minor, &cur,
+		&t.Amount.Minor, &t.Fee.Minor, &t.Total.Minor, &cur, &fundingSrc,
 		&t.Payment, &t.Vending, &t.Delivery, &t.DeliveryMethod,
 		&t.PaymentProviderName, &t.PaymentProviderRef, &t.CheckoutURL,
-		&t.VendProviderName, &t.VendProviderRef, &t.TokenCiphertext,
+		&t.VendProviderName, &t.VendProviderRef, &t.VendIdempotencyKey, &t.TokenCiphertext,
 		&t.TokenKeyVersion, &t.UnitsKWh,
 		&t.DeliveryProviderName, &t.DeliveryProviderRef,
 		&t.FailureCode, &t.RefundReason, &t.RefundProviderRef, &t.RefundAmount.Minor,
@@ -55,6 +56,7 @@ func (r txnRepo) load(ctx context.Context, where string, arg any) (*tx.Transacti
 		return nil, mapErr(err)
 	}
 	c := money.Currency(cur)
+	t.FundingSource = tx.FundingSource(fundingSrc)
 	t.Amount.Currency, t.Fee.Currency, t.Total.Currency, t.RefundAmount.Currency = c, c, c, c
 	t.NextCheckAt, t.CreatedAt, t.UpdatedAt = t.NextCheckAt.UTC(), t.CreatedAt.UTC(), t.UpdatedAt.UTC()
 
@@ -93,13 +95,16 @@ func (r txnRepo) ByPaymentRef(ctx context.Context, ref string) (*tx.Transaction,
 
 func (r txnRepo) Create(ctx context.Context, t *tx.Transaction) error {
 	return r.atomic(ctx, func(db DB) error {
+		src := string(t.EffectiveFundingSource())
 		_, err := db.Exec(ctx, `
 			INSERT INTO electricity_transactions (id, customer_id, meter_id, quote_id, amount_minor, fee_minor, total_minor,
-			    currency, payment_status, vending_status, delivery_status, delivery_method, is_gift, failure_code,
+			    currency, funding_source, refund_reason, refund_amount_minor,
+			    payment_status, vending_status, delivery_status, delivery_method, is_gift, failure_code,
 			    review_reason, check_attempts, next_check_at, version, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULLIF($14, ''), $15, $16, $17, 1, $18, $19)`,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NULLIF($17, ''), $18, $19, $20, 1, $21, $22)`,
 			t.ID, t.CustomerID, t.MeterID, t.QuoteID, t.Amount.Minor, t.Fee.Minor, t.Total.Minor,
-			string(t.Total.Currency), t.Payment, t.Vending, t.Delivery, t.DeliveryMethod, t.IsGift, t.FailureCode,
+			string(t.Total.Currency), src, t.RefundReason, t.RefundAmount.Minor,
+			t.Payment, t.Vending, t.Delivery, t.DeliveryMethod, t.IsGift, t.FailureCode,
 			t.ReviewReason, t.CheckAttempts, t.NextCheckAt, t.CreatedAt, t.UpdatedAt)
 		if err != nil {
 			return mapErr(err)
@@ -113,6 +118,7 @@ func (r txnRepo) Create(ctx context.Context, t *tx.Transaction) error {
 		if err := r.saveChildren(ctx, db, t); err != nil {
 			return err
 		}
+		t.FundingSource = tx.FundingSource(src)
 		t.Version = 1
 		t.PersistedEvents = len(t.History)
 		return nil
@@ -124,11 +130,13 @@ func (r txnRepo) Save(ctx context.Context, t *tx.Transaction) error {
 		tag, err := db.Exec(ctx, `
 			UPDATE electricity_transactions
 			SET payment_status = $3, vending_status = $4, delivery_status = $5, delivery_method = $6,
-			    failure_code = NULLIF($7, ''), review_reason = $8, check_attempts = $9, next_check_at = $10,
-			    updated_at = $11, version = version + 1
+			    failure_code = NULLIF($7, ''), refund_reason = $8, refund_amount_minor = $9,
+			    review_reason = $10, check_attempts = $11, next_check_at = $12,
+			    updated_at = $13, version = version + 1
 			WHERE id = $1 AND version = $2`,
 			t.ID, t.Version, t.Payment, t.Vending, t.Delivery, t.DeliveryMethod,
-			t.FailureCode, t.ReviewReason, t.CheckAttempts, t.NextCheckAt, t.UpdatedAt)
+			t.FailureCode, t.RefundReason, t.RefundAmount.Minor,
+			t.ReviewReason, t.CheckAttempts, t.NextCheckAt, t.UpdatedAt)
 		if err != nil {
 			return mapErr(err)
 		}
@@ -167,6 +175,10 @@ func (r txnRepo) saveChildren(ctx context.Context, db DB, t *tx.Transaction) err
 		if err != nil {
 			return err
 		}
+		vendKey := t.VendIdempotencyKey
+		if vendKey == "" {
+			vendKey = "vend:" + t.ID.String()
+		}
 		if _, err := db.Exec(ctx, `
 			INSERT INTO vending_records (transaction_id, provider_id, idempotency_key, provider_reference, status,
 			                             token_ciphertext, token_key_version, units_kwh, confirmed_at)
@@ -177,7 +189,7 @@ func (r txnRepo) saveChildren(ctx context.Context, db DB, t *tx.Transaction) err
 			    token_ciphertext = EXCLUDED.token_ciphertext, token_key_version = EXCLUDED.token_key_version,
 			    units_kwh = EXCLUDED.units_kwh,
 			    confirmed_at = coalesce(vending_records.confirmed_at, EXCLUDED.confirmed_at)`,
-			t.ID, vid, "vend:"+t.ID.String(), t.VendProviderRef, t.Vending,
+			t.ID, vid, vendKey, t.VendProviderRef, t.Vending,
 			nilIfEmpty(t.TokenCiphertext), t.TokenKeyVersion, t.UnitsKWh); err != nil {
 			return mapErr(err)
 		}

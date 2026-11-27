@@ -73,6 +73,8 @@ func (h *hookVending) Vend(ctx context.Context, r providers.VendRequest) (provid
 type hookPayments struct {
 	providers.PaymentProvider
 	afterVerify func()
+	refundErr   error
+	afterRefund func(req providers.RefundRequest)
 }
 
 func (h *hookPayments) VerifyPayment(ctx context.Context, ref string) (providers.PaymentVerification, error) {
@@ -81,6 +83,17 @@ func (h *hookPayments) VerifyPayment(ctx context.Context, ref string) (providers
 		h.afterVerify()
 	}
 	return v, err
+}
+
+func (h *hookPayments) RefundPayment(ctx context.Context, req providers.RefundRequest) (string, error) {
+	if h.refundErr != nil {
+		return "", h.refundErr
+	}
+	ref, err := h.PaymentProvider.RefundPayment(ctx, req)
+	if err == nil && h.afterRefund != nil {
+		h.afterRefund(req)
+	}
+	return ref, err
 }
 
 type hookRemote struct {
@@ -99,17 +112,19 @@ func (h *hookRemote) InitiateCredit(ctx context.Context, r providers.RemoteCredi
 // ---- environment ---------------------------------------------------------------
 
 type env struct {
-	o      *orchestrator.Orchestrator
-	st     *crashStore
-	pay    *mock.Payments
-	vend   *mock.Vending
-	remote *mock.RemoteCredit
-	hv     *hookVending
-	hp     *hookPayments
-	hr     *hookRemote
-	ctx    context.Context
-	users  map[string]string
-	clock  time.Time
+	o        *orchestrator.Orchestrator
+	st       *crashStore
+	pay      *mock.Payments
+	vend     *mock.Vending
+	remote   *mock.RemoteCredit
+	readings *mock.MeterReadings
+	hv       *hookVending
+	hp       *hookPayments
+	hr       *hookRemote
+	ctx      context.Context
+	users    map[string]string
+	clock    time.Time
+	mu       sync.RWMutex
 }
 
 type backend struct {
@@ -135,21 +150,38 @@ func newEnv(t *testing.T, base store.Store) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pay, vend, remote := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit()
-	e := &env{st: &crashStore{Store: base}, pay: pay, vend: vend, remote: remote, ctx: context.Background(), users: map[string]string{}}
+	pay, vend, remote, readings := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit(), mock.NewMeterReadings()
+	e := &env{st: &crashStore{Store: base}, pay: pay, vend: vend, remote: remote, readings: readings, ctx: context.Background(), users: map[string]string{}}
 	e.hv = &hookVending{VendingProvider: vend}
 	e.hp = &hookPayments{PaymentProvider: pay}
 	e.hr = &hookRemote{RemoteCreditProvider: remote}
 	reg := registry.New(e.st, box, e.hv, e.hr)
 	e.o = orchestrator.New(orchestrator.DefaultConfig(), e.st, reg, box, e.hp, e.hv, e.hr, nil)
+	e.o.SetMeterReadingProvider(readings)
 	e.clock = time.Now().UTC()
-	e.o.Now = func() time.Time { return e.clock }
+	nowFn := func() time.Time {
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+		return e.clock
+	}
+	e.o.Now = nowFn
+	reg.Now = nowFn
 	return e
 }
 
 // later moves the orchestrator clock forward (transactions' own
 // timestamps stay on wall time, so they become "stale").
-func (e *env) later(d time.Duration) { e.clock = e.clock.Add(d) }
+func (e *env) later(d time.Duration) {
+	e.mu.Lock()
+	e.clock = e.clock.Add(d)
+	e.mu.Unlock()
+}
+
+func (e *env) setClock(at time.Time) {
+	e.mu.Lock()
+	e.clock = at.UTC()
+	e.mu.Unlock()
+}
 
 func (e *env) user(t *testing.T, name string) string {
 	t.Helper()
@@ -282,7 +314,7 @@ func TestRemoteAcceptedIsNotConfirmed(t *testing.T) {
 		if txn.Status() == tx.OverallCompleted {
 			t.Fatal("ACCEPTED must not count as completed")
 		}
-		if _, _, err := e.o.Token(e.ctx, e.user(t, "u1"), txn.ID); !errors.Is(err, orchestrator.ErrTokenUnavailable) {
+		if _, _, err := e.o.Token(e.ctx, e.user(t, "u1"), txn.ID); !errors.Is(err, orchestrator.ErrCreditOnMeter) {
 			t.Fatalf("token should not be shown while remote delivery is in flight: %v", err)
 		}
 		e.remote.Settle()

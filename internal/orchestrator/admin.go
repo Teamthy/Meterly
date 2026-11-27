@@ -9,6 +9,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/ledger"
+	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -44,6 +45,9 @@ func (o *Orchestrator) Token(ctx context.Context, customerID string, id uuid.UUI
 	}
 	if t.CustomerID != customerID {
 		return "", nil, tx.ErrNotFound // do not reveal existence
+	}
+	if t.DeliveryMethod == tx.MethodRemote {
+		return "", t, ErrCreditOnMeter
 	}
 	if t.Vending != tx.VendConfirmed || len(t.TokenCiphertext) == 0 || t.DeliveryMethod != tx.MethodToken {
 		return "", t, ErrTokenUnavailable
@@ -83,7 +87,7 @@ func (o *Orchestrator) FallbackToToken(ctx context.Context, id uuid.UUID, actor 
 	if err := checkActor(actor); err != nil {
 		return nil, err
 	}
-	return o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
+	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
 		if t.Delivery != tx.DelFailed {
 			return fmt.Errorf("%w: fallback only allowed after confirmed delivery failure", tx.ErrInvalidTransition)
 		}
@@ -99,6 +103,10 @@ func (o *Orchestrator) FallbackToToken(ctx context.Context, id uuid.UUID, actor 
 		}
 		return emit(ctx, r, "token.available", t.ID, map[string]any{"fallback": true})
 	})
+	if err == nil && t != nil && t.EffectiveFundingSource() == tx.FundingPot {
+		o.trySettleAllocatedPot(ctx, t.ID)
+	}
+	return t, err
 }
 
 // Requeue takes a transaction out of manual review and resumes automatic
@@ -153,6 +161,9 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 	if t.Vending != tx.VendNotStarted && t.Vending != tx.VendFailed {
 		return t, ErrRefundNotSafe
 	}
+	if t.EffectiveFundingSource() == tx.FundingPot {
+		return o.refundPotFunded(ctx, id, "operator refund: "+actor.Reason, &actor)
+	}
 	if t.PaymentProviderRef == "" {
 		return t, ErrNothingToRefund
 	}
@@ -173,7 +184,7 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 		switch t.Payment {
 		case tx.PayPending, tx.PayFailed:
 			// Money arrived but was never accepted: record its receipt first.
-			if err := post(ctx, r, "pay-received:"+t.ID.String(), t.ID, "Payment received but not accepted",
+			if err := o.post(ctx, r, "pay-received:"+t.ID.String(), t.ID, "Payment received but not accepted",
 				ledger.Entry{Account: ledger.PSPSettlementReceivable, Direction: ledger.Debit, Amount: v.Amount},
 				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: v.Amount},
 			); err != nil {
@@ -191,7 +202,7 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 		if err := t.SetPayment(tx.PayRefundPending, reason); err != nil {
 			return err
 		}
-		if err := post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
+		if err := o.post(ctx, r, "refund-due:"+t.ID.String(), t.ID, "Refund owed: "+reason,
 			ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Debit, Amount: v.Amount},
 			ledger.Entry{Account: ledger.RefundPayable, Direction: ledger.Credit, Amount: v.Amount},
 		); err != nil {
@@ -225,8 +236,15 @@ func (o *Orchestrator) SetProviderEnabled(ctx context.Context, name string, enab
 	case o.vending.Name():
 		typ = "VENDING"
 	default:
-		if o.remote != nil && name == o.remote.Name() {
+		if (o.remote != nil && name == o.remote.Name()) || (o.readings != nil && name == o.readings.Name()) {
 			typ = "AMI"
+		} else {
+			for _, np := range o.notifProviders {
+				if name == np {
+					typ = "NOTIFICATION"
+					break
+				}
+			}
 		}
 	}
 	if typ == "" {
@@ -255,6 +273,10 @@ func (o *Orchestrator) ProviderStatus(ctx context.Context) (map[string]bool, err
 	if o.remote != nil {
 		names = append(names, o.remote.Name())
 	}
+	if o.readings != nil {
+		names = append(names, o.readings.Name())
+	}
+	names = append(names, o.notifProviders...)
 	out := map[string]bool{}
 	for _, n := range names {
 		ok, err := o.st.Repos().Providers().Enabled(ctx, n)
@@ -273,10 +295,11 @@ func (o *Orchestrator) Search(ctx context.Context, f store.TxnFilter) ([]*tx.Tra
 
 // Detail is everything an operator needs to investigate one transaction.
 type Detail struct {
-	Transaction *tx.Transaction
-	Ledger      []ledger.Transaction
-	Events      []events.Event
-	Audit       []audit.Event
+	Transaction   *tx.Transaction
+	Ledger        []ledger.Transaction
+	Events        []events.Event
+	Audit         []audit.Event
+	Notifications []notifications.OperatorView
 }
 
 func (o *Orchestrator) Detail(ctx context.Context, id uuid.UUID) (*Detail, error) {
@@ -293,6 +316,30 @@ func (o *Orchestrator) Detail(ctx context.Context, id uuid.UUID) (*Detail, error
 		return nil, err
 	}
 	if d.Audit, err = r.Audit().ForResource(ctx, resourceTxn, id); err != nil {
+		return nil, err
+	}
+	delivs, err := r.Notifications().ForTransaction(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	d.Notifications = make([]notifications.OperatorView, len(delivs))
+	for i := range delivs {
+		d.Notifications[i] = delivs[i].RedactedView()
+	}
+	return d, nil
+}
+
+// DetailForOperator loads Detail and fail-closed audits the operator's view of
+// the transaction's notification delivery history.
+func (o *Orchestrator) DetailForOperator(ctx context.Context, id uuid.UUID, actor audit.Actor) (*Detail, error) {
+	d, err := o.Detail(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	ev := actor.Event("notification_deliveries.view", "notification_deliveries", id, map[string]any{
+		"count": len(d.Notifications),
+	})
+	if err := o.st.Repos().Audit().Add(ctx, ev); err != nil {
 		return nil, err
 	}
 	return d, nil

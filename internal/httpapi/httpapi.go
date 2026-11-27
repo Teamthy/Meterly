@@ -20,12 +20,19 @@ import (
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/meters"
+	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/notificationservice"
+	"github.com/teamthy/meterly/internal/observability"
+	"github.com/teamthy/meterly/internal/offline"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
@@ -34,6 +41,8 @@ type Limits struct {
 	WritesPerMinute       int // per user: meter validation/registration, quotes, purchases
 	AuthFailuresPerMinute int // per client IP: failed authentications
 	WebhooksPerMinute     int // per client IP
+	PublicPayPerMinute    int // per client IP: public Pay-for-Me views, checkouts and status polls
+	PublicLinkPerMinute   int // per link code: public Pay-for-Me checkout attempts
 	// ClientIPHeader, when set (e.g. "X-Forwarded-For"), takes the client IP
 	// from the right-most value of that header, which the trusted proxy
 	// appended. Leave empty when not behind a proxy.
@@ -41,18 +50,59 @@ type Limits struct {
 }
 
 type Server struct {
-	O        *orchestrator.Orchestrator
-	Auth     auth.Authenticator
-	Payments providers.PaymentProvider
-	Log      *slog.Logger
-	Ready    func(context.Context) error
-	Limits   Limits
+	O             *orchestrator.Orchestrator
+	Auth          auth.Authenticator
+	Identity      *identity.Engine
+	Security      *security.Engine
+	Payments      providers.PaymentProvider
+	Remote        providers.RemoteCreditProvider
+	Notifications *notificationservice.Service
+	Offline       *offline.Service
+	Metrics       *observability.Registry
+	Tracer        *observability.Tracer
+	Log           *slog.Logger
+	Ready         func(context.Context) error
+	Limits        Limits
+	// NewLimiter, when set, builds shared (e.g. Redis) buckets. Nil = in-process.
+	NewLimiter         func(name string, perMinute, burst int) ratelimit.Limiter
+	PayForMeDisabled   bool
+	SplitMeterDisabled bool
+	AutoPowerDisabled  bool
+	PowerDeskDisabled  bool
+	USSDDisabled       bool
+	WhatsAppDisabled   bool
+	SupportDisabled    bool
+	HouseholdsDisabled bool
+	PublicBaseURL      string
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
-	Dev       bool
-	DevPay    *mock.Payments
-	DevRemote *mock.RemoteCredit
+	Dev         bool
+	DevPay      *mock.Payments
+	DevRemote   *mock.RemoteCredit
+	DevReadings *mock.MeterReadings
 
-	writes, authFails, hooks ratelimit.Limiter
+	writes, authFails, hooks, publicPay, publicLink ratelimit.Limiter
+	patterns                                        []string
+}
+
+type patternMux struct {
+	*http.ServeMux
+	patterns []string
+}
+
+func (m *patternMux) Handle(pattern string, handler http.Handler) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.Handle(pattern, handler)
+}
+
+func (m *patternMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.HandleFunc(pattern, handler)
+}
+
+// RegisteredPatterns returns a copy of the exact patterns registered on the
+// underlying ServeMux during the most recent Routes() call.
+func (s *Server) RegisteredPatterns() []string {
+	return append([]string(nil), s.patterns...)
 }
 
 type caller struct {
@@ -75,22 +125,42 @@ func orDefault(v, def int) int {
 }
 
 func (s *Server) Routes() http.Handler {
-	s.writes = ratelimit.New(orDefault(s.Limits.WritesPerMinute, 30), 10)
-	s.authFails = ratelimit.New(orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
-	s.hooks = ratelimit.New(orDefault(s.Limits.WebhooksPerMinute, 600), 100)
+	if s.Log == nil {
+		s.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	newLim := s.NewLimiter
+	if newLim == nil {
+		newLim = func(_ string, per, burst int) ratelimit.Limiter { return ratelimit.New(per, burst) }
+	}
+	s.writes = newLim("writes", orDefault(s.Limits.WritesPerMinute, 30), 10)
+	s.authFails = newLim("auth", orDefault(s.Limits.AuthFailuresPerMinute, 20), 10)
+	s.hooks = newLim("webhooks", orDefault(s.Limits.WebhooksPerMinute, 600), 100)
+	pubPayRate := orDefault(s.Limits.PublicPayPerMinute, 60)
+	pubLinkRate := orDefault(s.Limits.PublicLinkPerMinute, 10)
+	s.publicPay = newLim("public-pay", pubPayRate, min(pubPayRate, max(20, pubPayRate/3)))
+	s.publicLink = newLim("public-link", pubLinkRate, min(pubLinkRate, max(5, pubLinkRate/2)))
 
-	mux := http.NewServeMux()
+	mux := &patternMux{ServeMux: http.NewServeMux()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("GET /readyz", s.readyz)
 
 	user, write := s.authed(auth.RoleCustomer, false), s.authed(auth.RoleCustomer, true)
+	s.identityRoutes(mux, user, write)
+	s.securityRoutes(mux, user, write)
 	mux.Handle("POST /v1/meters/validate", write(s.validateMeter))
 	mux.Handle("POST /v1/meters", write(s.registerMeter))
 	mux.Handle("GET /v1/meters", user(s.listMeters))
 	mux.Handle("GET /v1/meters/{meter_id}", user(s.getMeter))
 	mux.Handle("DELETE /v1/meters/{meter_id}", write(s.removeSavedMeter))
 	mux.Handle("GET /v1/meters/{meter_id}/capabilities", user(s.getCapabilities))
+	mux.Handle("GET /v1/meters/{meter_id}/reading", user(s.getMeterReading))
+	mux.Handle("GET /v1/meters/{meter_id}/usage", user(s.getMeterUsage))
+	mux.Handle("GET /v1/meters/usage", user(s.listMeterUsage))
+	mux.Handle("GET /v1/meters/{meter_id}/buy-options", user(s.getBuyOptions))
+	mux.Handle("GET /v1/electricity/catalog", user(s.getCatalog))
 	mux.Handle("POST /v1/beneficiaries", write(s.addBeneficiary))
+	mux.Handle("GET /v1/beneficiaries", user(s.listBeneficiaries))
+	s.householdRoutes(mux, user, write)
 
 	mux.Handle("POST /v1/electricity/quotes", write(s.createQuote))
 	mux.Handle("POST /v1/electricity/transactions", write(s.createTransaction))
@@ -103,20 +173,80 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/token/shares", user(s.listTokenCopies))
 	mux.Handle("GET /v1/electricity/transactions/{transaction_id}/receipt", user(s.receipt))
 
+	mux.Handle("GET /v1/me/notification-preferences", user(s.getNotificationPreferences))
+	mux.Handle("PUT /v1/me/notification-preferences", write(s.putNotificationPreferences))
+
+	mux.Handle("POST /v1/payment-requests", write(s.createPaymentRequest))
+	mux.Handle("GET /v1/payment-requests", user(s.listPaymentRequests))
+	mux.Handle("DELETE /v1/payment-requests/{id}", write(s.cancelPaymentRequest))
+
+	mux.HandleFunc("GET /v1/public/pay/{code}", s.publicPayLimited(s.getPublicPayLink))
+	mux.HandleFunc("POST /v1/public/pay/{code}/checkout", s.publicPayLimited(s.checkoutPublicPayLink))
+	mux.HandleFunc("GET /v1/public/pay/status/{status_code}", s.publicPayLimited(s.getPublicPayStatus))
+
+	mux.Handle("POST /v1/pots", write(s.createPot))
+	mux.Handle("GET /v1/pots/{id}", user(s.getPot))
+	mux.Handle("POST /v1/pots/{id}/cancel", write(s.cancelPot))
+	mux.HandleFunc("GET /v1/public/pots/{code}", s.publicPotLimited(s.getPublicPot))
+	mux.HandleFunc("POST /v1/public/pots/{code}/contribute", s.publicPotLimited(s.contributeToPot))
+
+	mux.Handle("GET /v1/me/payment-methods", user(s.listPaymentMethods))
+	mux.Handle("DELETE /v1/me/payment-methods/{id}", write(s.deletePaymentMethod))
+	mux.Handle("POST /v1/me/payment-methods/{transaction_id}/save", write(s.savePaymentMethod))
+	mux.Handle("POST /v1/autopower/rules", write(s.createAutoPowerRule))
+	mux.Handle("GET /v1/autopower/rules", user(s.listAutoPowerRules))
+	mux.Handle("PATCH /v1/autopower/rules/{id}", write(s.updateAutoPowerRule))
+	mux.Handle("DELETE /v1/autopower/rules/{id}", write(s.deleteAutoPowerRule))
+	mux.Handle("POST /v1/autopower/runs/{id}/skip", write(s.skipAutoPowerRun))
+
+	s.powerDeskRoutes(mux, user, write)
+	s.offlineRoutes(mux, write)
+	s.supportRoutes(mux, user, write)
+
 	mux.HandleFunc("POST /v1/payments/webhooks/{provider}", s.limited(s.hooks, s.paymentWebhook))
+	mux.HandleFunc("POST /v1/webhooks/remote-credit/{provider}", s.limited(s.hooks, s.remoteCreditWebhook))
+	mux.HandleFunc("GET /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInboundChallenge))
+	mux.HandleFunc("POST /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInbound))
 
 	s.adminRoutes(mux)
 
 	if s.Dev {
+		mux.HandleFunc("GET /v1/dev/console", s.devConsole)
 		mux.HandleFunc("POST /v1/dev/payments/{ref}/complete", s.devCompletePayment)
 		mux.HandleFunc("POST /v1/dev/remote/settle", s.devSettle)
+		mux.HandleFunc("POST /v1/dev/meters/{meter_id}/reading", s.devSetReading)
 		mux.HandleFunc("POST /v1/dev/reconcile", s.devReconcile)
 		mux.HandleFunc("POST /v1/dev/transactions/{transaction_id}/resume", s.devResume)
 	}
-	return s.withCorrelation(mux)
+	s.patterns = append([]string(nil), mux.patterns...)
+	return s.withCorrelation(mux.ServeMux)
 }
 
 // ---- middleware ------------------------------------------------------------
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status = code
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if !r.wroteHeader {
+		r.status = http.StatusOK
+		r.wroteHeader = true
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (s *Server) withCorrelation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,11 +255,37 @@ func (s *Server) withCorrelation(next http.Handler) http.Handler {
 			cid = uuid.New()
 		}
 		w.Header().Set("X-Correlation-ID", cid.String())
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+
+		ctx := audit.WithCorrelation(r.Context(), cid)
+		ctx = s.Tracer.ExtractHTTP(ctx, r.Header)
+		ctx, sp := s.Tracer.StartSpan(ctx, r.Method+" UNMATCHED", observability.SpanKindServer,
+			observability.StringAttr("http.request.method", r.Method),
+		)
+
 		start := time.Now()
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-		next.ServeHTTP(w, r.WithContext(audit.WithCorrelation(r.Context(), cid)))
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		r.Body = http.MaxBytesReader(rec, r.Body, 1<<20)
+		r2 := r.WithContext(ctx)
+		next.ServeHTTP(rec, r2)
+
+		dur := time.Since(start)
+		route := observability.SafeRoute(r2.Pattern)
+		s.Metrics.ObserveHTTPRequest(route, rec.status, dur)
+		if sp != nil {
+			if route != "UNMATCHED" {
+				sp.SetName(route)
+			}
+			sp.SetAttr(observability.StringAttr("http.route", route))
+			sp.SetAttr(observability.IntAttr("http.response.status_code", rec.status))
+			sp.End(rec.status >= 500)
+		}
 		// Never log bodies: they can contain meter numbers and tokens.
-		s.Log.Info("request", "method", r.Method, "path", r.Pattern, "cid", cid, "ms", time.Since(start).Milliseconds())
+		s.Log.Info("request", "method", r.Method, "path", route, "status", rec.status, "cid", cid, "ms", dur.Milliseconds())
 	})
 }
 
@@ -188,10 +344,22 @@ func (s *Server) authed(role auth.Role, isWrite bool) func(http.HandlerFunc) htt
 				s.mapErr(w, r, err)
 				return
 			}
+			if err := s.captureVerifiedContacts(r.Context(), uid, p); err != nil {
+				s.mapErr(w, r, err)
+				return
+			}
 			if isWrite {
 				if ok, wait := s.writes.Allow(uid); !ok {
 					tooMany(w, wait)
 					return
+				}
+			}
+			if s.Security != nil && s.Identity != nil {
+				if tok := s.bearerToken(r); strings.HasPrefix(tok, identity.SessionPrefix) {
+					if sess, err := s.Identity.LookupSession(r.Context(), tok); err == nil {
+						_ = s.Security.Store.TouchSession(r.Context(), sess.ID,
+							s.Security.HashIP(s.clientIP(r)), s.Security.HashUA(r.UserAgent()), time.Now().UTC())
+					}
 				}
 			}
 			h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, caller{UserID: uid, Principal: p})))
@@ -274,6 +442,58 @@ func (s *Server) addBeneficiary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]any{"meter_id": m.ID, "display_name": req.DisplayName, "masked_meter_number": m.Masked, "customer_name": m.CustomerName})
 }
 
+func (s *Server) listBeneficiaries(w http.ResponseWriter, r *http.Request) {
+	list, err := s.O.Meters.ListForUser(r.Context(), userID(r))
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []meters.Listed{}
+	}
+	writeJSON(w, 200, map[string]any{"data": list})
+}
+
+func (s *Server) getMeterReading(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	reading, err := s.O.LatestMeterReading(r.Context(), userID(r), id)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 200, reading)
+}
+
+func (s *Server) getMeterUsage(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	usage, err := s.O.MeterUsage(r.Context(), userID(r), id)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	writeJSON(w, 200, usage)
+}
+
+func (s *Server) listMeterUsage(w http.ResponseWriter, r *http.Request) {
+	list, err := s.O.ListMeterUsage(r.Context(), userID(r))
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []orchestrator.MeterUsage{}
+	}
+	writeJSON(w, 200, map[string]any{"data": list})
+}
+
 func (s *Server) listMeters(w http.ResponseWriter, r *http.Request) {
 	list, err := s.O.Meters.ListForUser(r.Context(), userID(r))
 	if err != nil {
@@ -332,19 +552,27 @@ func (s *Server) createQuote(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		MeterID            uuid.UUID                       `json:"meter_id"`
 		AmountMinor        int64                           `json:"amount_minor"`
+		PackID             string                          `json:"pack_id"`
 		Currency           string                          `json:"currency"`
 		DeliveryPreference orchestrator.DeliveryPreference `json:"delivery_preference"`
 	}
 	if !decode(r, &req) || req.MeterID == uuid.Nil || req.Currency != "NGN" {
-		writeErr(w, 400, "INVALID_REQUEST", "meter_id, amount_minor and currency=NGN are required")
+		writeErr(w, 400, "INVALID_REQUEST", "meter_id, currency=NGN and pack_id or amount_minor are required")
 		return
 	}
-	q, err := s.O.CreateQuote(r.Context(), userID(r), req.MeterID, req.AmountMinor, req.DeliveryPreference)
+	if req.PackID == "" && req.AmountMinor <= 0 {
+		writeErr(w, 400, "INVALID_REQUEST", "pack_id or amount_minor is required")
+		return
+	}
+	q, err := s.O.IssueQuote(r.Context(), orchestrator.QuoteSpec{
+		CustomerID: userID(r), MeterID: req.MeterID, AmountMinor: req.AmountMinor, PackID: req.PackID, Pref: req.DeliveryPreference,
+	})
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
-	writeJSON(w, 201, q)
+	m, _ := s.O.Meters.Get(r.Context(), q.MeterID)
+	writeJSON(w, 201, quoteView(q, orchestrator.QuoteConfirmation(q, m)))
 }
 
 func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
@@ -394,16 +622,19 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, "PROVIDER_UNAVAILABLE", "payment provider unavailable; retry with the same Idempotency-Key")
 		return
 	}
-	writeJSON(w, 202, view(t))
+	writeJSON(w, 202, s.viewTxn(r.Context(), t))
 }
 
 func view(t *tx.Transaction) map[string]any {
+	tokenAvailable := t.DeliveryMethod == tx.MethodToken && t.Vending == tx.VendConfirmed && len(t.TokenCiphertext) > 0
+	creditOnMeter := t.DeliveryMethod == tx.MethodRemote && t.Delivery == tx.DelConfirmed
 	return map[string]any{
 		"transaction_id": t.ID, "status": t.Status(),
 		"payment_status": t.Payment, "vending_status": t.Vending, "delivery_status": t.Delivery,
 		"delivery_method": t.DeliveryMethod, "meter_id": t.MeterID, "is_gift": t.IsGift, "recipient_name": t.RecipientName,
 		"amount_minor": t.Amount.Minor, "fee_minor": t.Fee.Minor, "total_minor": t.Total.Minor, "currency": t.Total.Currency,
 		"units_kwh": t.UnitsKWh, "failure_code": t.FailureCode, "review_reason": t.ReviewReason, "checkout_url": t.CheckoutURL,
+		"token_available": tokenAvailable, "credit_on_meter": creditOnMeter,
 		"history": t.History, "created_at": t.CreatedAt, "updated_at": t.UpdatedAt,
 	}
 }
@@ -424,7 +655,7 @@ func (s *Server) txnFromPath(w http.ResponseWriter, r *http.Request) (*tx.Transa
 
 func (s *Server) getTransaction(w http.ResponseWriter, r *http.Request) {
 	if t, ok := s.txnFromPath(w, r); ok {
-		writeJSON(w, 200, view(t))
+		writeJSON(w, 200, s.viewTxn(r.Context(), t))
 	}
 }
 
@@ -463,6 +694,9 @@ func (s *Server) paymentCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAction(w, r, security.ActionTokenRead) {
+		return
+	}
 	id, err := uuid.Parse(r.PathValue("transaction_id"))
 	if err != nil {
 		writeErr(w, 404, "TRANSACTION_NOT_FOUND", "transaction not found")
@@ -530,20 +764,59 @@ func (s *Server) devCompletePayment(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	ok := req.Success == nil || *req.Success
-	if err := s.DevPay.Complete(r.PathValue("ref"), ok, 0); err != nil {
+	ref := r.PathValue("ref")
+	if err := s.DevPay.Complete(ref, ok, 0); err != nil {
 		writeErr(w, 404, "INVALID_REQUEST", err.Error())
 		return
+	}
+	if _, err := s.O.HandlePaymentNotification(r.Context(), ref); err != nil {
+		s.Log.Warn("dev payment complete", "err", err)
 	}
 	writeJSON(w, 200, map[string]any{"completed": true, "success": ok})
 }
 
-func (s *Server) devSettle(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) devSettle(w http.ResponseWriter, r *http.Request) {
 	if s.DevRemote == nil {
 		writeErr(w, 404, "INVALID_REQUEST", "mock remote credit not in use")
 		return
 	}
 	s.DevRemote.Settle()
-	writeJSON(w, 200, map[string]any{"settled": true})
+	processed, progressed, err := s.O.ResumeDue(r.Context())
+	if err != nil {
+		s.Log.Warn("dev remote settle", "err", err)
+	}
+	writeJSON(w, 200, map[string]any{"settled": true, "processed": processed, "progressed": progressed})
+}
+
+func (s *Server) devSetReading(w http.ResponseWriter, r *http.Request) {
+	if s.DevReadings == nil {
+		writeErr(w, 404, "INVALID_REQUEST", "mock meter readings not in use")
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("meter_id"))
+	if err != nil {
+		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
+		return
+	}
+	var body struct {
+		KWh float64 `json:"kwh"`
+	}
+	if !decode(r, &body) {
+		writeErr(w, 400, "INVALID_REQUEST", "invalid request body")
+		return
+	}
+	m, err := s.O.Store().Repos().Meters().Get(r.Context(), id)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	number, err := s.O.Box().Decrypt(m.NumberEncrypted)
+	if err != nil {
+		s.mapErr(w, r, err)
+		return
+	}
+	s.DevReadings.SetReading(number, body.KWh, time.Now().UTC())
+	writeJSON(w, 200, map[string]any{"set": true, "kwh": body.KWh})
 }
 
 func (s *Server) devReconcile(w http.ResponseWriter, r *http.Request) {
@@ -598,6 +871,10 @@ func writeErr(w http.ResponseWriter, code int, errCode, msg string) {
 }
 
 func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
+	if code, c, msg, ok := mapHouseholdErr(err); ok {
+		writeErr(w, code, c, msg)
+		return
+	}
 	switch {
 	case errors.Is(err, meters.ErrInvalidMeter):
 		writeErr(w, 422, "METER_VALIDATION_FAILED", "meter could not be validated with the provider")
@@ -607,14 +884,51 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 403, "FORBIDDEN", "you do not have access to this meter")
 	case errors.Is(err, orchestrator.ErrNotEligible):
 		writeErr(w, 422, "METER_NOT_ELIGIBLE", err.Error())
-	case errors.Is(err, gifts.ErrInvalidContact):
+	case errors.Is(err, orchestrator.ErrReadingUnavailable):
+		writeErr(w, 404, "READING_UNAVAILABLE", "no confirmed meter reading is available")
+	case errors.Is(err, identity.ErrNoPasskeys):
+		writeErr(w, 404, "NOT_FOUND", "passkeys are not configured")
+	case errors.Is(err, identity.ErrOrigin):
+		writeErr(w, 400, "INVALID_REQUEST", "origin is not allowed")
+	case errors.Is(err, identity.ErrBadAttestation), errors.Is(err, identity.ErrBadAssertion),
+		errors.Is(err, identity.ErrChallenge):
+		writeErr(w, 400, "INVALID_REQUEST", "passkey verification failed")
+	case errors.Is(err, identity.ErrUnknownCredential), errors.Is(err, identity.ErrClonedKey),
+		errors.Is(err, identity.ErrSession):
+		writeErr(w, 401, "UNAUTHENTICATED", "passkey or session was rejected")
+	case errors.Is(err, identity.ErrStepOrder), errors.Is(err, identity.ErrInvalidStep):
+		writeErr(w, 422, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, security.ErrStepUp):
+		writeErr(w, 403, "STEP_UP_REQUIRED", "confirm this device to continue")
+	case errors.Is(err, security.ErrLastPasskey), errors.Is(err, identity.ErrLastPasskey):
+		writeErr(w, 403, "FORBIDDEN", "cannot delete the last passkey")
+	case errors.Is(err, security.ErrDenied):
+		writeErr(w, 403, "FORBIDDEN", "action denied")
+	case errors.Is(err, errInvalidJSON):
+		writeErr(w, 400, "INVALID_REQUEST", "invalid request body")
+	case errors.Is(err, gifts.ErrInvalidContact), errors.Is(err, notifications.ErrInvalidPhone), errors.Is(err, notifications.ErrInvalidEmail), errors.Is(err, tokenshares.ErrUnsupportedChannel):
 		writeErr(w, 400, "INVALID_REQUEST", err.Error())
-	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference):
+	case errors.Is(err, orchestrator.ErrTokenShareContact):
+		writeErr(w, 422, "INVALID_REQUEST", "no verified contact for this channel")
+	case errors.Is(err, orchestrator.ErrTokenShareDisabled):
+		writeErr(w, 403, "FEATURE_DISABLED", "sending a token to another destination is not enabled")
+	case errors.Is(err, orchestrator.ErrTokenShareOptedOut):
+		writeErr(w, 422, "INVALID_REQUEST", "destination has opted out of this channel")
+	case errors.Is(err, orchestrator.ErrTokenShareRateLimited):
+		writeErr(w, 429, "RATE_LIMITED", "daily token send limit reached")
+	case errors.Is(err, orchestrator.ErrAmountOutOfRange), errors.Is(err, orchestrator.ErrInvalidPreference),
+		errors.Is(err, orchestrator.ErrInvalidPack):
 		writeErr(w, 422, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrQuoteExpired), errors.Is(err, orchestrator.ErrQuoteNotFound):
 		writeErr(w, 422, "QUOTE_EXPIRED", err.Error())
+	case errors.Is(err, orchestrator.ErrCreditOnMeter):
+		writeErr(w, 409, "CREDIT_ON_METER", "credit is delivered to the meter; there is no keypad token until an operator falls back")
 	case errors.Is(err, orchestrator.ErrTokenUnavailable):
 		writeErr(w, 409, "DELIVERY_FAILED", "no token is available for this transaction")
+	case errors.Is(err, meters.ErrInvalidCohort):
+		writeErr(w, 422, "INVALID_REQUEST", "invalid remote-credit cohort")
+	case errors.Is(err, store.ErrDuplicate):
+		writeErr(w, 409, "DUPLICATE_RESOURCE", "resource already exists")
 	case errors.Is(err, orchestrator.ErrPaymentMismatch):
 		writeErr(w, 422, "PAYMENT_UNCONFIRMED", err.Error())
 	case errors.Is(err, idempotency.ErrConflict):

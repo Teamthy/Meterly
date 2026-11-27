@@ -13,14 +13,24 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
+	"github.com/teamthy/meterly/internal/autopower"
+	"github.com/teamthy/meterly/internal/conversation"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
+	"github.com/teamthy/meterly/internal/households"
 	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/notificationintents"
+	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pots"
+	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
+	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -28,33 +38,168 @@ import (
 type Store struct {
 	mu sync.Mutex
 
-	users       map[string]string
-	meters      map[uuid.UUID]*meters.Meter
-	meterByHash map[string]uuid.UUID
-	grants      []*meters.Grant
-	quotes      map[uuid.UUID]*tx.Quote
-	txns        map[uuid.UUID]*tx.Transaction
-	txnByPayRef map[string]uuid.UUID
-	ledger      []ledger.Transaction
-	ledgerByRef map[string]int
-	outbox      []*events.Event
-	idem        map[string]*idempotency.Record
-	audit       []audit.Event
-	providerOff map[string]bool
-	tokenShares []tokenshares.Share
-	gifts       map[uuid.UUID]gifts.Gift
-	candidates  map[uuid.UUID]notificationintents.Intent
+	users             map[string]string
+	userIDs           map[string]bool
+	userExt           map[string]string
+	userProfiles      map[string]identity.Profile
+	userContacts      map[string]notifications.UserContacts
+	authChallenges    map[string]identity.Challenge
+	authCreds         map[string]identity.Credential
+	authSessions      map[string]identity.Session
+	securityEvents    []security.Event
+	meters            map[uuid.UUID]*meters.Meter
+	meterByHash       map[string]uuid.UUID
+	grants            []*meters.Grant
+	quotes            map[uuid.UUID]*tx.Quote
+	txns              map[uuid.UUID]*tx.Transaction
+	txnByPayRef       map[string]uuid.UUID
+	ledger            []ledger.Transaction
+	ledgerByRef       map[string]int
+	outbox            []*events.Event
+	idem              map[string]*idempotency.Record
+	audit             []audit.Event
+	providerOff       map[string]bool
+	tokenShares       []tokenshares.Share
+	gifts             map[uuid.UUID]gifts.Gift
+	candidates        map[uuid.UUID]notificationintents.Intent
+	notifPrefs        map[string]notifications.Preferences
+	optOuts           map[string]notifications.OptOut
+	waWindows         map[string]time.Time
+	deliveries        map[uuid.UUID]*notifications.Delivery
+	deliveryByKey     map[string]uuid.UUID
+	payReqs           map[uuid.UUID]*payrequests.PaymentRequest
+	payReqByCodeHMAC  map[string]uuid.UUID
+	payers            map[uuid.UUID]payrequests.Payer
+	payerByStatusHMAC map[string]uuid.UUID
+	pots              map[uuid.UUID]*pots.Pot
+	potByCodeHMAC     map[string]uuid.UUID
+	contribs          map[uuid.UUID]*pots.Contribution
+	contribByPayRef   map[string]uuid.UUID
+	allocs            map[uuid.UUID]*pots.Allocation
+	allocByTxn        map[uuid.UUID]uuid.UUID
+	payMethods        map[uuid.UUID]*autopower.SavedPaymentMethod
+	apRules           map[uuid.UUID]*autopower.Rule
+	apRuns            map[uuid.UUID]*autopower.Run
+	apRunBySlot       map[string]uuid.UUID
+	apRunByTxn        map[uuid.UUID]uuid.UUID
+	orgs              map[uuid.UUID]*powerdesk.Organisation
+	orgMembers        map[string]*powerdesk.Member // "<org_id>:<user_id>"
+	properties        map[uuid.UUID]*powerdesk.Property
+	buildings         map[uuid.UUID]*powerdesk.Building
+	units             map[uuid.UUID]*powerdesk.Unit
+	unitMeters        map[uuid.UUID]*powerdesk.UnitMeter
+	bulkTopups        map[uuid.UUID]*powerdesk.BulkTopup
+	bulkTopupByIdem   map[string]uuid.UUID // "<org_id>:<key>"
+	bulkItems         map[uuid.UUID]*powerdesk.BulkTopupItem
+	phoneLinks        map[string]*conversation.PhoneLink
+	channelOTPs       map[uuid.UUID]*conversation.ChannelOTP
+	convSessions      map[uuid.UUID]*conversation.Session
+	convSessionByProv map[string]uuid.UUID // "<channel>:<provider_session_id>"
+	processedMsgs     map[string]time.Time // "<channel>:<message_id>"
+	offlinePurchases  map[uuid.UUID]*conversation.OfflinePurchase
+	tokenResends      []*conversation.TokenResend
+	supportKeys       map[string]*support.IdentityKey
+	supportThreads    map[uuid.UUID]*support.Thread
+	supportMessages   map[uuid.UUID]*support.Message
+	supportWraps      map[string]*support.WrappedKey // threadID + ":" + holder
+	households        map[uuid.UUID]households.Household
+	hhMembers         map[string]households.Member    // householdID:userID
+	hhMeters          map[string]households.MeterLink // householdID:meterID
+	ownership         map[string]households.Ownership // meterID:userID
+	remoteCohorts     map[uuid.UUID]meters.RemoteCohort
+	readingSamples    map[uuid.UUID][]meters.ReadingSample
+	lowUnitAlerts     map[string]lowUnitAlert
 }
 
 func New() *Store {
 	return &Store{
-		users: map[string]string{}, meters: map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
+		users: map[string]string{}, userIDs: map[string]bool{}, userExt: map[string]string{},
+		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
+		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
+		authSessions:   map[string]identity.Session{},
+		readingSamples: map[uuid.UUID][]meters.ReadingSample{},
+		lowUnitAlerts:  map[string]lowUnitAlert{},
+		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
-		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{}, gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
+		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
+		gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
+		notifPrefs: map[string]notifications.Preferences{}, optOuts: map[string]notifications.OptOut{},
+		waWindows: map[string]time.Time{}, deliveries: map[uuid.UUID]*notifications.Delivery{},
+		deliveryByKey:     map[string]uuid.UUID{},
+		payReqs:           map[uuid.UUID]*payrequests.PaymentRequest{},
+		payReqByCodeHMAC:  map[string]uuid.UUID{},
+		payers:            map[uuid.UUID]payrequests.Payer{},
+		payerByStatusHMAC: map[string]uuid.UUID{},
+		pots:              map[uuid.UUID]*pots.Pot{},
+		potByCodeHMAC:     map[string]uuid.UUID{},
+		contribs:          map[uuid.UUID]*pots.Contribution{},
+		contribByPayRef:   map[string]uuid.UUID{},
+		allocs:            map[uuid.UUID]*pots.Allocation{},
+		allocByTxn:        map[uuid.UUID]uuid.UUID{},
+		payMethods:        map[uuid.UUID]*autopower.SavedPaymentMethod{},
+		apRules:           map[uuid.UUID]*autopower.Rule{},
+		apRuns:            map[uuid.UUID]*autopower.Run{},
+		apRunBySlot:       map[string]uuid.UUID{},
+		apRunByTxn:        map[uuid.UUID]uuid.UUID{},
+		orgs:              map[uuid.UUID]*powerdesk.Organisation{},
+		orgMembers:        map[string]*powerdesk.Member{},
+		properties:        map[uuid.UUID]*powerdesk.Property{},
+		buildings:         map[uuid.UUID]*powerdesk.Building{},
+		units:             map[uuid.UUID]*powerdesk.Unit{},
+		unitMeters:        map[uuid.UUID]*powerdesk.UnitMeter{},
+		bulkTopups:        map[uuid.UUID]*powerdesk.BulkTopup{},
+		bulkTopupByIdem:   map[string]uuid.UUID{},
+		bulkItems:         map[uuid.UUID]*powerdesk.BulkTopupItem{},
+		phoneLinks:        map[string]*conversation.PhoneLink{},
+		channelOTPs:       map[uuid.UUID]*conversation.ChannelOTP{},
+		convSessions:      map[uuid.UUID]*conversation.Session{},
+		convSessionByProv: map[string]uuid.UUID{},
+		processedMsgs:     map[string]time.Time{},
+		offlinePurchases:  map[uuid.UUID]*conversation.OfflinePurchase{},
+		supportKeys:       map[string]*support.IdentityKey{},
+		supportThreads:    map[uuid.UUID]*support.Thread{},
+		supportMessages:   map[uuid.UUID]*support.Message{},
+		supportWraps:      map[string]*support.WrappedKey{},
+		households:        map[uuid.UUID]households.Household{},
+		hhMembers:         map[string]households.Member{},
+		hhMeters:          map[string]households.MeterLink{},
+		ownership:         map[string]households.Ownership{},
+		remoteCohorts:     map[uuid.UUID]meters.RemoteCohort{},
 	}
 }
 
 func (s *Store) Close() {}
+
+func (s *Store) MetricsSnapshot(_ context.Context, now time.Time) (store.MetricsSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	byStatus := make(map[tx.Overall]int64)
+	for _, t := range s.txns {
+		st := t.Status()
+		byStatus[st]++
+	}
+	var oldest time.Time
+	for _, e := range s.outbox {
+		if e.PublishedAt != nil {
+			continue
+		}
+		if oldest.IsZero() || e.CreatedAt.Before(oldest) {
+			oldest = e.CreatedAt
+		}
+	}
+	var lag float64
+	if !oldest.IsZero() {
+		if d := now.Sub(oldest).Seconds(); d > 0 {
+			lag = d
+		}
+	}
+	return store.MetricsSnapshot{
+		TransactionsByStatus: byStatus,
+		ManualReviewOpen:     byStatus[tx.OverallManualReview],
+		OutboxLagSeconds:     lag,
+	}, nil
+}
 
 func (s *Store) InTx(_ context.Context, fn func(store.Repos) error) error {
 	s.mu.Lock()
@@ -103,18 +248,51 @@ func (r *repos) Providers() store.ProviderRepo                           { retur
 func (r *repos) TokenShares() store.TokenShareRepo                       { return shareRepo{r} }
 func (r *repos) Gifts() store.GiftRepo                                   { return giftRepo{r} }
 func (r *repos) NotificationCandidates() store.NotificationCandidateRepo { return candidateRepo{r} }
+func (r *repos) Notifications() store.NotificationRepo                   { return notifRepo{r} }
+func (r *repos) PayRequests() store.PayRequestRepo                       { return payReqRepo{r} }
+func (r *repos) Pots() store.PotRepo                                     { return potRepo{r} }
+func (r *repos) AutoPower() store.AutoPowerRepo                          { return autoPowerRepo{r} }
+func (r *repos) PowerDesk() store.PowerDeskRepo                          { return powerDeskRepo{r} }
+func (r *repos) Offline() store.OfflineRepo                              { return offlineRepo{r} }
+func (r *repos) Support() store.SupportRepo                              { return supportRepo{r} }
+func (r *repos) Households() store.HouseholdRepo                         { return householdRepo{r} }
+func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { return remoteCohortRepo{r} }
+func (r *repos) Auth() store.AuthRepo                                    { return r }
+func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
+func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
 func (r *repos) EnsureByExternalID(_ context.Context, ext string) (string, error) {
 	defer r.lock()()
 	if id, ok := r.s.users[ext]; ok {
+		r.s.userExt[id] = ext
 		return id, nil
 	}
 	id := uuid.NewString()
 	r.s.users[ext] = id
-	r.onUndo(func() { delete(r.s.users, ext) })
+	r.s.userIDs[id] = true
+	r.s.userExt[id] = ext
+	r.s.userProfiles[id] = identity.Profile{
+		ID: id, ExternalID: ext, OnboardingStep: identity.StepWelcome, CreatedAt: time.Now().UTC(),
+	}
+	r.onUndo(func() {
+		delete(r.s.users, ext)
+		delete(r.s.userIDs, id)
+		delete(r.s.userExt, id)
+		delete(r.s.userProfiles, id)
+	})
 	return id, nil
+}
+
+func (r *repos) LockForUpdate(_ context.Context, userID string) error {
+	if !r.inTx {
+		return errors.New("user lock requires transaction")
+	}
+	if userID == "" || !r.s.userIDs[userID] {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // ---- meters -------------------------------------------------------------------
@@ -224,6 +402,35 @@ func (r meterRepo) ListForUser(_ context.Context, userID string) ([]meters.Liste
 	return out, nil
 }
 
+func (r meterRepo) ListAll(_ context.Context, limit int) ([]*meters.Meter, error) {
+	defer r.lock()()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	out := make([]*meters.Meter, 0, len(r.s.meters))
+	for _, m := range r.s.meters {
+		out = append(out, cloneMeter(m))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ValidatedAt.After(out[j].ValidatedAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r meterRepo) ListActiveUserIDs(_ context.Context, meterID uuid.UUID) ([]string, error) {
+	defer r.lock()()
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range r.s.grants {
+		if g.MeterID == meterID && g.RevokedAt == nil && !seen[g.UserID] {
+			seen[g.UserID] = true
+			out = append(out, g.UserID)
+		}
+	}
+	return out, nil
+}
+
 func (r meterRepo) Revoke(_ context.Context, meterID uuid.UUID, userID string, at time.Time) error {
 	defer r.lock()()
 	if g := r.activeGrant(meterID, userID); g != nil {
@@ -298,7 +505,9 @@ func (r txnRepo) Create(_ context.Context, t *tx.Transaction) error {
 	r.s.txns[t.ID] = cloneTxn(t)
 	r.onUndo(func() { delete(r.s.txns, t.ID) })
 	if t.PaymentProviderRef != "" {
-		r.s.txnByPayRef[t.PaymentProviderRef] = t.ID
+		ref := t.PaymentProviderRef
+		r.s.txnByPayRef[ref] = t.ID
+		r.onUndo(func() { delete(r.s.txnByPayRef, ref) })
 	}
 	return nil
 }
@@ -361,18 +570,25 @@ func (r txnRepo) ListForCustomer(_ context.Context, customerID string) ([]*tx.Tr
 	return out, nil
 }
 
+func txnMatches(t *tx.Transaction, f store.TxnFilter) bool {
+	switch {
+	case f.ReviewOnly && t.ReviewReason == "",
+		f.Payment != "" && t.Payment != f.Payment,
+		f.Vending != "" && t.Vending != f.Vending,
+		f.Delivery != "" && t.Delivery != f.Delivery,
+		f.CustomerID != "" && t.CustomerID != f.CustomerID,
+		f.MeterID != uuid.Nil && t.MeterID != f.MeterID,
+		!f.Before.IsZero() && !t.CreatedAt.Before(f.Before):
+		return false
+	}
+	return true
+}
+
 func (r txnRepo) Search(_ context.Context, f store.TxnFilter) ([]*tx.Transaction, error) {
 	defer r.lock()()
 	var out []*tx.Transaction
 	for _, t := range r.s.txns {
-		switch {
-		case f.ReviewOnly && t.ReviewReason == "",
-			f.Payment != "" && t.Payment != f.Payment,
-			f.Vending != "" && t.Vending != f.Vending,
-			f.Delivery != "" && t.Delivery != f.Delivery,
-			f.CustomerID != "" && t.CustomerID != f.CustomerID,
-			f.MeterID != uuid.Nil && t.MeterID != f.MeterID,
-			!f.Before.IsZero() && !t.CreatedAt.Before(f.Before):
+		if !txnMatches(t, f) {
 			continue
 		}
 		out = append(out, cloneTxn(t))
@@ -382,6 +598,17 @@ func (r txnRepo) Search(_ context.Context, f store.TxnFilter) ([]*tx.Transaction
 		out = out[:f.Limit]
 	}
 	return out, nil
+}
+
+func (r txnRepo) Count(_ context.Context, f store.TxnFilter) (int, error) {
+	defer r.lock()()
+	n := 0
+	for _, t := range r.s.txns {
+		if txnMatches(t, f) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r txnRepo) ClaimDue(_ context.Context, now, staleBefore time.Time, lease time.Duration, limit int) ([]uuid.UUID, error) {
@@ -582,6 +809,26 @@ func (r auditRepo) ForResource(_ context.Context, typ string, id uuid.UUID) ([]a
 	return out, nil
 }
 
+func (r auditRepo) Recent(_ context.Context, limit int) ([]audit.Event, error) {
+	defer r.lock()()
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	n := len(r.s.audit)
+	if n == 0 {
+		return []audit.Event{}, nil
+	}
+	start := n - limit
+	if start < 0 {
+		start = 0
+	}
+	out := make([]audit.Event, 0, n-start)
+	for i := n - 1; i >= start; i-- {
+		out = append(out, r.s.audit[i])
+	}
+	return out, nil
+}
+
 // ---- providers -----------------------------------------------------------------
 
 type providerRepo struct{ *repos }
@@ -601,9 +848,16 @@ func (r providerRepo) SetEnabled(_ context.Context, name, _ string, enabled bool
 
 type shareRepo struct{ *repos }
 
+func cloneShare(s tokenshares.Share) tokenshares.Share {
+	if len(s.DestCipher) > 0 {
+		s.DestCipher = append([]byte(nil), s.DestCipher...)
+	}
+	return s
+}
+
 func (r shareRepo) AddCopy(_ context.Context, share tokenshares.Share) error {
 	defer r.lock()()
-	r.s.tokenShares = append(r.s.tokenShares, share)
+	r.s.tokenShares = append(r.s.tokenShares, cloneShare(share))
 	r.onUndo(func() { r.s.tokenShares = r.s.tokenShares[:len(r.s.tokenShares)-1] })
 	return nil
 }
@@ -612,8 +866,8 @@ func (r shareRepo) ListCopies(_ context.Context, id uuid.UUID, user string) ([]t
 	result := []tokenshares.Share{}
 	for i := len(r.s.tokenShares) - 1; i >= 0 && len(result) < 200; i-- {
 		s := r.s.tokenShares[i]
-		if s.TransactionID == id && s.UserID == user {
-			result = append(result, s)
+		if s.TransactionID == id && s.UserID == user && s.Channel == tokenshares.Copy {
+			result = append(result, cloneShare(s))
 		}
 	}
 	return result, nil
@@ -622,11 +876,53 @@ func (r shareRepo) ListCopies(_ context.Context, id uuid.UUID, user string) ([]t
 func (r shareRepo) GetCopy(_ context.Context, shareID, txnID uuid.UUID, user string) (tokenshares.Share, error) {
 	defer r.lock()()
 	for _, s := range r.s.tokenShares {
-		if s.ID == shareID && s.TransactionID == txnID && s.UserID == user {
-			return s, nil
+		if s.ID == shareID && s.TransactionID == txnID && s.UserID == user && s.Channel == tokenshares.Copy {
+			return cloneShare(s), nil
 		}
 	}
 	return tokenshares.Share{}, store.ErrNotFound
+}
+
+func (r shareRepo) AddShare(_ context.Context, share tokenshares.Share) error {
+	defer r.lock()()
+	r.s.tokenShares = append(r.s.tokenShares, cloneShare(share))
+	r.onUndo(func() { r.s.tokenShares = r.s.tokenShares[:len(r.s.tokenShares)-1] })
+	return nil
+}
+
+func (r shareRepo) GetShare(_ context.Context, shareID uuid.UUID) (tokenshares.Share, error) {
+	defer r.lock()()
+	for _, s := range r.s.tokenShares {
+		if s.ID == shareID {
+			return cloneShare(s), nil
+		}
+	}
+	return tokenshares.Share{}, store.ErrNotFound
+}
+
+func (r shareRepo) ListShares(_ context.Context, id uuid.UUID, user string) ([]tokenshares.Share, error) {
+	defer r.lock()()
+	result := []tokenshares.Share{}
+	for i := len(r.s.tokenShares) - 1; i >= 0 && len(result) < 200; i-- {
+		s := r.s.tokenShares[i]
+		if s.TransactionID == id && s.UserID == user {
+			out := cloneShare(s)
+			out.DestCipher = nil
+			result = append(result, out)
+		}
+	}
+	return result, nil
+}
+
+func (r shareRepo) CountSends(_ context.Context, userID string, start, end time.Time) (int, error) {
+	defer r.lock()()
+	n := 0
+	for _, s := range r.s.tokenShares {
+		if s.UserID == userID && tokenshares.IsSendChannel(s.Channel) && !s.SharedAt.Before(start) && s.SharedAt.Before(end) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 type giftRepo struct{ *repos }

@@ -49,6 +49,13 @@ func (c Capabilities) RemoteCreditUsable() bool {
 	return r.Supported && r.Authorised && (r.Reachable == nil || *r.Reachable)
 }
 
+// RemoteReadingConfirmed reports whether AutoPower low-balance mode is allowed:
+// remote_reading must be supported, authorised, confirmed and not marked unreachable.
+func (c Capabilities) RemoteReadingConfirmed() bool {
+	r := c.RemoteReading
+	return r.Supported && r.Authorised && r.Confirmed && (r.Reachable == nil || *r.Reachable)
+}
+
 type Meter struct {
 	ID              uuid.UUID    `json:"meter_id"`
 	NumberEncrypted []byte       `json:"-"`
