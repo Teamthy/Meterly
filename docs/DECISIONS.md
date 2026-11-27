@@ -416,3 +416,19 @@ A review of everything merged after `68acdab` (PRs #5–#23) found these defects
 - **Paystack references only use `[A-Za-z0-9-.=]`.** The AutoPower charge prefix changed from `apchg:` to `apchg-`, and `paystacktest` now rejects invalid references as Paystack does. AutoPower had never been live, so no stored references needed migrating.
 - **Self-service meter ownership by display-name match is off by default** (`FEATURE_OWNERSHIP_NAME_MATCH`, on only in `MODE=dev`). Display names are user-editable and `/v1/meters/validate` reveals the DisCo customer name, so the match proves nothing. Outside dev, users get `OWNERSHIP_REVIEW_REQUIRED`, and operators verify through the audited `POST /v1/admin/meters/{id}/ownership`. Re-enable it only with a non-editable, identity-verified name source.
 - **Not fixed (accepted):** the Redis limiter re-runs EVAL after a lost reply, which can occasionally count one request twice. That only errs toward stricter limiting.
+
+## Sandbox certification (P1)
+
+One command proves each adapter against that provider's real sandbox, and only when keys are present.
+
+- Package `internal/certify`, command `cmd/certify`. Live tests sit behind `go test -tags certify ./internal/certify/...` and are skipped without env keys, so they never run in normal CI.
+- `cmd/certify -o certify-report.json` records provider, scenario, pass/fail/skipped, latency and provider request/reference IDs. No secrets, tokens or meter numbers (free-text fields are sanitised).
+- Certify refuses `sk_live_` Paystack keys and non-sandbox VTpass / Africa's Talking URLs unless `CERTIFY_ALLOW_LIVE=true`.
+- Paystack test-card payment uses the documented Charge API (`POST /charge`, PIN/OTP submit) with card `4084084084084081` (https://paystack.com/docs/payments/test-payments). Production never sends raw PANs; this path is certify-only. `paystacktest` now implements `/charge` so the harness can run against the fake.
+- VTpass scenarios use the documented sandbox meters `1111111111111` (prepaid) and `1010101010101` (postpaid). `vtpasstest` now rejects a request_id whose first 12 digits are not a real `YYYYMMDDHHII` (code `085`).
+- OIDC without a founder IdP is certified only against an in-process JWKS (discovery, keys, staff token with `amr` + roles). A live staff token is `CERTIFY_OIDC_STAFF_TOKEN`.
+- Optional captured Paystack webhook: `CERTIFY_PAYSTACK_WEBHOOK_BODY` + `CERTIFY_PAYSTACK_WEBHOOK_SIGNATURE`.
+
+### Sandbox findings
+
+None yet — no founder sandbox keys in this environment. Every provider is **not certified**. Differences found later against a real sandbox must change the fake, add a regression test, and land here.

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -291,7 +292,9 @@ func validRequestID(s string) bool {
 			return false
 		}
 	}
-	return true
+	// First 12 chars must be a real Africa/Lagos YYYYMMDDHHII (VTpass 085 otherwise).
+	_, err := time.Parse("200601021504", s[:12])
+	return err == nil
 }
 
 func stringify(v any) string {

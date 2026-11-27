@@ -315,6 +315,93 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			"reference":         body.Reference,
 		})
 
+	case r.Method == "POST" && r.URL.Path == "/charge":
+		// Documented Charge API (https://paystack.com/docs/api/charge) used by
+		// the certify harness with Paystack test cards.
+		var body struct {
+			Email     string `json:"email"`
+			Amount    string `json:"amount"`
+			Currency  string `json:"currency"`
+			Reference string `json:"reference"`
+			Card      struct {
+				Number      string `json:"number"`
+				CVV         string `json:"cvv"`
+				ExpiryMonth string `json:"expiry_month"`
+				ExpiryYear  string `json:"expiry_year"`
+			} `json:"card"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Email == "" || body.Card.Number == "" {
+			reply(400, false, "Invalid request", nil)
+			return
+		}
+		amt, err := strconv.ParseInt(body.Amount, 10, 64)
+		if err != nil || amt <= 0 {
+			reply(400, false, "Invalid amount", nil)
+			return
+		}
+		ref := body.Reference
+		if ref == "" {
+			f.nextID++
+			ref = "chg" + strconv.FormatInt(f.nextID, 10)
+		}
+		if !validReference(ref) {
+			reply(400, false, "Invalid transaction reference", nil)
+			return
+		}
+		st := "failed"
+		if body.Card.Number == "4084084084084081" { // documented success test card
+			st = "success"
+		}
+		t, ok := f.txns[ref]
+		if !ok {
+			f.nextID++
+			cur := body.Currency
+			if cur == "" {
+				cur = "NGN"
+			}
+			t = &txn{ID: f.nextID, Reference: ref, Email: body.Email, Amount: amt, Currency: cur, Status: st}
+			f.txns[ref] = t
+		} else {
+			t.Status = st
+			if amt > 0 {
+				t.Amount = amt
+			}
+		}
+		if st == "success" {
+			now := time.Now().UTC()
+			t.PaidAt = &now
+			if t.Auth == nil {
+				code := "AUTH_fake_" + strconv.FormatInt(t.ID, 10)
+				ca := &CardAuth{
+					AuthorizationCode: code, Email: strings.ToLower(strings.TrimSpace(t.Email)),
+					Reusable: true, Brand: "visa", CardType: "visa DEBIT", Last4: "4081",
+					ExpMonth: "12", ExpYear: "2030", Channel: "card",
+					Signature: "SIG_fake_" + strconv.FormatInt(t.ID, 10), ChargeStatus: "success",
+				}
+				t.Auth = ca
+				f.auths[code] = ca
+			}
+		}
+		reply(200, true, "Charge attempted", txnPayload(t))
+
+	case r.Method == "POST" && (r.URL.Path == "/charge/submit_pin" || r.URL.Path == "/charge/submit_otp"):
+		var body struct {
+			Reference string `json:"reference"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Reference == "" {
+			reply(400, false, "Invalid request", nil)
+			return
+		}
+		t, ok := f.txns[body.Reference]
+		if !ok {
+			reply(400, false, "Transaction reference not found", nil)
+			return
+		}
+		t.Status = "success"
+		now := time.Now().UTC()
+		t.PaidAt = &now
+		reply(200, true, "Charge attempted", txnPayload(t))
+
 	case r.Method == "POST" && r.URL.Path == "/transaction/charge_authorization":
 		var body struct {
 			AuthorizationCode string `json:"authorization_code"`

@@ -2,6 +2,7 @@ bin/
 *.log
 .env
 .env.*
+certify-report.json
 web/node_modules/
 web/.next/
 web/out/

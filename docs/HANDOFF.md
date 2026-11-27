@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-27. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. Review fixes from PRs #5–#23 landed on this branch.
+> **Last updated:** 2026-11-27. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. Review fixes from PRs #5–#23 landed here; P1 certify harness is in code, providers **not certified** (no sandbox keys).
 
 ## 0. Start here
 
@@ -18,7 +18,7 @@
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
 | 2 | Render API + apply migrations `0018`–`0021` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`) |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
-| 4 | Live sandbox keys (Paystack, VTpass, …) | Human | After 2 |
+| 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
 | 6 | Legal sign-off before prod flags | Legal | `docs/LEGAL.md` — NDPA / NCC / CBN / NERC / LASERC |
 | 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
@@ -46,11 +46,11 @@ OPay airtime works because every phone has a **network account** the telco can c
 | Web UI + ink/paper/volt restyle | ✅ `main` (PR #21) | `web/` |
 | Auto-renew | ✅ UI **coming soon** (prefs only, no live charge) | `/autopower` |
 | Security engine | ✅ `main` (PR #22) | `internal/security`, `/security` |
-| VTpass / Paystack adapters | ✅ code, **not live-sandbox tested** | `internal/providers/*` |
+| VTpass / Paystack adapters | ✅ code, **not certified** (no keys) | `internal/providers/*`, `internal/certify` |
 | Households, token send, support E2E, Power Desk, USSD, pots | ✅ code, flags mostly off outside dev | feature flags §7 |
 | Hosted API (Render) + migrations `0018`–`0021` | ⏳ | `docs/DEPLOY.md` |
 
-**Git:** `origin/main` @ `b623755` (merge #22). This branch may be 1+ hardening commits ahead.
+**Git:** `origin/main` @ `9cac48b` (merge #23) is merged into this branch. Review-fix content from `b573cff` is `b6c4f7d` here. CI on this commit not yet observed.
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -62,6 +62,7 @@ OPay airtime works because every phone has a **network account** the telco can c
 cmd/api        HTTP API (+ in-process worker in MODE=dev)
 cmd/worker     resume + outbox (refuses mock providers)
 cmd/migrate    embedded SQL, checksummed, advisory-locked
+cmd/certify    live sandbox certification (skips without keys)
 
 internal/orchestrator   quote → pay → vend → deliver → refund; Resume
 internal/security       passkey step-up, sessions, event log
@@ -89,6 +90,8 @@ Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-sid
 8. VTpass `request_id` is stored at vend-claim (`VendIdempotencyKey`) and reused. Never regenerate.
 9. Household roles never mint `meters.MANAGE`. Grants ≠ ownership.
 10. Self-registration grants at most `PURCHASE`.
+12. A prepaid vend is never confirmed without an STS token.
+13. Saved cards belong only to the person who paid with them.
 
 Enforced by `orchestrator.mutate` (lock → guard → state + history + ledger + outbox in one tx). Only the worker whose commit **claimed** a step may call the provider.
 
@@ -119,11 +122,13 @@ go test -modfile=/tmp/meterly.mod ./internal/security/ ./internal/identity/ ./in
 
 | Provider | Config | Live sandbox |
 |---|---|---|
-| Payments | `mock` / `paystack` | **No** |
-| Vending | `mock` / `vtpass` | **No** |
+| Payments | `mock` / `paystack` | **not certified** (no keys) |
+| Vending | `mock` / `vtpass` | **not certified** (no keys) |
 | Remote credit | `mock` / `none` / `http` (`heshttp`) | **No partner** |
-| SMS / email / WhatsApp | mock or vendor adapters | **No** |
-| Auth | `dev` / `oidc` | **No real IdP** |
+| SMS / email / WhatsApp | mock or vendor adapters | **not certified** (no keys) |
+| Auth | `dev` / `oidc` | **not certified** (no IdP; in-process JWKS only) |
+
+Run `go run ./cmd/certify -o certify-report.json` (or `make certify`) when keys are in the environment. Live tests: `go test -tags certify ./internal/certify/...` (skipped without keys; not in CI). Certify refuses `sk_live_` and non-sandbox VTpass/Africa's Talking unless `CERTIFY_ALLOW_LIVE=true`.
 
 Outside `MODE=dev`, mocks are refused. `cmd/worker` refuses mocks.
 
@@ -269,7 +274,8 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
-- **2026-11-27: review fixes of PRs #5–#23 landed here.** Guest-payer cards cannot be saved; session IP binds once; passkey UV + step-up to add; attested key preferred; prepaid vend needs an STS token; VTpass `083` is pending; AutoPower Paystack refs use `apchg-`; ownership name-match is flagged off outside dev.
+- **2026-11-27: P1 certify harness.** `internal/certify` + `cmd/certify`. Untagged tests run the scenarios against in-repo fakes (pass). `go test -tags certify` and `cmd/certify` skip every provider here (no keys) and write a 30-scenario skipped report. Paystack fake gained documented `/charge`; VTpass fake rejects non-dates as `085`. Unverified: every live sandbox. Next is P2 settlement/reconciliation (`0022`).
+- **2026-11-27: review fixes of PRs #5–#23 landed here.** Guest-payer cards cannot be saved; session IP binds once; passkey UV + step-up to add; attested key preferred; prepaid vend needs an STS token; VTpass `083` is pending; AutoPower Paystack refs use `apchg-`; ownership name-match is flagged off outside dev. `origin/main` (`9cac48b`) merged.
 - **2026-11-26: 100 edge cases.** `docs/EDGE_CASES.md` — IN / OPS / GAP. Quote gates, in-flight, digits, wallet, dispute pause are in code.
 - **2026-11-26: Operating pack.** Catch-22 (supply must be on), first 200 = Ikeja/IE Energy Lagos Mojec, 2am runbook, fraud, fee leak, legal drafts `/legal/*`, Lagos entity rename, feature freeze (later), no kill date.
 - **2026-11-26: North star = no-keypad + OPay-style auto-recharge.** Token is fallback. First partner call is one Disco AMI/MAP, then VTpass + Paystack.

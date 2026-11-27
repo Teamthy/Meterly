@@ -297,3 +297,20 @@ func TestCode083IsPendingNotFailed(t *testing.T) {
 		t.Fatalf("083 on requery must be pending, got %+v %v", got, err)
 	}
 }
+
+func TestInvalidRequestIDDateIs085(t *testing.T) {
+	c, _ := setup(t)
+	res, err := c.Vend(ctx, providers.VendRequest{
+		MeterNumber: vtpasstest.PrepaidMeter, DiscoCode: "IKEDC",
+		Amount: ngn(2000), IdempotencyKey: "999999999999x", MeterType: "PREPAID",
+	})
+	if err != nil {
+		return
+	}
+	if res.Status == providers.VendSucceeded {
+		t.Fatalf("improper request_id must not succeed: %+v", res)
+	}
+	if res.FailureCode != "085" && res.Status != providers.VendFailed {
+		t.Fatalf("want 085/FAILED, got %+v", res)
+	}
+}
