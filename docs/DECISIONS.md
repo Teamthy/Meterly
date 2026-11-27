@@ -544,6 +544,18 @@ None yet — no founder sandbox keys in this environment. Every provider is **no
 - **Synthetic user** `partner:{uuid}` owns the quote/transaction `customer_id` FK. Isolation is `partner_id` + that user. `partner_ref` is unique per partner.
 - **Token** is returned only on this authenticated channel, and only to keys with `purchases:create` (POST response) or `purchases:read` (GET). Never in logs or outbox. Remote delivery keeps ACCEPTED ≠ CONFIRMED.
 
+## Partner webhooks, SSRF, sandbox (B6)
+
+Org-scoped `webhook_endpoints` in `0001_init` cannot be reused (FK `organisations`). B6 adds `partner_webhook_endpoints` / `partner_webhook_deliveries` (`0030_partner_webhooks.sql`).
+
+- **Events** (outbox → partner): `payment.confirmed` → `purchase.payment_confirmed`; `electricity.vending.completed` → `purchase.vended`; `electricity.delivery.confirmed` → `purchase.delivered`; `electricity.vending.failed` / `payment.failed` → `purchase.failed`; `electricity.refund.completed` → `purchase.refunded`; `electricity.vending.unknown` / `electricity.delivery.unknown` → `purchase.unknown`. `token.available` is not forwarded.
+- **Signing:** HMAC-SHA256 over `{unix}.{body}` with the 32-byte secret (`whsec_` + base64url). Header `Meterly-Signature: t=<unix>,v1=<hex>[,v1=<hex>]`. Replay window 5 minutes. Rotation keeps the previous secret for 24h and signs with both. Secret is AEAD-bound to the endpoint id and shown once.
+- **Delivery:** at-least-once from the outbox (unique `(endpoint_id, event_id)`). Exponential retry (5s × 4^n, cap 1h) for 24h from first attempt, then `DEAD_LETTER`. Manual `POST .../redeliver` starts a new 24h window. Test `POST .../ping` is `endpoint.ping`.
+- **Token in payload:** only when the endpoint was created with `include_token` (requires `purchases:create` or `purchases:read` on the managing key). Never in logs.
+- **SSRF:** https only (http://127.0.0.1 allowed solely in `MODE=dev` for the demo). Resolve once, pin the IP on dial, deny private/loopback/link-local/metadata (IPv4, IPv6, IPv4-mapped, NAT64 64:ff9b::/96). No redirects, 5s timeout, 64KiB body cap. DNS-rebinding is tested by flipping the resolver after pin.
+- **Sandbox meters** (mock vending): `45012345678` success; suffix `0000` fail+refund; suffix `8888` UNKNOWN no refund; suffix `9999` vend-then-lost; prefix `0` validation fails.
+- **Demo:** `scripts/partner-demo` against `MODE=dev go run ./cmd/api`.
+
 ## PR #24 review fixes (2026-11-27)
 
 Reviewing PR #24 (P0–P4) found these, now fixed with tests on both stores:

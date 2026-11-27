@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/channels/ussd"
@@ -32,6 +33,7 @@ import (
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/outbox"
 	"github.com/teamthy/meterly/internal/partners"
+	"github.com/teamthy/meterly/internal/partnerwebhooks"
 	"github.com/teamthy/meterly/internal/platform/config"
 	"github.com/teamthy/meterly/internal/platform/migrate"
 	"github.com/teamthy/meterly/internal/privacy"
@@ -69,6 +71,7 @@ type App struct {
 	Orch          *orchestrator.Orchestrator
 	Reconcile     *reconcile.Engine
 	Publisher     *outbox.Publisher
+	Partners      *partners.Engine
 	Notifications *notificationservice.Service
 	Offline       *offline.Service
 	Metrics       *observability.Registry
@@ -426,7 +429,19 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 		return fail(err)
 	}
 	a.Offline = offSvc
-	a.Publisher = outbox.NewPublisher(a.Store, outbox.Chain(outbox.LogSink(log), ns.Sink()), log)
+	a.Partners = &partners.Engine{
+		Repo:        a.Store.Repos().Partners(),
+		Box:         a.Orch.Box(),
+		Environment: cfg.ProviderEnvironment,
+		Guard:       &partners.Guard{AllowLoopback: cfg.Mode == config.Dev},
+		Runner:      partnerwebhooks.Runner(a.Store),
+		Log:         log,
+		Token: func(ctx context.Context, partnerID, txnID uuid.UUID) (string, error) {
+			tok, _, err := a.Orch.PartnerToken(ctx, partnerID, txnID)
+			return tok, err
+		},
+	}
+	a.Publisher = outbox.NewPublisher(a.Store, outbox.Chain(outbox.LogSink(log), ns.Sink(), partnerwebhooks.Sink(a.Partners)), log)
 	a.RefreshMetrics(ctx)
 	return a, nil
 }
@@ -504,13 +519,9 @@ func (a *App) Handler() http.Handler {
 		PartnerDisabled:      !a.Cfg.FeaturePartnerAPI,
 		PartnerFloatDisabled: !a.Cfg.FeaturePartnerFloat,
 		PartnerEnvironment:   a.Cfg.ProviderEnvironment,
-		Partners: &partners.Engine{
-			Repo:        a.Store.Repos().Partners(),
-			Box:         a.Orch.Box(),
-			Environment: a.Cfg.ProviderEnvironment,
-		},
-		Remote: a.remoteRaw,
-		Dev:    a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
+		Partners:             a.Partners,
+		Remote:               a.remoteRaw,
+		Dev:                  a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}
 	if a.redis != nil {
 		s.NewLimiter = a.redis.Limiter
@@ -745,6 +756,19 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 			if n == 0 {
 				return
 			}
+		}
+	})
+	start("partner-webhooks", a.Cfg.OutboxInterval, func(ctx context.Context) {
+		if a.Partners == nil || ctx.Err() != nil {
+			return
+		}
+		n, err := a.Partners.ProcessDue(drainCtx, 50)
+		if err != nil {
+			a.Log.Warn("partner webhook delivery sweep failed", "err", err)
+			return
+		}
+		if n > 0 {
+			a.Log.Info("partner webhooks delivered", "count", n)
 		}
 	})
 	start("notification-deliveries", a.Cfg.NotificationInterval, func(ctx context.Context) {

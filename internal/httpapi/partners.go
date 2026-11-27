@@ -31,6 +31,7 @@ func (s *Server) partnerRoutes(mux *patternMux) {
 	mux.Handle("GET /v1/partner/purchases/{id}", s.partnerAuthed(partners.ScopePurchasesRead)(s.partnerGetPurchase))
 	mux.Handle("GET /v1/partner/purchases", s.partnerAuthed(partners.ScopePurchasesRead)(s.partnerLookupPurchase))
 	mux.Handle("GET /v1/partner/float", s.partnerAuthed(partners.ScopeFloatRead)(s.partnerGetFloat))
+	s.partnerWebhookRoutes(mux)
 }
 
 func (s *Server) adminPartnerRoutes(mux *patternMux) {

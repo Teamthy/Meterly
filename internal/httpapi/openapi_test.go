@@ -245,6 +245,15 @@ var p2p4AdminRoutes = []string{
 	"GET /v1/partner/purchases",
 	"GET /v1/partner/purchases/{id}",
 	"GET /v1/partner/float",
+	"POST /v1/partner/webhooks",
+	"GET /v1/partner/webhooks",
+	"GET /v1/partner/webhooks/{id}",
+	"PATCH /v1/partner/webhooks/{id}",
+	"DELETE /v1/partner/webhooks/{id}",
+	"POST /v1/partner/webhooks/{id}/rotate",
+	"POST /v1/partner/webhooks/{id}/ping",
+	"GET /v1/partner/webhooks/{id}/deliveries",
+	"POST /v1/partner/webhooks/{id}/deliveries/{delivery_id}/redeliver",
 }
 
 func TestOpenAPIDriftDetection(t *testing.T) {
