@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +34,7 @@ import (
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -98,6 +101,14 @@ var (
 	ErrCreditOnMeter     = errors.New("credit is on the meter; no keypad token")
 	ErrInvalidPreference = errors.New("unknown delivery preference")
 	ErrInvalidPack       = errors.New("unknown amount pack")
+	ErrInFlight          = errors.New("a purchase for this meter is already in progress")
+	ErrNameNotConfirmed  = errors.New("confirm the disco account name before paying")
+	ErrAccountSuspended  = errors.New("purchases are paused on this account")
+	ErrRiskDenied        = risk.ErrDenied
+	ErrVendingPaused     = errors.New("electricity vending is paused")
+	ErrServicePaused     = errors.New("service is paused")
+	ErrPilotCap          = errors.New("pilot daily cap reached")
+	ErrInvalidPilot      = errors.New("invalid pilot allow-list entry")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
@@ -113,19 +124,38 @@ var (
 var errSkip = errors.New("skip")
 
 type Orchestrator struct {
-	cfg            Config
-	st             store.Store
-	Meters         *registry.Registry
-	box            *secure.Box
-	payments       providers.PaymentProvider
-	vending        providers.VendingProvider
-	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
-	readings       providers.MeterReadingProvider // nil if no remote balance reading
-	notifProviders []string
-	featureGiftSMS bool
-	metrics        *observability.Registry
-	log            *slog.Logger
-	Now            func() time.Time
+	cfg               Config
+	st                store.Store
+	Meters            *registry.Registry
+	box               *secure.Box
+	payments          providers.PaymentProvider
+	vending           providers.VendingProvider
+	remote            providers.RemoteCreditProvider // nil if no AMI/HES integration
+	readings          providers.MeterReadingProvider // nil if no remote balance reading
+	notifProviders    []string
+	featureGiftSMS    bool
+	featureRiskEngine bool
+	// ownershipNameMatch enables self-service ownership verification by
+	// display-name match. Off by default: see households.ErrSelfVerificationDisabled.
+	ownershipNameMatch bool
+	metrics            *observability.Registry
+	log                *slog.Logger
+	Now                func() time.Time
+
+	wallet    providers.WalletProvider
+	walletMin int64
+	walletTTL time.Duration
+	walletMu  sync.Mutex
+	walletAt  time.Time
+	walletBal int64
+	walletOK  bool
+	spendAvg  int64
+	spendAt   time.Time
+
+	pilotMode      bool
+	pilotUserCap   int64
+	pilotGlobalCap int64
+	servicePaused  atomic.Bool
 }
 
 func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
@@ -160,6 +190,11 @@ func (o *Orchestrator) RegisterNotificationProviders(names ...string) {
 // (the same NDPA control as gift-recipient SMS). Self-send to the purchaser's
 // own verified contact is always allowed.
 func (o *Orchestrator) SetFeatureGiftSMS(v bool) { o.featureGiftSMS = v }
+
+// SetOwnershipNameMatch enables self-service ownership verification by
+// display-name match (FEATURE_OWNERSHIP_NAME_MATCH). Keep it off wherever
+// ownership matters: the match is spoofable.
+func (o *Orchestrator) SetOwnershipNameMatch(v bool) { o.ownershipNameMatch = v }
 
 func (o *Orchestrator) pctx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, o.cfg.ProviderTimeout)
@@ -253,6 +288,9 @@ type CreateRequest struct {
 	// the reservation, the transaction and the completion commit together.
 	IdempotencyKey string
 	RequestHash    string
+	// IP and UserAgent are hashed into risk observations; never logged.
+	IP        string
+	UserAgent string
 }
 
 const opCreateTransaction = "create_transaction"
@@ -264,8 +302,14 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 	if err := gifts.Validate(req.IsGift, req.RecipientPhone, req.NotifyRecipient); err != nil {
 		return nil, false, err
 	}
+	if err := o.ensurePurchasesOpen(ctx); err != nil {
+		return nil, false, err
+	}
 	now := o.Now()
 	err = o.st.InTx(ctx, func(r store.Repos) error {
+		if err := o.ensurePurchaserActive(ctx, r, req.CustomerID); err != nil {
+			return err
+		}
 		if req.IdempotencyKey != "" {
 			existing, err := r.Idempotency().Reserve(ctx, idempotency.Record{
 				Scope: req.CustomerID, Operation: opCreateTransaction, Key: req.IdempotencyKey, RequestHash: req.RequestHash,
@@ -300,8 +344,23 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		if q.Used || now.After(q.ExpiresAt) {
 			return ErrQuoteExpired
 		}
+		if err := o.ensurePilot(ctx, req.CustomerID, q.MeterID, q.Amount.Minor); err != nil {
+			return err
+		}
 		// Serialize this authorization and creation with meter access changes.
 		if _, err := registry.AuthorizeForUpdateIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {
+			return err
+		}
+		if err := o.ensureNoInFlight(ctx, r, req.CustomerID, q.MeterID); err != nil {
+			return err
+		}
+		d, err := o.evaluateRisk(ctx, r, risk.Request{
+			Surface: risk.SurfacePurchase, UserID: req.CustomerID, MeterID: q.MeterID,
+			AmountMinor: q.Total.Minor, EmailHMAC: o.riskHash("email", req.Email),
+			IPHMAC: o.riskHash("ip", req.IP), DeviceHMAC: o.riskHash("device", req.UserAgent),
+			IP: req.IP,
+		})
+		if err != nil {
 			return err
 		}
 		if err := r.Quotes().MarkUsed(ctx, q.ID); err != nil {
@@ -313,6 +372,11 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		t = tx.New(req.CustomerID, q, req.IsGift, req.RecipientName, now)
 		if err := r.Transactions().Create(ctx, t); err != nil {
 			return err
+		}
+		if d.ID != uuid.Nil {
+			if err := r.Risk().BindDecisionTxn(ctx, d.ID, t.ID); err != nil && !errors.Is(err, risk.ErrNotFound) {
+				return err
+			}
 		}
 		if req.IsGift {
 			g := gifts.Gift{TransactionID: t.ID, PurchaserID: req.CustomerID, RecipientName: req.RecipientName, NotificationRequested: req.NotifyRecipient, CreatedAt: now}
@@ -441,6 +505,10 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
 				return err
 			}
+			o.recordRiskFailure(ctx, r, risk.Request{
+				Surface: risk.SurfacePurchase, UserID: t.CustomerID, MeterID: t.MeterID,
+				TransactionID: t.ID, AmountMinor: t.Total.Minor, LinkID: o.payRequestID(ctx, r, t.ID),
+			})
 			return emit(ctx, r, "payment.failed", t.ID, map[string]any{"reason": "expired"})
 		case providers.PaymentFailed:
 			if err := t.SetPayment(tx.PayFailed, "provider reports failure"); err != nil {
@@ -449,6 +517,10 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
 				return err
 			}
+			o.recordRiskFailure(ctx, r, risk.Request{
+				Surface: risk.SurfacePurchase, UserID: t.CustomerID, MeterID: t.MeterID,
+				TransactionID: t.ID, AmountMinor: t.Total.Minor, LinkID: o.payRequestID(ctx, r, t.ID),
+			})
 			return emit(ctx, r, "payment.failed", t.ID, nil)
 		case providers.PaymentSucceeded:
 			if v.Amount != t.Total {
@@ -465,6 +537,25 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: t.Total},
 			); err != nil {
 				return err
+			}
+			var card string
+			if v.Authorization != nil {
+				card = v.Authorization.Signature
+			}
+			post := risk.Request{
+				Surface: risk.SurfacePurchase, UserID: t.CustomerID, MeterID: t.MeterID,
+				TransactionID: t.ID, AmountMinor: t.Total.Minor, Paid: true, CardSignature: card,
+				LinkID: o.payRequestID(ctx, r, t.ID),
+			}
+			d, rerr := o.evaluateRisk(ctx, r, post)
+			if rerr != nil && !errors.Is(rerr, risk.ErrDenied) {
+				return rerr
+			}
+			o.applyReview(t, d)
+			if decs, lerr := r.Risk().ListDecisionsByTxn(ctx, t.ID); lerr == nil {
+				for _, prev := range decs {
+					o.applyReview(t, prev)
+				}
 			}
 			return emit(ctx, r, "payment.confirmed", t.ID, nil)
 		}
@@ -587,6 +678,14 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 	inFlight := func(t *tx.Transaction) bool { return t.Vending == tx.VendPending || t.Vending == tx.VendUnknown }
 	switch res.Status {
 	case providers.VendSucceeded:
+		// A prepaid vend is only complete once the STS token exists. Some
+		// providers (VTpass requery) report "delivered" before the token is
+		// available; confirming then would hand the customer a blank token.
+		// Treat it as still pending so Resume re-queries later.
+		if strings.TrimSpace(res.Token) == "" && !o.isPostpaidMeter(ctx, id) {
+			o.log.Warn("vend reported success without a token; still pending", "txn", id)
+			return o.Get(ctx, id)
+		}
 		ct, err := o.box.Encrypt(res.Token)
 		if err != nil {
 			return nil, err
@@ -635,6 +734,21 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 		return o.Get(ctx, id) // provider still working; Resume picks it up
 	}
 	return nil, fmt.Errorf("unexpected vend status %q", res.Status)
+}
+
+// isPostpaidMeter reports whether the transaction's meter is postpaid (bill
+// payment, no STS token). Unknown or unreadable means "not postpaid", which is
+// the safe default: never confirm a prepaid vend without a token.
+func (o *Orchestrator) isPostpaidMeter(ctx context.Context, txnID uuid.UUID) bool {
+	t, err := o.Get(ctx, txnID)
+	if err != nil {
+		return false
+	}
+	m, err := o.Meters.Get(ctx, t.MeterID)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(m.MeterType), "POSTPAID")
 }
 
 // ---- Delivery -------------------------------------------------------------------

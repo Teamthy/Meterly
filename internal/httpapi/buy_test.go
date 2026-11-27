@@ -88,6 +88,7 @@ func TestCatalogAndBuyOptionsAndCheckoutFromServer(t *testing.T) {
 
 	rr = do("POST", "/v1/electricity/quotes", "ada", map[string]any{
 		"meter_id": meter.MeterID, "pack_id": "ngn-500", "currency": "NGN", "delivery_preference": "AUTO",
+		"confirm_customer_name": true,
 	})
 	if rr.Code != 201 {
 		t.Fatalf("quote %d %s", rr.Code, rr.Body.String())

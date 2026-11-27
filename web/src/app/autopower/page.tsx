@@ -87,8 +87,9 @@ export default function AutoPowerPage() {
         </h1>
         <p className="mt-3 max-w-lg text-sm leading-relaxed text-white/55">
           Tell us how you want power topped up. We&apos;ll start charging only
-          when Auto-renew ships — with a Lagos-time cap, skip once, and credit
-          on the meter.
+          when Auto-renew ships — Lagos-time cap, skip once, credit on a
+          compatible smart meter. Low-balance needs a confirmed remote reading.
+          If Disco supply is off, a charge still cannot put light in the house.
         </p>
       </section>
 
@@ -260,7 +261,8 @@ export default function AutoPowerPage() {
               <li>Africa/Lagos time, monthly spend cap, skip once.</li>
               <li>Low-balance only on meters with confirmed remote reading.</li>
               <li>Card mandate from a purchase you already consented to.</li>
-              <li>Credit on the meter. Token only if the meter cannot take it.</li>
+              <li>Credit on compatible smart meters. Token only if the meter cannot take it.</li>
+              <li>No charge while this page says coming soon. Prefs stay on this device.</li>
             </ul>
           </div>
         </aside>

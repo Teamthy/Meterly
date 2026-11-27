@@ -22,6 +22,50 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Users are created on first sight** from the identity-provider subject (`users.external_id`), so foreign keys hold from day one. M4 replaces dev auth with OIDC; the mapping stays the same.
 - **Provider and DisCo reference rows are upserted outside the caller's transaction** and cached, so a rollback can't leave a cached ID pointing at nothing.
 
+## Chart of accounts (P2 settlement)
+
+Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTpass wallet recon. **Fee and commission treatment is a founder/finance default** and must be revisited against the live merchant contract; the engine never invents a split.
+
+| Account | Type | Role | Default posting |
+|---|---|---|---|
+| `PSP_SETTLEMENT_RECEIVABLE` | ASSET | Money Paystack still owes us after a successful charge | Debited on payment confirm (existing purchase path). **Credited** when a settlement batch is recognised. |
+| `CUSTOMER_FUNDS_CLEARING` | LIABILITY | Customer money in flight | Unchanged (purchase / refund paths). |
+| `PROVIDER_PAYABLE` | LIABILITY | Amount owed to the vending provider | Debited when a confirmed vend is recognised against the prefunded wallet. |
+| `REFUND_PAYABLE` | LIABILITY | Refunds accepted but not yet settled | Unchanged. `REFUNDED` still means Paystack accepted the refund; final `refund.processed` is a recon report, not an implicit ledger post. |
+| `PLATFORM_FEE_REVENUE` | INCOME | Our fee | Unchanged; P2 does not accrue it from settlement. |
+| `POT_FUNDS_HELD` | LIABILITY | Funding-pot hold | Unchanged (M8). |
+| `CASH_AT_BANK` | ASSET | Bank / Paystack settlement destination | **Debited** for settlement `effective_amount`. **Credited** when we top up the VTpass wallet from bank. |
+| `PSP_FEES_EXPENSE` | EXPENSE | Paystack fees | **Debited** for settlement `total_fees` when `effective_amount + total_fees == total_amount`. Otherwise the batch is an exception (`SETTLEMENT_UNBALANCED`) and **nothing is posted**. |
+| `VENDOR_WALLET_PREFUND` | ASSET | VTpass prefunded wallet | **Debited** on an audited wallet top-up. **Credited** when a confirmed vend is recognised (`vend-wallet:{txn}`). |
+| `VENDOR_COMMISSION_INCOME` | INCOME | Vendor commission | **Unused until finance set the rate.** Never posted implicitly. |
+
+- **Daily job** is idempotent per `(provider, Africa/Lagos business date)`. Completed days are no-ops. Provider HTTP is outside `InTx`; exceptions, settlement/wallet postings and the run row commit together.
+- **Paystack** matches `GET /transaction` + `GET /refund` + `GET /settlement` against our transactions for that WAT day. **VTpass** requeries by the claim-time `request_id` (`VendIdempotencyKey`).
+- **Corrections never post themselves.** An operator proposes an adjusting entry; a *different* admin approves it (`recon-adj:{id}`). Same person cannot approve. Resolve/write-off without an adjustment is notes-only (false positive), not a ledger change.
+- Settlement reference `psp-settle:{id}` and vend-wallet reference `vend-wallet:{txn}` are ledger-idempotent, so a retried failed run does not double-post.
+
+## Risk engine and chargebacks (P3)
+
+`FEATURE_RISK_ENGINE` defaults **on** in `MODE=dev` and `MODE=staging` (pilot), **off** in production until explicitly enabled. Evaluation is skipped when the flag is off; dispute ingestion still runs.
+
+- **Surfaces:** transaction create, Pay-for-Me public checkout, pot contribution, save-card, AutoPower rule create, third-party token send.
+- **Never deny after payment** on purchase / Pay-for-Me / pot: a post-capture DENY is coerced to REVIEW (`risk:<rule>`) so money is not stranded. Save-card / AutoPower / token-send may DENY (no new charge).
+- **Velocity** counts `checkout` observations under the user-row lock (or the public-link row lock). Concurrent checkouts cannot slip past the cap.
+- **Public-link card testing:** too many distinct `authorization.signature` values, or too many failed payments, pauses the link (`risk_link_pauses`) and DENYs further checkouts.
+- **Denylist** is admin-managed: card signature, email HMAC, phone HMAC, IP CIDR. Raw IPs are matched in memory and never stored.
+- **Decisions** (`risk_decisions`) store HMACs and metadata only. They appear on admin transaction detail.
+- **Dispute ledger** (finance default; revisit against the merchant contract):
+
+| Event | Debit | Credit | Ref |
+|---|---|---|---|
+| Open | `DISPUTE_LOSS` | `DISPUTE_RESERVE` | `dispute-open:{psp_id}` |
+| Win | `DISPUTE_RESERVE` | `DISPUTE_LOSS` | `dispute-win:{psp_id}` |
+| Loss / merchant-accepted | `DISPUTE_RESERVE` | `PSP_SETTLEMENT_RECEIVABLE` | `dispute-loss:{psp_id}` |
+
+  Open is a conservative P&L provision. Win reverses it. Loss keeps the expense and reduces the PSP receivable (Paystack will not settle the charge). Posts are ledger-idempotent. Evidence packs have receipt/vend/delivery timestamps and `token_issued` — never the STS token.
+- **Paystack APIs** used as documented: [Disputes API](https://paystack.com/docs/api/dispute/), [manage disputes](https://paystack.com/docs/payments/manage-disputes/), webhooks `charge.dispute.create|remind|resolve`.
+- Two lost/accepted disputes on one user feed the email/card denylist.
+
 ## Resume and reconciliation (M2)
 
 | Setting | Default | Why |
@@ -32,7 +76,7 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 | `RESUME_MAX_ATTEMPTS` | 12 | Checks without progress before escalating to MANUAL_REVIEW (about 2.5 hours at the defaults). Unpaid transactions don't escalate; `PAYMENT_EXPIRY` bounds them. |
 | `RESUME_LEASE` | 2m | A claimed transaction is hidden from other workers for this long. |
 
-- **MANUAL_REVIEW is a `review_reason` on the transaction**, not another payment state. Setting it stops all automation. Current reasons: payment amount mismatch, payment arriving after expiry, the HES losing an accepted command, and reconciliation exhausted. M4 adds the operator API to resolve them.
+- **MANUAL_REVIEW is a `review_reason` on the transaction**, not another payment state. Setting it stops all automation. Current reasons: payment amount mismatch, payment arriving after expiry, the HES losing an accepted command, reconciliation exhausted, and `risk:<rule>` (P3). M4 adds the operator API to resolve them.
 - **The HES losing a credit command it had accepted goes to review, not a re-send.** Re-sending could double-credit if the original is still queued at the HES.
 - **`cmd/worker` refuses to run with mock providers.** Mocks keep their state in the process that called them, so a separate worker would see none of the API's simulated payments. In dev, the worker runs inside `cmd/api` (`RUN_WORKER=true`, the default). `cmd/worker` becomes usable once real adapters exist (M3).
 - **Outbox delivery is at-least-once.** Events are marked published in the same transaction that claimed them, after the sink accepts them. The sink currently logs metadata only; M5 notification consumers replace it and must dedupe on the event ID.
@@ -401,3 +445,45 @@ AWAIT_AMOUNT ──(valid ₦ amount within cap)──► AWAIT_CONFIRM ("1. Con
 1. **USSD 182-character hard limit & callback idempotency:** Every USSD response (`CON …` or `END …`) is bounded to `≤ 182` characters. Each session caches `(last_raw_input, last_reply)` so duplicate Africa's Talking callbacks return the identical reply without re-executing steps.
 2. **WhatsApp 24-hour window, templates, dedupe & out-of-order safety:** Inbound `wamid` IDs are recorded atomically in `processed_channel_messages` (duplicate webhooks are no-ops), and messages older than `session.last_inbound_msg_ts` are ignored so out-of-order delivery never corrupts active prompts. When `token.available` fires for a WhatsApp purchase, `notificationservice` sends free-form text in-chat when `HasActiveWhatsAppWindow` is true, and falls back to pre-approved template `meterly_offline_token_v1` outside the 24-hour customer-service window. Replying `STOP` records an M5 `opt_outs` entry immediately and closes any active session.
 3. **Audited `Last token` cap:** `"Last token"` inspects only transactions where `customer_id == callerUserID`, enforces at most **3** resends per `(user_id, Africa/Lagos day)` in `offline_token_resends`, and records an `offline.token.resent` audit event (with redacted metadata only) in the same database transaction.
+
+## Review fixes (2026-11-27)
+
+A review of everything merged after `68acdab` (PRs #5–#23) found these defects. Each fix has a regression test that fails without it.
+
+- **Saved cards must belong to the person saving them.** `SavePaymentMethod` refuses any transaction with a Pay-for-Me payer record. Such a transaction belongs to the requester but was paid with a guest's card, so saving it would let AutoPower charge a stranger.
+- **Sessions are bound to one network.** `TouchSession` records the client IP HMAC only when none is stored. Only a successful passkey step-up (`MarkSessionStepUp`) re-binds it. Previously every request overwrote the stored IP before the step-up gate compared against it, so the "moved network" check never fired.
+- **Passkey assertions require user verification.** Login and step-up need both UP (0x01) and UV (0x04), matching `userVerification: "required"` in the options.
+- **Adding a passkey to an existing account needs a fresh step-up** (`ADD_PASSKEY`), the same as deleting one. Otherwise a stolen session could enrol its own key and pass every later step-up.
+- **At registration, the attested key is authoritative.** When the authenticator data carries an attested credential, its key is stored; a client-supplied key may only repeat it.
+- **No prepaid vend is confirmed without a token.** `applyVendResult` treats a "succeeded" result with an empty token as still pending, unless the meter is POSTPAID (bill payment, no token). VTpass requery can report `delivered` before the token exists, and the requery path doesn't know the meter type.
+- **VTpass `083` (SYSTEM ERROR) is PENDING, not FAILED.** The pay may have gone through; a definitive failure would trigger an automatic refund (invariants 2 and 4).
+- **Paystack references only use `[A-Za-z0-9-.=]`.** The AutoPower charge prefix changed from `apchg:` to `apchg-`, and `paystacktest` now rejects invalid references as Paystack does. AutoPower had never been live, so no stored references needed migrating.
+- **Self-service meter ownership by display-name match is off by default** (`FEATURE_OWNERSHIP_NAME_MATCH`, on only in `MODE=dev`). Display names are user-editable and `/v1/meters/validate` reveals the DisCo customer name, so the match proves nothing. Outside dev, users get `OWNERSHIP_REVIEW_REQUIRED`, and operators verify through the audited `POST /v1/admin/meters/{id}/ownership`. Re-enable it only with a non-editable, identity-verified name source.
+- **Not fixed (accepted):** the Redis limiter re-runs EVAL after a lost reply, which can occasionally count one request twice. That only errs toward stricter limiting.
+
+## Sandbox certification (P1)
+
+One command proves each adapter against that provider's real sandbox, and only when keys are present.
+
+- Package `internal/certify`, command `cmd/certify`. Live tests sit behind `go test -tags certify ./internal/certify/...` and are skipped without env keys, so they never run in normal CI.
+- `cmd/certify -o certify-report.json` records provider, scenario, pass/fail/skipped, latency and provider request/reference IDs. No secrets, tokens or meter numbers (free-text fields are sanitised).
+- Certify refuses `sk_live_` Paystack keys and non-sandbox VTpass / Africa's Talking URLs unless `CERTIFY_ALLOW_LIVE=true`.
+- Paystack test-card payment uses the documented Charge API (`POST /charge`, PIN/OTP submit) with card `4084084084084081` (https://paystack.com/docs/payments/test-payments). Production never sends raw PANs; this path is certify-only. `paystacktest` now implements `/charge` so the harness can run against the fake.
+- VTpass scenarios use the documented sandbox meters `1111111111111` (prepaid) and `1010101010101` (postpaid). `vtpasstest` now rejects a request_id whose first 12 digits are not a real `YYYYMMDDHHII` (code `085`).
+- OIDC without a founder IdP is certified only against an in-process JWKS (discovery, keys, staff token with `amr` + roles). A live staff token is `CERTIFY_OIDC_STAFF_TOKEN`.
+- Optional captured Paystack webhook: `CERTIFY_PAYSTACK_WEBHOOK_BODY` + `CERTIFY_PAYSTACK_WEBHOOK_SIGNATURE`.
+
+### Sandbox findings
+
+None yet — no founder sandbox keys in this environment. Every provider is **not certified**. Differences found later against a real sandbox must change the fake, add a regression test, and land here.
+
+## PR #24 review fixes (2026-11-27)
+
+Reviewing PR #24 (P0–P4) found these, now fixed with tests on both stores:
+
+- **CI was red.** The pilot tests passed `"admin:test"` as an operator's user ID. Production passes the internal UUID; PostgreSQL rejects non-UUIDs in `audit_events.actor_user_id`, and memstore didn't. The tests now use a real user.
+- **Dispute outcomes are never guessed.** An unrecognised or empty Paystack `resolution` previously became LOST, which posted a write-off and counted toward the repeat-chargeback deny-list. It now stays OPEN/REMINDED for an operator, with Paystack's resolution recorded. Only `merchant-accepted` (lost) and `declined` (won) are mapped.
+- **Dispute outcomes are final.** A dispute already WON/LOST/ACCEPTED never changes status. A conflicting later event is logged and ignored, because flipping would post both the win and the loss entries and release `DISPUTE_RESERVE` twice.
+- **Wallet top-ups are idempotent.** `POST /v1/admin/reconciliation/wallet-topup` requires an `Idempotency-Key`. The ledger reference is derived from it, so a retry or double click books the money once, and the same key with a different amount returns 409.
+- **Risk rule changes are audited atomically.** The rule update and its audit row (with before/after values) commit in one transaction, and the update fails if the audit can't be written. Previously the audit was written separately and its error ignored.
+- **`internal/reconcile` tests leaked template databases** (no `TestMain` calling `pgtest.DropTemplate()`). Fixed.

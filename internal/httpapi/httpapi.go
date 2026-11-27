@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/identity"
@@ -30,6 +31,8 @@ import (
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
+	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -51,6 +54,7 @@ type Limits struct {
 
 type Server struct {
 	O             *orchestrator.Orchestrator
+	Reconcile     *reconcile.Engine
 	Auth          auth.Authenticator
 	Identity      *identity.Engine
 	Security      *security.Engine
@@ -377,7 +381,19 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]string{"status": "ready"})
+	body := map[string]any{"status": "ready", "vending": "ok", "service": "ok"}
+	if s.O != nil {
+		if s.O.ServicePaused() {
+			body["status"] = "degraded"
+			body["service"] = "paused"
+		}
+		h := s.O.VendingHealth(r.Context())
+		if h.Paused {
+			body["status"] = "degraded"
+			body["vending"] = "paused"
+		}
+	}
+	writeJSON(w, 200, body)
 }
 
 // ---- meters -------------------------------------------------------------------
@@ -550,11 +566,12 @@ func (s *Server) getCapabilities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createQuote(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MeterID            uuid.UUID                       `json:"meter_id"`
-		AmountMinor        int64                           `json:"amount_minor"`
-		PackID             string                          `json:"pack_id"`
-		Currency           string                          `json:"currency"`
-		DeliveryPreference orchestrator.DeliveryPreference `json:"delivery_preference"`
+		MeterID             uuid.UUID                       `json:"meter_id"`
+		AmountMinor         int64                           `json:"amount_minor"`
+		PackID              string                          `json:"pack_id"`
+		Currency            string                          `json:"currency"`
+		DeliveryPreference  orchestrator.DeliveryPreference `json:"delivery_preference"`
+		ConfirmCustomerName bool                            `json:"confirm_customer_name"`
 	}
 	if !decode(r, &req) || req.MeterID == uuid.Nil || req.Currency != "NGN" {
 		writeErr(w, 400, "INVALID_REQUEST", "meter_id, currency=NGN and pack_id or amount_minor are required")
@@ -566,6 +583,8 @@ func (s *Server) createQuote(w http.ResponseWriter, r *http.Request) {
 	}
 	q, err := s.O.IssueQuote(r.Context(), orchestrator.QuoteSpec{
 		CustomerID: userID(r), MeterID: req.MeterID, AmountMinor: req.AmountMinor, PackID: req.PackID, Pref: req.DeliveryPreference,
+		ConfirmCustomerName: req.ConfirmCustomerName,
+		RequireNameConfirm:  req.ConfirmCustomerName,
 	})
 	if err != nil {
 		s.mapErr(w, r, err)
@@ -609,7 +628,7 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	t, _, err := s.O.CreateTransaction(r.Context(), orchestrator.CreateRequest{
 		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName, RecipientPhone: req.RecipientPhone, NotifyRecipient: req.NotifyRecipient,
-		IdempotencyKey: key, RequestHash: requestHash,
+		IdempotencyKey: key, RequestHash: requestHash, IP: s.clientIP(r), UserAgent: r.UserAgent(),
 	})
 	if err != nil && t == nil {
 		s.mapErr(w, r, err)
@@ -738,6 +757,13 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeErr(w, 400, "INVALID_REQUEST", "malformed webhook")
+		return
+	}
+	if strings.HasPrefix(evt.Type, "charge.dispute") {
+		if err := s.O.HandlePaymentDispute(r.Context(), disputeNotice(evt)); err != nil {
+			s.Log.Warn("dispute webhook", "err", err)
+		}
+		writeJSON(w, 200, map[string]string{"status": "received"})
 		return
 	}
 	if !evt.Relevant {
@@ -878,6 +904,26 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, meters.ErrInvalidMeter):
 		writeErr(w, 422, "METER_VALIDATION_FAILED", "meter could not be validated with the provider")
+	case errors.Is(err, meters.ErrCannotVend):
+		writeErr(w, 422, "METER_CANNOT_VEND", "this meter cannot be vended right now")
+	case errors.Is(err, meters.ErrSandboxMeter):
+		writeErr(w, 422, "SANDBOX_METER", "sandbox meter numbers are not allowed live")
+	case errors.Is(err, orchestrator.ErrInFlight):
+		writeErr(w, 409, "PURCHASE_IN_FLIGHT", "finish or wait for the open purchase on this meter")
+	case errors.Is(err, orchestrator.ErrNameNotConfirmed):
+		writeErr(w, 422, "NAME_NOT_CONFIRMED", "confirm the disco account name before paying")
+	case errors.Is(err, orchestrator.ErrAccountSuspended):
+		writeErr(w, 403, "ACCOUNT_SUSPENDED", "purchases are paused on this account")
+	case errors.Is(err, orchestrator.ErrRiskDenied):
+		writeErr(w, 403, "FORBIDDEN", "this payment was declined")
+	case errors.Is(err, orchestrator.ErrVendingPaused):
+		writeErr(w, 503, "VENDING_PAUSED", "electricity vending is paused")
+	case errors.Is(err, orchestrator.ErrServicePaused):
+		writeErr(w, 503, "SERVICE_PAUSED", "service is paused")
+	case errors.Is(err, orchestrator.ErrPilotCap):
+		writeErr(w, 429, "PILOT_CAP", "pilot daily cap reached")
+	case errors.Is(err, orchestrator.ErrInvalidPilot):
+		writeErr(w, 400, "INVALID_REQUEST", "invalid pilot allow-list entry")
 	case errors.Is(err, meters.ErrNotFound):
 		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
 	case errors.Is(err, meters.ErrForbidden):
@@ -927,6 +973,20 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "DELIVERY_FAILED", "no token is available for this transaction")
 	case errors.Is(err, meters.ErrInvalidCohort):
 		writeErr(w, 422, "INVALID_REQUEST", "invalid remote-credit cohort")
+	case errors.Is(err, reconcile.ErrIdempotencyKey):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, reconcile.ErrIdempotencyConflict):
+		writeErr(w, 409, "IDEMPOTENCY_CONFLICT", err.Error())
+	case errors.Is(err, reconcile.ErrSameApprover):
+		writeErr(w, 409, "INVALID_REQUEST", "proposer cannot approve")
+	case errors.Is(err, reconcile.ErrNotProposed):
+		writeErr(w, 409, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, reconcile.ErrUnknownAccount), errors.Is(err, reconcile.ErrBadStatus):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, reconcile.ErrNotFound):
+		writeErr(w, 404, "NOT_FOUND", "not found")
+	case errors.Is(err, reconcile.ErrNoSource):
+		writeErr(w, 503, "PROVIDER_UNAVAILABLE", "reconciliation source is not configured")
 	case errors.Is(err, store.ErrDuplicate):
 		writeErr(w, 409, "DUPLICATE_RESOURCE", "resource already exists")
 	case errors.Is(err, orchestrator.ErrPaymentMismatch):
@@ -941,6 +1001,8 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrProviderDisabled):
 		writeErr(w, 503, "PROVIDER_UNAVAILABLE", "provider temporarily disabled")
+	case errors.Is(err, risk.ErrNotFound), errors.Is(err, disputes.ErrNotFound):
+		writeErr(w, 404, "NOT_FOUND", "not found")
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, 404, "NOT_FOUND", "not found")
 	case errors.Is(err, tx.ErrNotFound):

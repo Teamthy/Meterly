@@ -34,16 +34,20 @@ const (
 )
 
 var (
-	ErrNotFound          = errors.New("households: not found")
-	ErrForbidden         = errors.New("households: forbidden")
-	ErrNotVerifiedOwner  = errors.New("households: verified ownership required")
-	ErrNameMismatch      = errors.New("households: disco customer name does not match the verified account name")
-	ErrNoDisplayName     = errors.New("households: verified display name is required for account-name match")
-	ErrAlreadyMember     = errors.New("households: user is already a member")
-	ErrAlreadyOwner      = errors.New("households: meter already has verified ownership for this user")
-	ErrInvalidRole       = errors.New("households: invalid role")
-	ErrInvalidInvite     = errors.New("households: invite is not pending")
-	ErrCannotModifyOwner = errors.New("households: the household owner cannot be removed")
+	ErrNotFound         = errors.New("households: not found")
+	ErrForbidden        = errors.New("households: forbidden")
+	ErrNotVerifiedOwner = errors.New("households: verified ownership required")
+	ErrNameMismatch     = errors.New("households: disco customer name does not match the verified account name")
+	ErrNoDisplayName    = errors.New("households: verified display name is required for account-name match")
+	// ErrSelfVerificationDisabled: self-service name matching is off. The
+	// display name is user-editable and meter validation reveals the DisCo
+	// customer name, so the match proves nothing; an operator must attest.
+	ErrSelfVerificationDisabled = errors.New("households: self-service ownership verification is disabled; ask support to verify ownership")
+	ErrAlreadyMember            = errors.New("households: user is already a member")
+	ErrAlreadyOwner             = errors.New("households: meter already has verified ownership for this user")
+	ErrInvalidRole              = errors.New("households: invalid role")
+	ErrInvalidInvite            = errors.New("households: invite is not pending")
+	ErrCannotModifyOwner        = errors.New("households: the household owner cannot be removed")
 )
 
 type Household struct {

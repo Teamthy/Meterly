@@ -148,7 +148,7 @@ func TestMeOnboardingBeneficiariesAndPasskeys(t *testing.T) {
 	authData := make([]byte, 37)
 	sum := sha256.Sum256([]byte("localhost"))
 	copy(authData[:32], sum[:])
-	authData[32] = 0x01
+	authData[32] = 0x05 // user present + user verified
 	rr = do("POST", "/v1/auth/passkeys/register/finish", "", map[string]any{
 		"origin":            origin,
 		"name":              "This phone",
@@ -226,7 +226,7 @@ func TestPasskeyLoginHTTP(t *testing.T) {
 	ad := make([]byte, 37)
 	sum := sha256.Sum256([]byte("localhost"))
 	copy(ad[:32], sum[:])
-	ad[32] = 0x01
+	ad[32] = 0x05 // user present + user verified
 	rr = post("/v1/auth/passkeys/register/finish", map[string]any{
 		"origin": origin, "id": b64u(credID), "rawId": b64u(credID),
 		"clientDataJSON": b64u(cd), "authenticatorData": b64u(ad), "publicKey": b64u(pubXY),
@@ -244,7 +244,7 @@ func TestPasskeyLoginHTTP(t *testing.T) {
 	lcd, _ := json.Marshal(map[string]string{"type": "webauthn.get", "challenge": b64u(lch), "origin": origin})
 	adGet := make([]byte, 37)
 	copy(adGet[:32], sum[:])
-	adGet[32] = 0x01
+	adGet[32] = 0x05 // user present + user verified
 	binary.BigEndian.PutUint32(adGet[33:37], 2)
 	cdh := sha256.Sum256(lcd)
 	msg := append(append([]byte{}, adGet...), cdh[:]...)

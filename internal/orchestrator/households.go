@@ -20,6 +20,9 @@ func emitHH(ctx context.Context, r store.Repos, typ string, id uuid.UUID, payloa
 
 func (o *Orchestrator) VerifyOwnershipByName(ctx context.Context, userID string, meterID uuid.UUID) (households.Ownership, error) {
 	var out households.Ownership
+	if !o.ownershipNameMatch {
+		return out, households.ErrSelfVerificationDisabled
+	}
 	now := o.Now().UTC()
 	err := o.st.InTx(ctx, func(r store.Repos) error {
 		m, err := r.Meters().GetForUpdate(ctx, meterID)

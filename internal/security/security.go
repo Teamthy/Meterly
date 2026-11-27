@@ -18,6 +18,7 @@ const (
 	ActionTokenRead     = "TOKEN_READ"
 	ActionSaveCard      = "SAVE_CARD"
 	ActionDeletePasskey = "DELETE_PASSKEY"
+	ActionAddPasskey    = "ADD_PASSKEY"
 	ActionRevokeSession = "REVOKE_SESSION"
 	ActionRevokeOthers  = "REVOKE_OTHERS"
 	ActionChangeContact = "CHANGE_CONTACT"

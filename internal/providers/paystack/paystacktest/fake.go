@@ -55,17 +55,41 @@ type refund struct {
 	Amount       int64
 	Status       string
 	MerchantNote string
+	TxnRef       string
+}
+
+type settlement struct {
+	ID              int64
+	Status          string
+	Currency        string
+	TotalAmount     int64
+	EffectiveAmount int64
+	TotalFees       int64
+	SettlementDate  time.Time
+}
+
+type dispute struct {
+	ID           int64
+	RefundAmount int64
+	Currency     string
+	Status       string
+	Resolution   string
+	Category     string
+	Reference    string
+	Evidence     bool
 }
 
 type Fake struct {
 	*httptest.Server
 	Secret string
 
-	mu      sync.Mutex
-	nextID  int64
-	txns    map[string]*txn
-	auths   map[string]*CardAuth
-	refunds []*refund
+	mu          sync.Mutex
+	nextID      int64
+	txns        map[string]*txn
+	auths       map[string]*CardAuth
+	refunds     []*refund
+	settlements []*settlement
+	disputes    []*dispute
 	// Fault injection: the next N requests to a path prefix get HTTP 500
 	// after the operation is applied ("lost response").
 	failAfterApply map[string]int
@@ -83,6 +107,45 @@ func New(secret string) *Fake {
 	}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	return f
+}
+
+func (f *Fake) SeedTransaction(ref, status string, amount int64, paidAt time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	t := &txn{ID: f.nextID, Reference: ref, Amount: amount, Currency: "NGN", Status: status}
+	if !paidAt.IsZero() {
+		t.PaidAt = &paidAt
+	}
+	f.txns[ref] = t
+}
+
+func (f *Fake) SeedSettlement(id int64, status string, total, fees, effective int64, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.settlements = append(f.settlements, &settlement{
+		ID: id, Status: status, Currency: "NGN",
+		TotalAmount: total, TotalFees: fees, EffectiveAmount: effective, SettlementDate: at,
+	})
+}
+
+func (f *Fake) SeedDispute(id int64, ref, status string, amount int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disputes = append(f.disputes, &dispute{
+		ID: id, Reference: ref, Status: status, RefundAmount: amount, Currency: "NGN",
+	})
+}
+
+func (f *Fake) SeedRefund(txnRef, status string, amount int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	var txnID int64
+	if t, ok := f.txns[txnRef]; ok {
+		txnID = t.ID
+	}
+	f.refunds = append(f.refunds, &refund{ID: f.nextID, Transaction: txnID, Amount: amount, Status: status, TxnRef: txnRef})
 }
 
 func write(w http.ResponseWriter, code int, status bool, msg string, data any) {
@@ -262,6 +325,15 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			f.Requests[r.Method+" "+p]++
 		}
 	}
+	if r.URL.Path == "/transaction" {
+		f.Requests[r.Method+" /transaction"]++
+	}
+	if r.URL.Path == "/settlement" || strings.HasPrefix(r.URL.Path, "/settlement/") {
+		f.Requests[r.Method+" /settlement"]++
+	}
+	if r.URL.Path == "/dispute" {
+		f.Requests[r.Method+" /dispute"]++
+	}
 	lose := false
 	for p, n := range f.failAfterApply {
 		if n > 0 && strings.HasPrefix(key, p) {
@@ -294,6 +366,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			reply(400, false, "Invalid amount", nil)
 			return
 		}
+		if !validReference(body.Reference) {
+			// Paystack: "Only -, ., = and alphanumeric characters allowed."
+			reply(400, false, "Invalid transaction reference", nil)
+			return
+		}
 		if _, dup := f.txns[body.Reference]; dup {
 			reply(400, false, "Duplicate Transaction Reference", nil)
 			return
@@ -310,6 +387,93 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			"reference":         body.Reference,
 		})
 
+	case r.Method == "POST" && r.URL.Path == "/charge":
+		// Documented Charge API (https://paystack.com/docs/api/charge) used by
+		// the certify harness with Paystack test cards.
+		var body struct {
+			Email     string `json:"email"`
+			Amount    string `json:"amount"`
+			Currency  string `json:"currency"`
+			Reference string `json:"reference"`
+			Card      struct {
+				Number      string `json:"number"`
+				CVV         string `json:"cvv"`
+				ExpiryMonth string `json:"expiry_month"`
+				ExpiryYear  string `json:"expiry_year"`
+			} `json:"card"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Email == "" || body.Card.Number == "" {
+			reply(400, false, "Invalid request", nil)
+			return
+		}
+		amt, err := strconv.ParseInt(body.Amount, 10, 64)
+		if err != nil || amt <= 0 {
+			reply(400, false, "Invalid amount", nil)
+			return
+		}
+		ref := body.Reference
+		if ref == "" {
+			f.nextID++
+			ref = "chg" + strconv.FormatInt(f.nextID, 10)
+		}
+		if !validReference(ref) {
+			reply(400, false, "Invalid transaction reference", nil)
+			return
+		}
+		st := "failed"
+		if body.Card.Number == "4084084084084081" { // documented success test card
+			st = "success"
+		}
+		t, ok := f.txns[ref]
+		if !ok {
+			f.nextID++
+			cur := body.Currency
+			if cur == "" {
+				cur = "NGN"
+			}
+			t = &txn{ID: f.nextID, Reference: ref, Email: body.Email, Amount: amt, Currency: cur, Status: st}
+			f.txns[ref] = t
+		} else {
+			t.Status = st
+			if amt > 0 {
+				t.Amount = amt
+			}
+		}
+		if st == "success" {
+			now := time.Now().UTC()
+			t.PaidAt = &now
+			if t.Auth == nil {
+				code := "AUTH_fake_" + strconv.FormatInt(t.ID, 10)
+				ca := &CardAuth{
+					AuthorizationCode: code, Email: strings.ToLower(strings.TrimSpace(t.Email)),
+					Reusable: true, Brand: "visa", CardType: "visa DEBIT", Last4: "4081",
+					ExpMonth: "12", ExpYear: "2030", Channel: "card",
+					Signature: "SIG_fake_" + strconv.FormatInt(t.ID, 10), ChargeStatus: "success",
+				}
+				t.Auth = ca
+				f.auths[code] = ca
+			}
+		}
+		reply(200, true, "Charge attempted", txnPayload(t))
+
+	case r.Method == "POST" && (r.URL.Path == "/charge/submit_pin" || r.URL.Path == "/charge/submit_otp"):
+		var body struct {
+			Reference string `json:"reference"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Reference == "" {
+			reply(400, false, "Invalid request", nil)
+			return
+		}
+		t, ok := f.txns[body.Reference]
+		if !ok {
+			reply(400, false, "Transaction reference not found", nil)
+			return
+		}
+		t.Status = "success"
+		now := time.Now().UTC()
+		t.PaidAt = &now
+		reply(200, true, "Charge attempted", txnPayload(t))
+
 	case r.Method == "POST" && r.URL.Path == "/transaction/charge_authorization":
 		var body struct {
 			AuthorizationCode string `json:"authorization_code"`
@@ -325,6 +489,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		amt, err := strconv.ParseInt(body.Amount, 10, 64)
 		if err != nil || amt <= 0 {
 			reply(400, false, "Invalid amount", nil)
+			return
+		}
+		if !validReference(body.Reference) {
+			// Paystack: "Only -, ., = and alphanumeric characters allowed."
+			reply(400, false, "Invalid transaction reference", nil)
 			return
 		}
 		if _, dup := f.txns[body.Reference]; dup {
@@ -381,13 +550,36 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(200, true, "Verification successful", txnPayload(t))
 
+	case r.Method == "GET" && r.URL.Path == "/transaction":
+		out := []map[string]any{}
+		for _, t := range f.txns {
+			out = append(out, txnPayload(t))
+		}
+		reply(200, true, "Transactions retrieved", out)
+
+	case r.Method == "GET" && r.URL.Path == "/settlement":
+		out := []map[string]any{}
+		for _, s := range f.settlements {
+			out = append(out, map[string]any{
+				"id": s.ID, "status": s.Status, "currency": s.Currency,
+				"total_amount": s.TotalAmount, "effective_amount": s.EffectiveAmount, "total_fees": s.TotalFees,
+				"settlement_date": s.SettlementDate,
+			})
+		}
+		reply(200, true, "Settlements retrieved", out)
+
 	case r.Method == "GET" && r.URL.Path == "/refund":
 		id, _ := strconv.ParseInt(r.URL.Query().Get("transaction"), 10, 64)
+		filter := r.URL.Query().Get("transaction") != ""
 		out := []map[string]any{}
 		for _, rf := range f.refunds {
-			if rf.Transaction == id {
-				out = append(out, map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
+			if filter && rf.Transaction != id {
+				continue
 			}
+			out = append(out, map[string]any{
+				"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote,
+				"transaction": map[string]any{"reference": rf.TxnRef},
+			})
 		}
 		reply(200, true, "Refunds retrieved", out)
 
@@ -421,11 +613,102 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.nextID++
-		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending", MerchantNote: body.MerchantNote}
+		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending", MerchantNote: body.MerchantNote, TxnRef: t.Reference}
 		f.refunds = append(f.refunds, rf)
 		reply(200, true, "Refund has been queued for processing", map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
+
+	case r.Method == "GET" && r.URL.Path == "/dispute":
+		out := []map[string]any{}
+		for _, d := range f.disputes {
+			out = append(out, map[string]any{
+				"id": d.ID, "refund_amount": d.RefundAmount, "currency": d.Currency,
+				"status": d.Status, "resolution": d.Resolution, "category": d.Category,
+				"transaction": map[string]any{"reference": d.Reference},
+			})
+		}
+		reply(200, true, "Disputes retrieved", out)
+
+	case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/dispute/") && !strings.Contains(r.URL.Path[len("/dispute/"):], "/"):
+		id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/dispute/"), 10, 64)
+		for _, d := range f.disputes {
+			if d.ID == id {
+				reply(200, true, "Dispute retrieved", map[string]any{
+					"id": d.ID, "refund_amount": d.RefundAmount, "currency": d.Currency,
+					"status": d.Status, "resolution": d.Resolution, "category": d.Category,
+					"transaction": map[string]any{"reference": d.Reference},
+				})
+				return
+			}
+		}
+		reply(404, false, "Dispute not found", nil)
+
+	case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/evidence") && strings.HasPrefix(r.URL.Path, "/dispute/"):
+		mid := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/dispute/"), "/evidence")
+		id, _ := strconv.ParseInt(mid, 10, 64)
+		var body struct {
+			CustomerEmail  string `json:"customer_email"`
+			CustomerName   string `json:"customer_name"`
+			CustomerPhone  string `json:"customer_phone"`
+			ServiceDetails string `json:"service_details"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if strings.TrimSpace(body.CustomerEmail) == "" || strings.TrimSpace(body.CustomerName) == "" ||
+			strings.TrimSpace(body.CustomerPhone) == "" || strings.TrimSpace(body.ServiceDetails) == "" {
+			reply(400, false, "customer_email, customer_name, customer_phone and service_details are required", nil)
+			return
+		}
+		for _, d := range f.disputes {
+			if d.ID == id {
+				d.Evidence = true
+				reply(200, true, "Evidence created", map[string]any{"id": d.ID})
+				return
+			}
+		}
+		reply(404, false, "Dispute not found", nil)
+
+	case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/resolve") && strings.HasPrefix(r.URL.Path, "/dispute/"):
+		mid := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/dispute/"), "/resolve")
+		id, _ := strconv.ParseInt(mid, 10, 64)
+		var body struct {
+			Resolution string `json:"resolution"`
+			Message    string `json:"message"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Resolution != "merchant-accepted" && body.Resolution != "declined" {
+			reply(400, false, "resolution must be merchant-accepted or declined", nil)
+			return
+		}
+		if strings.TrimSpace(body.Message) == "" {
+			reply(400, false, "message is required", nil)
+			return
+		}
+		for _, d := range f.disputes {
+			if d.ID == id {
+				d.Resolution = body.Resolution
+				d.Status = "resolved"
+				reply(200, true, "Dispute resolved", map[string]any{"id": d.ID, "status": d.Status, "resolution": d.Resolution})
+				return
+			}
+		}
+		reply(404, false, "Dispute not found", nil)
 
 	default:
 		write(w, 404, false, "Not found", nil)
 	}
+}
+
+// validReference mirrors Paystack's rule for transaction references: only
+// letters, digits, '-', '.' and '=' are allowed.
+func validReference(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.', r == '=':
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -214,6 +214,7 @@ func TestObservabilityMetricsAndOTLPTracing(t *testing.T) {
 	}
 
 	// 1. Register meter (triggers provider.mockvend.validate_meter).
+	// Quote re-verifies the meter, so validate_meter is called twice.
 	var regResp struct {
 		ID string `json:"meter_id"`
 	}
@@ -310,7 +311,7 @@ func TestObservabilityMetricsAndOTLPTracing(t *testing.T) {
 		`http_requests_total{route="POST /v1/electricity/transactions",code="202"} 1`,
 		`http_requests_total{route="POST /v1/electricity/transactions/{transaction_id}/payment-check",code="200"} 1`,
 		`http_request_duration_seconds_count{route="POST /v1/electricity/transactions"} 1`,
-		`provider_calls_total{provider="mockvend",op="validate_meter",outcome="ok"} 1`,
+		`provider_calls_total{provider="mockvend",op="validate_meter",outcome="ok"} 2`,
 		`provider_calls_total{provider="mockpay",op="initialize_payment",outcome="ok"} 1`,
 		`provider_calls_total{provider="mockpay",op="verify_payment",outcome="ok"} 1`,
 		`provider_calls_total{provider="mockvend",op="vend",outcome="ok"} 1`,

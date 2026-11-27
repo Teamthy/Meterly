@@ -24,6 +24,7 @@ const (
 	HeadsUpLead              = 12 * time.Hour
 	CatchUpWindow            = 6 * time.Hour
 	LowBalanceCooldown       = 24 * time.Hour
+	LowBalanceMaxReadingAge  = 48 * time.Hour
 	MaxConsecutiveFailures   = 3
 	DefaultDailyMaxMinor     = 10_000_000 // ₦100,000 in kobo
 	DefaultReadingPollEvery  = 4 * time.Hour

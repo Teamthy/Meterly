@@ -15,6 +15,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/conversation"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/households"
@@ -26,8 +27,11 @@ import (
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pilot"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/support"
@@ -41,6 +45,7 @@ type Store struct {
 	users             map[string]string
 	userIDs           map[string]bool
 	userExt           map[string]string
+	userStatus        map[string]string
 	userProfiles      map[string]identity.Profile
 	userContacts      map[string]notifications.UserContacts
 	authChallenges    map[string]identity.Challenge
@@ -109,16 +114,40 @@ type Store struct {
 	remoteCohorts     map[uuid.UUID]meters.RemoteCohort
 	readingSamples    map[uuid.UUID][]meters.ReadingSample
 	lowUnitAlerts     map[string]lowUnitAlert
+	reconRuns         map[string]*reconcile.Run
+	reconEx           map[uuid.UUID]*reconcile.Exception
+	reconExFP         map[string]uuid.UUID
+	reconAdj          map[uuid.UUID]*reconcile.Adjustment
+	riskRules         map[string]*risk.Rule
+	riskObs           []risk.Observation
+	riskDec           map[uuid.UUID]*risk.Decision
+	riskDeny          map[uuid.UUID]*risk.DenyEntry
+	riskPauses        map[uuid.UUID]risk.LinkPause
+	disputes          map[uuid.UUID]*disputes.Dispute
+	disputesByPSP     map[string]uuid.UUID
+	pilotAllow        map[string]*pilot.Entry
 }
 
 func New() *Store {
-	return &Store{
+	s := &Store{
 		users: map[string]string{}, userIDs: map[string]bool{}, userExt: map[string]string{},
+		userStatus:   map[string]string{},
 		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
 		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
 		authSessions:   map[string]identity.Session{},
 		readingSamples: map[uuid.UUID][]meters.ReadingSample{},
 		lowUnitAlerts:  map[string]lowUnitAlert{},
+		reconRuns:      map[string]*reconcile.Run{},
+		reconEx:        map[uuid.UUID]*reconcile.Exception{},
+		reconExFP:      map[string]uuid.UUID{},
+		reconAdj:       map[uuid.UUID]*reconcile.Adjustment{},
+		riskRules:      map[string]*risk.Rule{},
+		riskDec:        map[uuid.UUID]*risk.Decision{},
+		riskDeny:       map[uuid.UUID]*risk.DenyEntry{},
+		riskPauses:     map[uuid.UUID]risk.LinkPause{},
+		disputes:       map[uuid.UUID]*disputes.Dispute{},
+		disputesByPSP:  map[string]uuid.UUID{},
+		pilotAllow:     map[string]*pilot.Entry{},
 		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
@@ -166,6 +195,12 @@ func New() *Store {
 		ownership:         map[string]households.Ownership{},
 		remoteCohorts:     map[uuid.UUID]meters.RemoteCohort{},
 	}
+	for _, rule := range risk.DefaultRules() {
+		r := rule
+		r.UpdatedAt = time.Now().UTC()
+		s.riskRules[r.Code] = &r
+	}
+	return s
 }
 
 func (s *Store) Close() {}
@@ -260,6 +295,10 @@ func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { retur
 func (r *repos) Auth() store.AuthRepo                                    { return r }
 func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
 func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
+func (r *repos) Reconcile() reconcile.Repo                               { return reconRepo{r} }
+func (r *repos) Risk() risk.Repo                                         { return riskRepo{r} }
+func (r *repos) Disputes() disputes.Repo                                 { return disputeRepo{r} }
+func (r *repos) Pilot() pilot.Repo                                       { return pilotRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 
@@ -292,6 +331,39 @@ func (r *repos) LockForUpdate(_ context.Context, userID string) error {
 	if userID == "" || !r.s.userIDs[userID] {
 		return store.ErrNotFound
 	}
+	return nil
+}
+
+func (r *repos) Status(_ context.Context, userID string) (string, error) {
+	defer r.lock()()
+	if userID == "" || !r.s.userIDs[userID] {
+		return "", store.ErrNotFound
+	}
+	if st := r.s.userStatus[userID]; st != "" {
+		return st, nil
+	}
+	return store.UserActive, nil
+}
+
+func (r *repos) SetStatus(_ context.Context, userID, status string) error {
+	defer r.lock()()
+	if userID == "" || !r.s.userIDs[userID] {
+		return store.ErrNotFound
+	}
+	switch status {
+	case store.UserActive, store.UserSuspended, store.UserClosed:
+	default:
+		return errors.New("store: invalid user status")
+	}
+	prev := r.s.userStatus[userID]
+	r.s.userStatus[userID] = status
+	r.onUndo(func() {
+		if prev == "" {
+			delete(r.s.userStatus, userID)
+			return
+		}
+		r.s.userStatus[userID] = prev
+	})
 	return nil
 }
 
@@ -567,6 +639,22 @@ func (r txnRepo) ListForCustomer(_ context.Context, customerID string) ([]*tx.Tr
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r txnRepo) ListCreatedBetween(_ context.Context, from, to time.Time) ([]*tx.Transaction, error) {
+	defer r.lock()()
+	var out []*tx.Transaction
+	for _, t := range r.s.txns {
+		if !from.IsZero() && t.CreatedAt.Before(from) {
+			continue
+		}
+		if !to.IsZero() && !t.CreatedAt.Before(to) {
+			continue
+		}
+		out = append(out, cloneTxn(t))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil
 }
 

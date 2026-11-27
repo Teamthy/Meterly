@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-26 after PR **#22** (security engine) merged to `main` (`b623755`). Hardening (IP bind, headers, step-up with no passkeys) follows on this branch.
+> **Last updated:** 2026-11-27. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. Review fixes from PRs #5–#23 landed here; P1 certify harness is in code, providers **not certified** (no sandbox keys).
 
 ## 0. Start here
 
@@ -18,20 +18,25 @@
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
 | 2 | Render API + apply migrations `0018`–`0021` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`) |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
-| 4 | Live sandbox keys (Paystack, VTpass, …) | Human | After 2 |
-| 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | See §12 Partners |
-| 6 | Legal sign-off before prod flags | Legal | NDPA / NCC / CBN / NERC |
+| 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
+| 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
+| 6 | Legal sign-off before prod flags | Legal | `docs/LEGAL.md` — NDPA / NCC / CBN / NERC / LASERC |
+| 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
+| 8 | P3 risk engine + chargebacks | Eng | **In code** on this branch (migration `0023`, unapplied hosted) |
+| 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **In code** on this branch (migration `0024`, unapplied hosted) |
 
 ---
 
 ## 1. What Meterly is
 
-A Nigerian electricity platform. People buy prepaid units from anywhere, for their own meter or someone else's.
+**North star (founder, 2026-11-26): OPay for electricity.** Pay → units appear **on the meter** (no keypad). Then **auto-recharge** like airtime/data: amount and/or “when units hit X kWh.” Token typing is fallback, not the product.
 
-- **Today in production-shaped code:** pay via CBN-licensed PSP (Paystack adapter), vend via aggregator (VTpass adapter, sandbox-fake tested), keypad **STS token** fallback.
-- **Credit-on-meter:** licensed vend still happens first; a Head-End System (HES) injects that token/credit into a compatible smart meter. We only call it delivered when the **meter confirms**.
+OPay airtime works because every phone has a **network account** the telco can credit by API. Most Nigerian prepaid meters do **not**: the balance lives on the box, and the only input is a 20-digit STS token. The electricity equivalent of “airtime API” is the **AMI/HES** that already talks to **smart** meters. Meterly does not install hardware.
+
+- **Code today:** Paystack (money) + VTpass (licensed vend / meter verify) + remote-credit plane (`heshttp`, cohorts, confirmation). AutoPower **engine** exists; UI is **coming soon** (prefs in localStorage, `FEATURE_AUTOPOWER=false`, no live charge).
+- **Blocked for the north star:** one Disco + that Disco’s MAP/AMI **API docs** + a witnessed test on a real smart meter. Until then do not market “no token.”
 - Frontend: Next.js `web/` on Vercel (`https://meterly-iota.vercel.app`).
-- API: Go modular monolith. Hosted API is **not live** until Render + Supabase keys are pasted.
+- Hosted API is **not live** until Render + Supabase keys are pasted.
 
 ---
 
@@ -43,11 +48,13 @@ A Nigerian electricity platform. People buy prepaid units from anywhere, for the
 | Web UI + ink/paper/volt restyle | ✅ `main` (PR #21) | `web/` |
 | Auto-renew | ✅ UI **coming soon** (prefs only, no live charge) | `/autopower` |
 | Security engine | ✅ `main` (PR #22) | `internal/security`, `/security` |
-| VTpass / Paystack adapters | ✅ code, **not live-sandbox tested** | `internal/providers/*` |
+| VTpass / Paystack adapters | ✅ code, **not certified** (no keys) | `internal/providers/*`, `internal/certify` |
 | Households, token send, support E2E, Power Desk, USSD, pots | ✅ code, flags mostly off outside dev | feature flags §7 |
-| Hosted API (Render) + migrations `0018`–`0021` | ⏳ | `docs/DEPLOY.md` |
+| P2 daily settlement recon | ✅ code (PR #24) | `internal/reconcile`, `0022` **unapplied hosted** |
+| P3 risk engine + chargebacks | ✅ code | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
+| Hosted API (Render) + migrations `0018`–`0023` | ⏳ | `docs/DEPLOY.md` |
 
-**Git:** `origin/main` @ `b623755` (merge #22). This branch may be 1+ hardening commits ahead.
+**Git:** `origin/main` @ `9cac48b` (merge #23) is merged into this branch. Review-fix content from `b573cff` is `b6c4f7d` here. PR #24. CI `test` went red at `cfeaca2` because `IssueQuote` re-verifies the meter: `TestObservabilityMetricsAndOTLPTracing` (Postgres-only) still expected `validate_meter` count 1. That assertion is now 2. P1 is **not live-certified**.
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -59,6 +66,7 @@ A Nigerian electricity platform. People buy prepaid units from anywhere, for the
 cmd/api        HTTP API (+ in-process worker in MODE=dev)
 cmd/worker     resume + outbox (refuses mock providers)
 cmd/migrate    embedded SQL, checksummed, advisory-locked
+cmd/certify    live sandbox certification (skips without keys)
 
 internal/orchestrator   quote → pay → vend → deliver → refund; Resume
 internal/security       passkey step-up, sessions, event log
@@ -67,7 +75,7 @@ internal/store          InTx unit of work (memstore / pgstore)
 internal/providers      payment, vending, remote-credit — kept separate
 internal/httpapi        /v1 + admin + public pay/pots + /v1/security
 web/                    Next.js 15 (root directory on Vercel)
-migrations/             0001 … 0021_security.sql
+migrations/             0001 … 0023_risk.sql
 ```
 
 Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
@@ -86,6 +94,8 @@ Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-sid
 8. VTpass `request_id` is stored at vend-claim (`VendIdempotencyKey`) and reused. Never regenerate.
 9. Household roles never mint `meters.MANAGE`. Grants ≠ ownership.
 10. Self-registration grants at most `PURCHASE`.
+12. A prepaid vend is never confirmed without an STS token.
+13. Saved cards belong only to the person who paid with them.
 
 Enforced by `orchestrator.mutate` (lock → guard → state + history + ledger + outbox in one tx). Only the worker whose commit **claimed** a step may call the provider.
 
@@ -116,11 +126,13 @@ go test -modfile=/tmp/meterly.mod ./internal/security/ ./internal/identity/ ./in
 
 | Provider | Config | Live sandbox |
 |---|---|---|
-| Payments | `mock` / `paystack` | **No** |
-| Vending | `mock` / `vtpass` | **No** |
+| Payments | `mock` / `paystack` | **not certified** (no keys) |
+| Vending | `mock` / `vtpass` | **not certified** (no keys) |
 | Remote credit | `mock` / `none` / `http` (`heshttp`) | **No partner** |
-| SMS / email / WhatsApp | mock or vendor adapters | **No** |
-| Auth | `dev` / `oidc` | **No real IdP** |
+| SMS / email / WhatsApp | mock or vendor adapters | **not certified** (no keys) |
+| Auth | `dev` / `oidc` | **not certified** (no IdP; in-process JWKS only) |
+
+Run `go run ./cmd/certify -o certify-report.json` (or `make certify`) when keys are in the environment. Live tests: `go test -tags certify ./internal/certify/...` (skipped without keys; not in CI). Certify refuses `sk_live_` and non-sandbox VTpass/Africa's Talking unless `CERTIFY_ALLOW_LIVE=true`.
 
 Outside `MODE=dev`, mocks are refused. `cmd/worker` refuses mocks.
 
@@ -138,12 +150,30 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | `FEATURE_POWER_DESK` | false | legal |
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
 | `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
+| `FEATURE_RISK_ENGINE` | on in dev + staging | DENY/REVIEW; disputes always ingest |
+| `FEATURE_OWNERSHIP_NAME_MATCH` | false | self-service ownership by display-name match is spoofable; operators attest via `/v1/admin/meters/{id}/ownership` |
 
 ---
 
 ## 8. Gotchas
 
-- Migrations are **immutable** once applied. Add `0022_*.sql`, never edit applied files.
+- **PR #24 review fixes (2026-11-27), see DECISIONS:**
+  - dispute outcomes are never guessed and are final once set;
+  - wallet top-ups need an `Idempotency-Key`;
+  - risk rule changes are audited in the same transaction;
+  - tests must use real user UUIDs for operators (PostgreSQL rejects `"admin:test"`).
+
+- **Review fixes (2026-11-27), see DECISIONS "Review fixes":**
+  - sessions stay bound to their first network until a passkey step-up;
+  - passkey assertions need UV;
+  - adding a passkey needs a step-up;
+  - Pay-for-Me payer cards can't be saved;
+  - a prepaid vend without a token stays pending;
+  - VTpass `083` is pending;
+  - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
+  - ownership name match is off outside dev.
+
+- Migrations are **immutable** once applied. Add `0024_*.sql`, never edit applied files. Hosted `0022`/`0023` are still unapplied; do not run them from this sandbox.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
 - Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
 - `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
@@ -209,27 +239,32 @@ If a document is missing, leave `REMOTE_PROVIDER=none` and keep STS.
 
 ---
 
-## 12. Who to partner with (not “every meter factory”)
+## 12. Who to partner with (OPay-for-power)
 
-You do **not** need to partner with every company that *builds* meters.
+You do **not** partner with every meter factory. You partner with whoever can **credit a meter the way MTN credits a SIM**.
 
-| Goal | Who | Why |
+| Layer (like OPay) | Electricity equivalent | Who to call |
 |---|---|---|
-| Take payment | **CBN-licensed PSP** (Paystack today) | Card/transfer; Meterly never holds PAN. |
-| Mint an STS token | **Vending aggregator** (VTpass) **or** a **DisCo vending API** | Token is what keypad meters need. One aggregator can cover many DisCos. |
-| Units appear **without typing a token** | Whoever runs the **HES / AMI** for that meter cohort | Usually a **MAP** (meter asset provider), the **DisCo’s AMI team**, or an OEM **only if they operate the head-end** (Hexing, Conlog, Mojec, etc.). |
-| Confirm “on the meter” | Same HES, plus a confirmation webhook or status API | This is the difference between ACCEPTED and CONFIRMED. |
-| USSD | **Telco + NCC shortcode**, Africa’s Talking or similar | Not a meter company. |
-| WhatsApp | **Meta WABA** | Not a meter company. |
+| Wallet / card | Pay | **Paystack** |
+| “Is this number real?” | Meter name/address | **VTpass** `merchant-verify` (already coded). Not a Disco API. |
+| Licensed units | STS vend | **VTpass** `pay` (still required even for no-keypad: we mint, then inject) |
+| **Airtime lands on the phone** | **Units land on the meter, no keypad** | **One Disco + that Disco’s MAP / AMI / HES operator** |
+| “Buy ₦2,000 data when I hit 100MB” | Auto-recharge ₦X or when kWh ≤ Y | Same HES **plus** Paystack saved card. Engine is AutoPower; live charge stays off until legal + AMI. |
 
-**Practical sequence**
+**Reach out, in this order**
 
-1. Ship **token vending** with VTpass + Paystack (no meter OEM required).
-2. Pick **one** remote-credit partner for **one** DisCo + one meter brand/cohort (e.g. IKEDC + Hexing via that DisCo’s MAP).
-3. Get their HES docs → implement a translator behind `heshttp` → attest the cohort in `/admin` → test on a real meter.
-4. Repeat per cohort. Never advertise “no tokens” globally.
+1. **Ikeja Electric (IKEDC) commercial / vendor / AMI** — *one* Disco. Ask: *who operates your prepaid **smart-meter HES**? We need remote credit push + confirmation + (for auto-recharge) a balance/reading API. We will vend through a licensed aggregator.* Historically IKEDC MAPs have included **Mojec**, **CIG/Conlog**, **New Hampshire**. Do not guess which one runs AMI today — ask Ikeja.
+2. **That MAP’s integrations / HES team** (whoever Ikeja names). Ask for the API PDF: auth, push credit, status, meter-confirmed webhook, errors, sandbox meters. This is the OPay pipe.
+3. **VTpass** — merchant + electricity keys. Meter verify + licensed token. Still needed.
+4. **Paystack** — merchant + `sk_test_` then live. Money + later saved-card mandates for auto-recharge.
 
-Meter manufacturers matter **only** as the operator of (or gateway into) the HES. DisCos matter for **authorising** you to vend and, if they own AMI, for remote credit. MAPs often sit in between.
+**Do not call yet:** Hexing/Conlog/Mojec sales (unless the Disco/MAP says they run the HES), Benin Electric, every other Disco, telcos, Meta.
+
+**No hardware.** Customers already have meters. MAPs already installed AMI where it exists. Meterly is software on top.
+
+**Honest coverage:** no-keypad + auto-recharge like OPay only works on **AMI-connected** meters. Keypad-only STS meters cannot receive a silent credit — there is no radio. Product copy: “works on compatible smart meters,” never “all meters, no token.”
+
+Sequence: get Ikeja (or one Disco) HES docs → translator behind `heshttp` → attest cohort in `/admin` → witnessed real-meter test → then auto-recharge on that cohort. Repeat per Disco.
 
 ---
 
@@ -250,6 +285,26 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
+- **2026-11-27: review of PR #24 (P0–P4) and merge.**
+  - PR #24's CI was red: the pilot tests used a non-UUID operator ID.
+  - Review found:
+    - dispute outcomes guessed as LOST on unknown resolutions;
+    - a dispute outcome flip that could release the reserve twice;
+    - non-idempotent wallet top-ups;
+    - risk rule changes audited outside their transaction with errors ignored;
+    - a template-database leak in the reconcile tests.
+  - Fixed on `claude/loving-wozniak-yr6igw` (PR #24 merged in plus the fixes), with tests on both stores.
+  - Verified: full suite with the race detector on memory and PostgreSQL 16, 544 passed / 0 skipped / 0 failed (95 PostgreSQL subtests); concurrent suites repeated; no test DBs left.
+  - Merged to `main` via the follow-up PR, which also marks #24 merged.
+
+- **2026-11-27: P3 risk controls and chargebacks.** `internal/risk` + `internal/disputes` + migration `0023`. DENY never charges; REVIEW never vends; dispute open/win/loss postings balance. Paystack `GET /dispute` and `charge.dispute.*` payload fields. `FEATURE_RISK_ENGINE` on in dev/staging. Unverified: live Paystack dispute webhooks; hosted `0023`. Do not apply hosted migrations from this sandbox. Next is P4 (pilot ops).
+- **2026-11-27: P2 daily settlement recon landed** (`3797530`). Engine `RunDay`/`CatchUp`, admin exceptions, `0022` unapplied hosted.
+- **2026-11-27: CI Postgres failure from quote re-verify.** `TestObservabilityMetricsAndOTLPTracing` expected one `mockvend.validate_meter`; register + quote is two. Actions logs are not readable from this sandbox (`results-receiver.githubusercontent.com`). Unverified: CI green after the assertion change; P2 settlement not started.
+- **2026-11-27: P1 certify harness.** `internal/certify` + `cmd/certify`. Untagged tests run the scenarios against in-repo fakes (pass). `go test -tags certify` and `cmd/certify` skip every provider here (no keys) and write a 30-scenario skipped report. Paystack fake gained documented `/charge`; VTpass fake rejects non-dates as `085`. Unverified: every live sandbox. Next is P2 settlement/reconciliation (`0022`).
+- **2026-11-27: review fixes of PRs #5–#23 landed here.** Guest-payer cards cannot be saved; session IP binds once; passkey UV + step-up to add; attested key preferred; prepaid vend needs an STS token; VTpass `083` is pending; AutoPower Paystack refs use `apchg-`; ownership name-match is flagged off outside dev. `origin/main` (`9cac48b`) merged.
+- **2026-11-26: 100 edge cases.** `docs/EDGE_CASES.md` — IN / OPS / GAP. Quote gates, in-flight, digits, wallet, dispute pause are in code.
+- **2026-11-26: Operating pack.** Catch-22 (supply must be on), first 200 = Ikeja/IE Energy Lagos Mojec, 2am runbook, fraud, fee leak, legal drafts `/legal/*`, Lagos entity rename, feature freeze (later), no kill date.
+- **2026-11-26: North star = no-keypad + OPay-style auto-recharge.** Token is fallback. First partner call is one Disco AMI/MAP, then VTpass + Paystack.
 - **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.
 - **2026-11-26: PR #21 merged.** Restyle + coming-soon Auto-renew + consoles.
 - **2026-11-26: PR #20** and earlier — identity, packs, Redis, credit-on-meter plane. See git history.

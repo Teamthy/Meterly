@@ -103,11 +103,30 @@ type PaymentProvider interface {
 	ParseWebhook(h http.Header, body []byte) (WebhookEvent, error)
 }
 
+// WalletBalance is the vending aggregator's prepaid wallet in kobo.
+type WalletBalance struct {
+	Minor int64
+}
+
+// WalletProvider is optional. VTpass implements it so we can pause vending
+// before the wallet hits zero.
+type WalletProvider interface {
+	WalletBalance(ctx context.Context) (WalletBalance, error)
+}
+
 // WebhookEvent is the provider-neutral part of a payment webhook.
 type WebhookEvent struct {
 	Type      string
 	Reference string // payment reference; empty when Relevant is false
 	Relevant  bool   // false for event types we acknowledge but ignore
+	// Dispute fields are set for charge.dispute.* events (Paystack).
+	DisputeID   string
+	AmountMinor int64
+	Currency    string
+	Status      string
+	Resolution  string
+	Category    string
+	DueAt       *time.Time
 }
 
 // ErrBadSignature means a webhook failed authentication.
@@ -128,6 +147,12 @@ type MeterValidationResult struct {
 	// Capabilities as reported by the provider for this meter.
 	RemoteCreditSupported  bool
 	RemoteReadingSupported bool
+	// CanVend is true when the provider omitted the flag. False means do not take payment.
+	CanVend bool
+	// MinPurchaseMinor is the Disco floor in kobo; 0 means none.
+	MinPurchaseMinor int64
+	// ArrearsMinor is outstanding debt in kobo that may be taken from the vend amount.
+	ArrearsMinor int64
 }
 
 type VendRequest struct {

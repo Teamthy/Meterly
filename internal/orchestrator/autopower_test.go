@@ -12,6 +12,7 @@ import (
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/orchestrator"
+	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/providers/paystack"
@@ -904,4 +905,74 @@ func TestExpiredCardAndSendOTPPendingResolution(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLowBalanceStaleReadingDoesNotTrigger(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		loc := autopower.LagosLocation()
+		e.setClock(time.Date(2027, 8, 1, 8, 0, 0, 0, loc))
+		uid := e.user(t, "kemi")
+		_, pm := e.saveCard(t, "kemi", "45012345678")
+		smart := e.register(t, "kemi", "75012345999")
+		if err := e.st.InTx(e.ctx, func(r store.Repos) error {
+			return registry.MarkRemoteReadingConfirmedIn(e.ctx, r, smart.ID, e.clock)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		thresh := 20.0
+		rule, err := e.o.CreateAutoPowerRule(e.ctx, orchestrator.CreateRuleParams{
+			UserID: uid, MeterID: smart.ID, PaymentMethodID: pm.ID,
+			TriggerType: autopower.TriggerLowBalance, AmountMinor: 500000, MonthlyCapMinor: 3000000,
+			DeliveryPreference: orchestrator.PrefToken, LowBalanceThresholdKWh: &thresh,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.readings.SetReadingFrozen("75012345999", 5.0, e.clock.Add(-49*time.Hour))
+		if _, err := e.o.PollLowBalance(e.ctx); err != nil {
+			t.Fatal(err)
+		}
+		runs, _ := e.st.Repos().AutoPower().ListRunsForRule(e.ctx, rule.RuleID, 10)
+		if len(runs) != 0 {
+			t.Fatalf("stale reading must not trigger, got %+v", runs)
+		}
+	})
+}
+
+// A Pay-for-Me transaction belongs to the requester but is paid with a guest
+// payer's card; the requester must never be able to save that card.
+func TestPayForMePayerCardCannotBeSavedByRequester(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		uid := e.user(t, "ada")
+		m := e.register(t, "ada", "45011122299")
+		link, err := e.o.CreatePaymentRequest(e.ctx, orchestrator.CreatePayRequestParams{
+			RequesterID: uid, MeterID: m.ID, AmountMode: payrequests.ModeFixed, AmountMinor: 500000,
+			PublicBaseURL: "https://meterly.test",
+		})
+		if err != nil {
+			t.Fatalf("create pay link: %v", err)
+		}
+		res, _, err := e.o.CheckoutPublicPayLink(e.ctx, orchestrator.PublicCheckoutRequest{
+			Code: link.Code, Email: "uncle@example.com", PayerName: "Uncle", IdempotencyKey: "guest-checkout-0001",
+		})
+		if err != nil {
+			t.Fatalf("guest checkout: %v", err)
+		}
+		ref := res.Transaction.PaymentProviderRef
+		if err := e.pay.Complete(ref, true, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.o.HandlePaymentNotification(e.ctx, ref); err != nil {
+			t.Fatal(err)
+		}
+		_, err = e.o.SavePaymentMethod(e.ctx, orchestrator.SavePaymentMethodParams{
+			UserID: uid, TransactionID: res.Transaction.ID, Consent: true,
+		})
+		if !errors.Is(err, autopower.ErrPaymentMethodNotReusable) {
+			t.Fatalf("requester saved the guest payer's card: err=%v", err)
+		}
+		if pms, _ := e.o.ListPaymentMethods(e.ctx, uid); len(pms) != 0 {
+			t.Fatalf("payment method stored: %+v", pms)
+		}
+	})
 }

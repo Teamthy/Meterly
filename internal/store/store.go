@@ -16,6 +16,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/conversation"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/households"
@@ -27,8 +28,11 @@ import (
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pilot"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -98,6 +102,10 @@ type Repos interface {
 	Auth() AuthRepo
 	Readings() MeterReadingRepo
 	LowUnitAlerts() LowUnitAlertRepo
+	Reconcile() reconcile.Repo
+	Risk() risk.Repo
+	Disputes() disputes.Repo
+	Pilot() pilot.Repo
 }
 
 // MeterReadingRepo stores observed remote kWh samples used to compute
@@ -150,6 +158,12 @@ type TxnFilter struct {
 	Limit      int
 }
 
+const (
+	UserActive    = "ACTIVE"
+	UserSuspended = "SUSPENDED"
+	UserClosed    = "CLOSED"
+)
+
 type UserRepo interface {
 	// EnsureByExternalID maps an identity-provider subject to an internal
 	// user ID (UUID string), creating the user on first sight.
@@ -157,6 +171,10 @@ type UserRepo interface {
 	// LockForUpdate acquires a transaction-scoped row lock on the user so
 	// per-user spend caps serialize across concurrent AutoPower rules.
 	LockForUpdate(ctx context.Context, userID string) error
+	// Status is ACTIVE, SUSPENDED or CLOSED. Missing row is ErrNotFound.
+	Status(ctx context.Context, userID string) (string, error)
+	// SetStatus updates ACTIVE/SUSPENDED/CLOSED. Chargebacks suspend.
+	SetStatus(ctx context.Context, userID, status string) error
 	// UpsertContacts updates encrypted verified contact fields on an existing
 	// user. Non-empty fields replace existing values; empty fields leave the
 	// stored value untouched.
@@ -184,7 +202,7 @@ type AuthRepo interface {
 	ListSessions(ctx context.Context, userID string) ([]identity.Session, error)
 	RevokeSession(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeOtherSessions(ctx context.Context, userID string, keep uuid.UUID, at time.Time) error
-	MarkSessionStepUp(ctx context.Context, id uuid.UUID, at time.Time) error
+	MarkSessionStepUp(ctx context.Context, id uuid.UUID, ipHMAC string, at time.Time) error
 	TouchSession(ctx context.Context, id uuid.UUID, ipHMAC, uaHMAC string, at time.Time) error
 	InsertSecurityEvent(ctx context.Context, e security.Event) error
 	ListSecurityEvents(ctx context.Context, userID string, limit int) ([]security.Event, error)
@@ -231,6 +249,8 @@ type TransactionRepo interface {
 	// concurrency), appends new history, and increments t.Version.
 	Save(ctx context.Context, t *tx.Transaction) error
 	ListForCustomer(ctx context.Context, customerID string) ([]*tx.Transaction, error)
+	// ListCreatedBetween returns transactions with from <= created_at < to.
+	ListCreatedBetween(ctx context.Context, from, to time.Time) ([]*tx.Transaction, error)
 	// Search returns matches newest first.
 	Search(ctx context.Context, f TxnFilter) ([]*tx.Transaction, error)
 	Count(ctx context.Context, f TxnFilter) (int, error)

@@ -9,6 +9,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -84,7 +85,7 @@ func (o *Orchestrator) RecordTokenCopy(ctx context.Context, user string, id uuid
 // An empty destination sends to the purchaser's verified contact for that
 // channel. A different destination is a third-party share and requires
 // FeatureGiftSMS. COPY is rejected.
-func (o *Orchestrator) RecordTokenSend(ctx context.Context, user string, id uuid.UUID, key, channel, destination string) (tokenshares.Share, error) {
+func (o *Orchestrator) RecordTokenSend(ctx context.Context, user string, id uuid.UUID, key, channel, destination, ip, ua string) (tokenshares.Share, error) {
 	var result tokenshares.Share
 	if user == "" || id == uuid.Nil || len(key) < 16 || len(key) > 128 {
 		return result, errors.New("invalid token send request")
@@ -115,6 +116,24 @@ func (o *Orchestrator) RecordTokenSend(ctx context.Context, user string, id uuid
 		destHMAC := notifications.DestinationHMAC(o.box, norm)
 		if destHMAC != selfHMAC && !o.featureGiftSMS {
 			return ErrTokenShareDisabled
+		}
+		if destHMAC != selfHMAC {
+			kind := "email"
+			if channel == tokenshares.SMS || channel == tokenshares.WhatsApp {
+				kind = "phone"
+			}
+			req := risk.Request{
+				Surface: risk.SurfaceTokenSend, UserID: user, TransactionID: id,
+				IPHMAC: o.riskHash("ip", ip), DeviceHMAC: o.riskHash("device", ua), IP: ip,
+			}
+			if kind == "email" {
+				req.EmailHMAC = destHMAC
+			} else {
+				req.PhoneHMAC = destHMAC
+			}
+			if _, err := o.evaluateRisk(ctx, r, req); err != nil {
+				return err
+			}
 		}
 		ch := notifications.Channel(channel)
 		optedOut, err := r.Notifications().IsOptedOut(ctx, destHMAC, ch)

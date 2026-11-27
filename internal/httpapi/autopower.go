@@ -52,6 +52,8 @@ func (s *Server) savePaymentMethod(w http.ResponseWriter, r *http.Request) {
 		TransactionID: txnID,
 		Consent:       req.Consent,
 		ConsentText:   req.ConsentText,
+		IP:            s.clientIP(r),
+		UserAgent:     r.UserAgent(),
 	})
 	if err != nil {
 		s.mapAutoPowerErr(w, r, err)
@@ -135,6 +137,8 @@ func (s *Server) createAutoPowerRule(w http.ResponseWriter, r *http.Request) {
 		UserID:                 userID(r),
 		MeterID:                req.MeterID,
 		PaymentMethodID:        req.PaymentMethodID,
+		IP:                     s.clientIP(r),
+		UserAgent:              r.UserAgent(),
 		TriggerType:            req.TriggerType,
 		AmountMinor:            req.AmountMinor,
 		MonthlyCapMinor:        req.MonthlyCapMinor,

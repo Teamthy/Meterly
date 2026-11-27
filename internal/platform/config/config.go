@@ -48,6 +48,7 @@ type Config struct {
 	VTPassPublicKey      string
 	VTPassBaseURL        string
 	VTPassDefaultPhone   string
+	VTPassWalletMinMinor int64
 	RemoteProvider       string // mock | none | http
 	RemoteHESBaseURL     string
 	RemoteHESHMACSecret  string
@@ -114,7 +115,21 @@ type Config struct {
 	// Support chat (agent + E2E human operators).
 	FeatureSupport bool
 	// Households: verified ownership + membership (FR-008).
-	FeatureHouseholds              bool
+	FeatureHouseholds bool
+	// FeatureRiskEngine gates the P3 abuse-control engine (DENY/REVIEW).
+	// Defaults on in MODE=dev and MODE=staging (pilot); off in production.
+	FeatureRiskEngine bool
+
+	// PilotMode restricts purchases to the audited allow-list (users, meters,
+	// optional DisCos) plus daily caps. SERVICE_PAUSED is a global kill switch.
+	PilotMode                bool
+	ServicePaused            bool
+	PilotDailyUserCapMinor   int64
+	PilotDailyGlobalCapMinor int64
+	// FeatureOwnershipNameMatch enables self-service meter ownership by
+	// display-name match. Spoofable (display names are user-editable and
+	// meter validation reveals the DisCo name): dev only by default.
+	FeatureOwnershipNameMatch      bool
 	USSDSharedSecret               string
 	USSDAllowedIPs                 []string
 	OfflineReverifyAfter           time.Duration
@@ -130,9 +145,10 @@ type Config struct {
 	// across API replicas. Empty keeps in-process token buckets.
 	RedisURL string
 
-	Orchestrator   orchestrator.Config
-	ResumeInterval time.Duration
-	OutboxInterval time.Duration
+	Orchestrator      orchestrator.Config
+	ResumeInterval    time.Duration
+	OutboxInterval    time.Duration
+	ReconcileInterval time.Duration
 	// A nonzero cutoff opts in to held notification candidate collection.
 	NotificationCandidatesSince time.Time
 	ShutdownTimeout             time.Duration
@@ -221,6 +237,7 @@ func Load(getenv func(string) string) (Config, error) {
 		VTPassDefaultPhone:     strings.TrimSpace(getenv("VTPASS_DEFAULT_PHONE")),
 		ResumeInterval:         dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:         dur("OUTBOX_INTERVAL", 2*time.Second),
+		ReconcileInterval:      dur("RECONCILE_INTERVAL", time.Hour),
 		ShutdownTimeout:        dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 
@@ -365,6 +382,16 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_SUPPORT: must be true or false"))
 	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_OWNERSHIP_NAME_MATCH"))) {
+	case "":
+		c.FeatureOwnershipNameMatch = c.Mode == Dev
+	case "true", "1":
+		c.FeatureOwnershipNameMatch = true
+	case "false", "0":
+		c.FeatureOwnershipNameMatch = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_OWNERSHIP_NAME_MATCH: must be true or false"))
+	}
 	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_HOUSEHOLDS"))) {
 	case "":
 		c.FeatureHouseholds = c.Mode == Dev
@@ -375,6 +402,33 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_HOUSEHOLDS: must be true or false"))
 	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_RISK_ENGINE"))) {
+	case "":
+		c.FeatureRiskEngine = c.Mode == Dev || c.Mode == Staging
+	case "true", "1":
+		c.FeatureRiskEngine = true
+	case "false", "0":
+		c.FeatureRiskEngine = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_RISK_ENGINE: must be true or false"))
+	}
+
+	switch strings.ToLower(strings.TrimSpace(getenv("PILOT_MODE"))) {
+	case "", "false", "0":
+	case "true", "1":
+		c.PilotMode = true
+	default:
+		errs = append(errs, fmt.Errorf("PILOT_MODE: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("SERVICE_PAUSED"))) {
+	case "", "false", "0":
+	case "true", "1":
+		c.ServicePaused = true
+	default:
+		errs = append(errs, fmt.Errorf("SERVICE_PAUSED: must be true or false"))
+	}
+	c.PilotDailyUserCapMinor = integer("PILOT_DAILY_USER_CAP_MINOR", 0)
+	c.PilotDailyGlobalCapMinor = integer("PILOT_DAILY_GLOBAL_CAP_MINOR", 0)
 
 	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)
 	c.OfflineUnverifiedDailyMaxMinor = integer("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR", conversation.DefaultUnverifiedDailyCapMinor)
@@ -422,6 +476,10 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	c.RateWritesPerMin = int(integer("RATE_LIMIT_WRITES_PER_MIN", 30))
 	c.RateAuthFailuresPerMin = int(integer("RATE_LIMIT_AUTH_FAILURES_PER_MIN", 20))
+	c.VTPassWalletMinMinor = integer("VTPASS_WALLET_MIN_MINOR", 0)
+	if c.VendingProvider == "vtpass" && strings.TrimSpace(getenv("VTPASS_WALLET_MIN_MINOR")) == "" {
+		c.VTPassWalletMinMinor = 5_000_000 // ₦50,000
+	}
 	c.RateWebhooksPerMin = int(integer("RATE_LIMIT_WEBHOOKS_PER_MIN", 600))
 	c.RatePublicPayPerMin = int(integer("RATE_LIMIT_PUBLIC_PAY_PER_MIN", 60))
 	c.RatePublicLinkPerMin = int(integer("RATE_LIMIT_PUBLIC_LINK_PER_MIN", 10))

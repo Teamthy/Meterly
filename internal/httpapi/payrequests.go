@@ -173,6 +173,8 @@ func (s *Server) checkoutPublicPayLink(w http.ResponseWriter, r *http.Request) {
 		Email:          req.Email,
 		PayerName:      req.PayerName,
 		IdempotencyKey: key,
+		IP:             s.clientIP(r),
+		UserAgent:      r.UserAgent(),
 	})
 	if err != nil && (res == nil || res.Transaction == nil) {
 		s.mapPayRequestErr(w, r, err)

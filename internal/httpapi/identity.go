@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/notifications"
+	"github.com/teamthy/meterly/internal/security"
 )
 
 func (s *Server) identityRoutes(mux *patternMux, user, write func(http.HandlerFunc) http.Handler) {
@@ -84,7 +85,14 @@ func (s *Server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decodeJSON(r, &body)
 	origin := requestOrigin(r, body.Origin)
-	opt, _, err := s.Identity.BeginRegister(r.Context(), origin, body.DisplayName, s.optionalUserID(r))
+	uid := s.optionalUserID(r)
+	// Attaching another passkey to an existing account needs a fresh
+	// step-up: otherwise a stolen session could enrol the attacker's key and
+	// satisfy every later step-up.
+	if uid != "" && !s.requireActionFor(w, r, uid, security.ActionAddPasskey) {
+		return
+	}
+	opt, _, err := s.Identity.BeginRegister(r.Context(), origin, body.DisplayName, uid)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return

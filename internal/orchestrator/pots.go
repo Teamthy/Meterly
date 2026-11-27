@@ -18,6 +18,7 @@ import (
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -155,6 +156,8 @@ type ContributePotRequest struct {
 	Phone             string // optional E.164 when OptInSMS is true; encrypted at rest
 	OptInSMS          bool
 	IdempotencyKey    string
+	IP                string
+	UserAgent         string
 }
 
 // ContributePotResult returns the created contribution and Paystack checkout URL.
@@ -561,6 +564,15 @@ func (o *Orchestrator) ContributeToPot(ctx context.Context, req ContributePotReq
 				lostAccessPot = pot.ID
 				return ErrPotUnusable
 			}
+			return err
+		}
+
+		if _, err := o.evaluateRisk(ctx, r, risk.Request{
+			Surface: risk.SurfacePot, UserID: req.ContributorUserID, MeterID: pot.MeterID, LinkID: pot.ID,
+			AmountMinor: req.AmountMinor, EmailHMAC: o.riskHash("email", normEmail),
+			PhoneHMAC: o.riskHash("phone", phoneInput), IPHMAC: o.riskHash("ip", req.IP),
+			DeviceHMAC: o.riskHash("device", req.UserAgent), IP: req.IP,
+		}); err != nil {
 			return err
 		}
 

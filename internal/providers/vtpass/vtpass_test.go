@@ -53,10 +53,23 @@ func TestFormatRequestID(t *testing.T) {
 	}
 }
 
+func TestWalletBalance(t *testing.T) {
+	c, f := setup(t)
+	got, err := c.WalletBalance(ctx)
+	if err != nil || got.Minor != 10_000_000 {
+		t.Fatalf("default wallet: %+v %v", got, err)
+	}
+	f.BalanceNaira = 0
+	got, err = c.WalletBalance(ctx)
+	if err != nil || got.Minor != 0 {
+		t.Fatalf("empty wallet: %+v %v", got, err)
+	}
+}
+
 func TestValidatePrepaidAndPostpaid(t *testing.T) {
 	c, _ := setup(t)
 	pre, err := c.ValidateMeter(ctx, providers.MeterValidationRequest{MeterNumber: vtpasstest.PrepaidMeter, DiscoCode: "IKEDC"})
-	if err != nil || !pre.Valid || pre.MeterType != "PREPAID" || pre.CustomerName != "TESTMETER1" {
+	if err != nil || !pre.Valid || pre.MeterType != "PREPAID" || pre.CustomerName != "TESTMETER1" || !pre.CanVend || pre.MinPurchaseMinor != 50_000 {
 		t.Fatalf("prepaid: %+v %v", pre, err)
 	}
 	post, err := c.ValidateMeter(ctx, providers.MeterValidationRequest{MeterNumber: vtpasstest.PostpaidMeter, DiscoCode: "EKEDC"})
@@ -257,5 +270,47 @@ func TestWholeNairaRequired(t *testing.T) {
 	var api *vtpass.APIError
 	if !errors.As(err, &api) {
 		t.Fatalf("want APIError, got %T %v", err, err)
+	}
+}
+
+// "083 SYSTEM ERROR" with HTTP 200 means the pay may have been processed: it
+// must be PENDING (requery), never a definitive failure that triggers a refund.
+func TestCode083IsPendingNotFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"083","response_description":"SYSTEM ERROR"}`))
+	}))
+	defer srv.Close()
+	c, err := vtpass.New(vtpass.Config{APIKey: apiKey, SecretKey: secret, BaseURL: srv.URL, DefaultPhone: phone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := c.NewVendKey("txn-083", time.Date(2026, 11, 26, 14, 30, 0, 0, vtpass.Lagos()))
+	res, err := c.Vend(ctx, providers.VendRequest{
+		MeterNumber: "45012345678", DiscoCode: "IKEDC", Amount: ngn(2000), IdempotencyKey: key, MeterType: "PREPAID",
+	})
+	if err != nil || res.Status != providers.VendPending {
+		t.Fatalf("083 must be pending, got %+v %v", res, err)
+	}
+	got, err := c.GetVendStatus(ctx, key)
+	if err != nil || got.Status != providers.VendPending {
+		t.Fatalf("083 on requery must be pending, got %+v %v", got, err)
+	}
+}
+
+func TestInvalidRequestIDDateIs085(t *testing.T) {
+	c, _ := setup(t)
+	res, err := c.Vend(ctx, providers.VendRequest{
+		MeterNumber: vtpasstest.PrepaidMeter, DiscoCode: "IKEDC",
+		Amount: ngn(2000), IdempotencyKey: "999999999999x", MeterType: "PREPAID",
+	})
+	if err != nil {
+		return
+	}
+	if res.Status == providers.VendSucceeded {
+		t.Fatalf("improper request_id must not succeed: %+v", res)
+	}
+	if res.FailureCode != "085" && res.Status != providers.VendFailed {
+		t.Fatalf("want 085/FAILED, got %+v", res)
 	}
 }

@@ -83,7 +83,7 @@ func TestPasskeyRegisterLoginAndOnboarding(t *testing.T) {
 	rawLCD, _ := json.Marshal(map[string]string{"type": "webauthn.get", "challenge": b64u(lch), "origin": origin})
 	authGet := make([]byte, 37)
 	copy(authGet[:32], sum[:])
-	authGet[32] = 0x01
+	authGet[32] = 0x05 // user present + user verified
 	binary.BigEndian.PutUint32(authGet[33:37], 1)
 	cdh := sha256.Sum256(rawLCD)
 	msg := append(append([]byte{}, authGet...), cdh[:]...)
@@ -155,5 +155,109 @@ func TestBeginRegisterRejectsUnknownOrigin(t *testing.T) {
 	_, _, err = eng.BeginRegister(context.Background(), "https://evil.example", "Ada", "")
 	if err != identity.ErrOrigin {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// signAssertion builds a WebAuthn assertion for challenge with the given flags.
+func signAssertion(t *testing.T, priv *ecdsa.PrivateKey, credID []byte, challenge string, origin string, flags byte, count uint32) identity.AssertionResponse {
+	t.Helper()
+	ch, err := base64.RawURLEncoding.DecodeString(challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd, _ := json.Marshal(map[string]string{"type": "webauthn.get", "challenge": b64u(ch), "origin": origin})
+	ad := make([]byte, 37)
+	sum := sha256.Sum256([]byte("localhost"))
+	copy(ad[:32], sum[:])
+	ad[32] = flags
+	binary.BigEndian.PutUint32(ad[33:37], count)
+	cdh := sha256.Sum256(cd)
+	digest := sha256.Sum256(append(append([]byte{}, ad...), cdh[:]...))
+	r, s, err := ecdsa.Sign(rand.Reader, priv, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := append(r.FillBytes(make([]byte, 32)), s.FillBytes(make([]byte, 32))...)
+	return identity.AssertionResponse{ID: b64u(credID), RawID: b64u(credID), AuthenticatorData: b64u(ad), ClientDataJSON: b64u(cd), Signature: b64u(sig)}
+}
+
+func TestLoginRequiresUserVerification(t *testing.T) {
+	st := memstore.New()
+	box, _ := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "v1")
+	eng := &identity.Engine{Users: st.Repos().Users(), Auth: st.Repos().Auth(), Box: box, Dev: true}
+	ctx := context.Background()
+	origin := "http://localhost:3000"
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	pubXY := append(priv.X.FillBytes(make([]byte, 32)), priv.Y.FillBytes(make([]byte, 32))...)
+	credID := []byte("uv-cred")
+	opt, _, err := eng.BeginRegister(ctx, origin, "Ada", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _ := base64.RawURLEncoding.DecodeString(opt.Challenge)
+	cd, _ := json.Marshal(map[string]string{"type": "webauthn.create", "challenge": b64u(ch), "origin": origin})
+	ad := make([]byte, 37)
+	sum := sha256.Sum256([]byte("localhost"))
+	copy(ad[:32], sum[:])
+	ad[32] = 0x05
+	if _, _, err := eng.FinishRegister(ctx, origin, identity.AttestationResponse{
+		ID: b64u(credID), RawID: b64u(credID), ClientDataJSON: b64u(cd), AuthenticatorData: b64u(ad), PublicKey: b64u(pubXY),
+	}, "key"); err != nil {
+		t.Fatal(err)
+	}
+
+	lo, _ := eng.BeginLogin(ctx, origin)
+	if _, _, err := eng.FinishLogin(ctx, origin, signAssertion(t, priv, credID, lo.Challenge, origin, 0x01, 1)); err == nil {
+		t.Fatal("login without user verification (UV flag) must be rejected")
+	}
+	lo, _ = eng.BeginLogin(ctx, origin)
+	if _, _, err := eng.FinishLogin(ctx, origin, signAssertion(t, priv, credID, lo.Challenge, origin, 0x05, 2)); err != nil {
+		t.Fatalf("login with UV: %v", err)
+	}
+}
+
+// buildAttested returns authenticator data carrying an attested ES256 key.
+func buildAttested(rpID string, credID []byte, x, y []byte) []byte {
+	sum := sha256.Sum256([]byte(rpID))
+	ad := append([]byte{}, sum[:]...)
+	ad = append(ad, 0x45, 0, 0, 0, 0)    // UP|UV|AT, signCount 0
+	ad = append(ad, make([]byte, 16)...) // AAGUID
+	ad = append(ad, byte(len(credID)>>8), byte(len(credID)))
+	ad = append(ad, credID...)
+	cose := []byte{0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20}
+	cose = append(cose, x...)
+	cose = append(cose, 0x22, 0x58, 0x20)
+	cose = append(cose, y...)
+	return append(ad, cose...)
+}
+
+func TestRegisterRejectsClientKeyThatDiffersFromAttestedKey(t *testing.T) {
+	st := memstore.New()
+	box, _ := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "v1")
+	eng := &identity.Engine{Users: st.Repos().Users(), Auth: st.Repos().Auth(), Box: box, Dev: true}
+	ctx := context.Background()
+	origin := "http://localhost:3000"
+	real, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	credID := []byte("attested-cred")
+	register := func(clientKey *ecdsa.PrivateKey) error {
+		opt, _, err := eng.BeginRegister(ctx, origin, "Ada", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ch, _ := base64.RawURLEncoding.DecodeString(opt.Challenge)
+		cd, _ := json.Marshal(map[string]string{"type": "webauthn.create", "challenge": b64u(ch), "origin": origin})
+		ad := buildAttested("localhost", credID, real.X.FillBytes(make([]byte, 32)), real.Y.FillBytes(make([]byte, 32)))
+		pub := append(clientKey.X.FillBytes(make([]byte, 32)), clientKey.Y.FillBytes(make([]byte, 32))...)
+		_, _, err = eng.FinishRegister(ctx, origin, identity.AttestationResponse{
+			ID: b64u(credID), RawID: b64u(credID), ClientDataJSON: b64u(cd), AuthenticatorData: b64u(ad), PublicKey: b64u(pub),
+		}, "key")
+		return err
+	}
+	if err := register(other); err == nil {
+		t.Fatal("a client key that differs from the attested key must be rejected")
+	}
+	if err := register(real); err != nil {
+		t.Fatalf("matching key: %v", err)
 	}
 }

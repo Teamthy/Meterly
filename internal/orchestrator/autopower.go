@@ -18,12 +18,13 @@ import (
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
 const (
-	autoPowerChargeRefPrefix = "apchg:"
+	autoPowerChargeRefPrefix = "apchg-" // Paystack refs allow only letters, digits, - . =
 	autoPowerIdemPrefix      = "autopower:"
 )
 
@@ -34,6 +35,8 @@ type SavePaymentMethodParams struct {
 	TransactionID uuid.UUID
 	Consent       bool
 	ConsentText   string
+	IP            string
+	UserAgent     string
 }
 
 // CreateRuleParams defines inputs for POST /v1/autopower/rules.
@@ -41,6 +44,8 @@ type CreateRuleParams struct {
 	UserID                 string
 	MeterID                uuid.UUID
 	PaymentMethodID        uuid.UUID
+	IP                     string
+	UserAgent              string
 	TriggerType            autopower.TriggerType
 	AmountMinor            int64
 	MonthlyCapMinor        int64
@@ -130,6 +135,14 @@ func (o *Orchestrator) SavePaymentMethod(ctx context.Context, p SavePaymentMetho
 	if t.EffectiveFundingSource() != tx.FundingPSP || t.Payment != tx.PayConfirmed || t.PaymentProviderRef == "" {
 		return nil, autopower.ErrPaymentMethodNotReusable
 	}
+	// A Pay-for-Me transaction belongs to the requester but was paid with a
+	// guest payer's card. That card must never become the requester's saved
+	// payment method.
+	if _, err := o.st.Repos().PayRequests().GetPayer(ctx, t.ID); err == nil {
+		return nil, fmt.Errorf("%w: paid by someone else via a Pay-for-Me link", autopower.ErrPaymentMethodNotReusable)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
 
 	pctx, cancel := o.pctx(ctx)
 	v, err := o.payments.VerifyPayment(pctx, t.PaymentProviderRef)
@@ -187,6 +200,13 @@ func (o *Orchestrator) SavePaymentMethod(ctx context.Context, p SavePaymentMetho
 	var saved *autopower.SavedPaymentMethod
 	err = o.st.InTx(ctx, func(r store.Repos) error {
 		if err := r.Users().LockForUpdate(ctx, p.UserID); err != nil {
+			return err
+		}
+		if _, err := o.evaluateRisk(ctx, r, risk.Request{
+			Surface: risk.SurfaceSaveCard, UserID: p.UserID, TransactionID: p.TransactionID,
+			CardSignature: auth.Signature, EmailHMAC: o.riskHash("email", auth.CustomerEmail),
+			IPHMAC: o.riskHash("ip", p.IP), DeviceHMAC: o.riskHash("device", p.UserAgent), IP: p.IP,
+		}); err != nil {
 			return err
 		}
 		if existing, gErr := r.AutoPower().GetActivePaymentMethodBySourceTxn(ctx, p.UserID, p.TransactionID); gErr == nil {
@@ -384,6 +404,12 @@ func (o *Orchestrator) CreateAutoPowerRule(ctx context.Context, p CreateRulePara
 	var out *RuleView
 	err := o.st.InTx(ctx, func(r store.Repos) error {
 		if err := r.Users().LockForUpdate(ctx, p.UserID); err != nil {
+			return err
+		}
+		if _, err := o.evaluateRisk(ctx, r, risk.Request{
+			Surface: risk.SurfaceAutoPower, UserID: p.UserID, MeterID: p.MeterID, AmountMinor: p.AmountMinor,
+			IPHMAC: o.riskHash("ip", p.IP), DeviceHMAC: o.riskHash("device", p.UserAgent), IP: p.IP,
+		}); err != nil {
 			return err
 		}
 		m, err := registry.AuthorizeForUpdateIn(ctx, r, p.UserID, p.MeterID, meters.PermPurchase)
@@ -1281,6 +1307,10 @@ func (o *Orchestrator) executeRun(ctx context.Context, runID uuid.UUID) error {
 	if err := o.requireEnabled(ctx, o.vending.Name()); err != nil {
 		return err
 	}
+	if err := o.ensurePurchasesOpen(ctx); err != nil {
+		// Wallet/service pause: retry on the next tick. Do not fail the rule.
+		return nil
+	}
 
 	rn0, err := o.st.Repos().AutoPower().GetRun(ctx, runID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -1295,6 +1325,9 @@ func (o *Orchestrator) executeRun(ctx context.Context, runID uuid.UUID) error {
 	}
 	if err != nil {
 		return err
+	}
+	if err := o.ensurePilot(ctx, rl0.UserID, rl0.MeterID, rn0.AmountMinor); err != nil {
+		return nil
 	}
 
 	now := o.Now().UTC()
@@ -1937,8 +1970,9 @@ func (o *Orchestrator) pollSingleRule(ctx context.Context, ruleID uuid.UUID, pol
 			MeterID: rl.MeterID, MilliKWh: milliKWh, ReadAt: obsAt, Provider: o.readings.Name(),
 		})
 
+		staleReading := now.Sub(obsAt) > autopower.LowBalanceMaxReadingAge
 		cooldownOK := rl.LastLowBalanceTriggered == nil || !now.Before(rl.LastLowBalanceTriggered.Add(autopower.LowBalanceCooldown))
-		if milliKWh <= rl.LowBalanceMilliKWh && cooldownOK {
+		if milliKWh <= rl.LowBalanceMilliKWh && cooldownOK && !staleReading {
 			recent, err := r.AutoPower().ListRunsForRule(ctx, rl.ID, 5)
 			if err != nil {
 				return err

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -38,6 +39,8 @@ type Fake struct {
 	*httptest.Server
 	APIKey    string
 	SecretKey string
+	// BalanceNaira is the sandbox wallet in naira (GET /balance).
+	BalanceNaira float64
 
 	mu             sync.Mutex
 	nextID         int64
@@ -50,6 +53,7 @@ func New(apiKey, secretKey string) *Fake {
 	f := &Fake{
 		APIKey:         apiKey,
 		SecretKey:      secretKey,
+		BalanceNaira:   100000,
 		nextID:         1700000000000,
 		byRequest:      map[string]*record{},
 		failAfterApply: map[string]int{},
@@ -116,6 +120,15 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body, &payload)
 
 	switch {
+	case strings.HasSuffix(r.URL.Path, "/balance"):
+		reply(map[string]any{
+			"code": "000",
+			"contents": map[string]any{
+				"currency": "NGN",
+				"balance":  f.BalanceNaira,
+			},
+		})
+		return
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/merchant-verify"):
 		meter := stringify(payload["billersCode"])
 		sid := stringify(payload["serviceID"])
@@ -129,12 +142,13 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			reply(map[string]any{
 				"code": "000",
 				"content": map[string]any{
-					"Customer_Name":    "TESTMETER1",
-					"Address":          "ABULE EGBA BU ABULE",
-					"Meter_Number":     meter,
-					"Meter_Type":       "PREPAID",
-					"Can_Vend":         "yes",
-					"WrongBillersCode": false,
+					"Customer_Name":       "TESTMETER1",
+					"Address":             "ABULE EGBA BU ABULE",
+					"Meter_Number":        meter,
+					"Meter_Type":          "PREPAID",
+					"Can_Vend":            "yes",
+					"Min_Purchase_Amount": "500",
+					"WrongBillersCode":    false,
 				},
 			})
 		case meter == PostpaidMeter && typ == "postpaid":
@@ -278,7 +292,9 @@ func validRequestID(s string) bool {
 			return false
 		}
 	}
-	return true
+	// First 12 chars must be a real Africa/Lagos YYYYMMDDHHII (VTpass 085 otherwise).
+	_, err := time.Parse("200601021504", s[:12])
+	return err == nil
 }
 
 func stringify(v any) string {
