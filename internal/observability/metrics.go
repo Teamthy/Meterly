@@ -299,7 +299,7 @@ func (r *Registry) AddRetentionPurged(table string, n int) {
 	}
 	switch table {
 	case "channel_otps", "auth_challenges", "auth_sessions", "idempotency_keys",
-		"risk_observations", "support_threads", "notification_deliveries":
+		"risk_observations", "support_threads", "notification_deliveries", "data_exports":
 	default:
 		return
 	}

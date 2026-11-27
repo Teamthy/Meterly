@@ -12,6 +12,7 @@ import (
 	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/risk"
+	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/support"
 )
 
@@ -354,4 +355,138 @@ func (r privacyRepo) PurgeDeliveryHMACs(_ context.Context, cutoff time.Time) (in
 		}
 	})
 	return n, nil
+}
+
+func exportDayKey(userID, day string) string { return userID + "|" + day }
+
+func (r privacyRepo) CreateExport(_ context.Context, job privacy.ExportJob) error {
+	defer r.lock()()
+	if job.ID == uuid.Nil {
+		job.ID = uuid.New()
+	}
+	k := exportDayKey(job.UserID, job.Day)
+	if _, ok := r.s.dataExportByDay[k]; ok {
+		return store.ErrDuplicate
+	}
+	if _, ok := r.s.dataExports[job.ID]; ok {
+		return store.ErrDuplicate
+	}
+	r.s.dataExports[job.ID] = privacy.CloneExport(job)
+	r.s.dataExportByDay[k] = job.ID
+	r.onUndo(func() {
+		delete(r.s.dataExports, job.ID)
+		delete(r.s.dataExportByDay, k)
+	})
+	return nil
+}
+
+func (r privacyRepo) GetExport(_ context.Context, id uuid.UUID) (privacy.ExportJob, error) {
+	defer r.lock()()
+	j, ok := r.s.dataExports[id]
+	if !ok {
+		return privacy.ExportJob{}, store.ErrNotFound
+	}
+	return privacy.CloneExport(j), nil
+}
+
+func (r privacyRepo) GetExportForUserDay(_ context.Context, userID, day string) (privacy.ExportJob, error) {
+	defer r.lock()()
+	id, ok := r.s.dataExportByDay[exportDayKey(userID, day)]
+	if !ok {
+		return privacy.ExportJob{}, store.ErrNotFound
+	}
+	j, ok := r.s.dataExports[id]
+	if !ok {
+		return privacy.ExportJob{}, store.ErrNotFound
+	}
+	return privacy.CloneExport(j), nil
+}
+
+func (r privacyRepo) UpdateExport(_ context.Context, job privacy.ExportJob) error {
+	defer r.lock()()
+	prev, ok := r.s.dataExports[job.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	r.s.dataExports[job.ID] = privacy.CloneExport(job)
+	r.onUndo(func() { r.s.dataExports[job.ID] = prev })
+	return nil
+}
+
+func (r privacyRepo) ListPendingExports(_ context.Context, limit int) ([]privacy.ExportJob, error) {
+	defer r.lock()()
+	var out []privacy.ExportJob
+	for _, j := range r.s.dataExports {
+		if j.Status == privacy.ExportPending {
+			out = append(out, privacy.CloneExport(j))
+		}
+	}
+	sort.Slice(out, func(i, k int) bool { return out[i].CreatedAt.Before(out[k].CreatedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r privacyRepo) ExpireDueExports(_ context.Context, now time.Time, batch int) (int, error) {
+	defer r.lock()()
+	var ids []uuid.UUID
+	for id, j := range r.s.dataExports {
+		if (j.Status == privacy.ExportPending || j.Status == privacy.ExportReady) && !j.ExpiresAt.After(now) {
+			ids = append(ids, id)
+		}
+	}
+	ids = capBatch(ids, batch)
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	prev := map[uuid.UUID]privacy.ExportJob{}
+	for _, id := range ids {
+		j := r.s.dataExports[id]
+		prev[id] = privacy.CloneExport(j)
+		j.Status = privacy.ExportExpired
+		j.ArchiveCiphertext = nil
+		j.TokenCiphertext = nil
+		j.UpdatedAt = now.UTC()
+		r.s.dataExports[id] = j
+	}
+	r.onUndo(func() {
+		for id, j := range prev {
+			r.s.dataExports[id] = j
+		}
+	})
+	return len(ids), nil
+}
+
+func (r privacyRepo) PurgeDataExports(_ context.Context, cutoff time.Time, batch int, dryRun bool, held map[string]bool) (int, error) {
+	defer r.lock()()
+	var ids []uuid.UUID
+	for id, j := range r.s.dataExports {
+		if j.CreatedAt.Before(cutoff) && !skipHeld(held, j.UserID) {
+			ids = append(ids, id)
+		}
+	}
+	ids = capBatch(ids, batch)
+	if dryRun || len(ids) == 0 {
+		return len(ids), nil
+	}
+	type snap struct {
+		job privacy.ExportJob
+		day string
+	}
+	prev := map[uuid.UUID]snap{}
+	for _, id := range ids {
+		j := r.s.dataExports[id]
+		k := exportDayKey(j.UserID, j.Day)
+		prev[id] = snap{job: privacy.CloneExport(j), day: k}
+		delete(r.s.dataExports, id)
+		delete(r.s.dataExportByDay, k)
+	}
+	r.onUndo(func() {
+		for id, s := range prev {
+			r.s.dataExports[id] = s.job
+			r.s.dataExportByDay[s.day] = id
+		}
+	})
+	return len(prev), nil
 }

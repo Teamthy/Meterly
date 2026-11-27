@@ -87,6 +87,9 @@ type Config struct {
 	RetentionBatchSize          int
 	RetentionDryRun             bool
 	RetentionInterval           time.Duration
+	DataExportTTL               time.Duration
+	DataExportInterval          time.Duration
+	DataExportBatchSize         int
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
 	AuthMode        string
@@ -285,6 +288,9 @@ func Load(getenv func(string) string) (Config, error) {
 	c.RetentionFinancial = dur("RETENTION_FINANCIAL", 7*365*24*time.Hour)
 	c.RetentionBatchSize = int(integer("RETENTION_BATCH_SIZE", 500))
 	c.RetentionInterval = dur("RETENTION_INTERVAL", time.Hour)
+	c.DataExportTTL = dur("DATA_EXPORT_TTL", 24*time.Hour)
+	c.DataExportInterval = dur("DATA_EXPORT_INTERVAL", 5*time.Second)
+	c.DataExportBatchSize = int(integer("DATA_EXPORT_BATCH_SIZE", 20))
 	switch strings.ToLower(strings.TrimSpace(getenv("RETENTION_DRY_RUN"))) {
 	case "", "false", "0":
 		c.RetentionDryRun = false

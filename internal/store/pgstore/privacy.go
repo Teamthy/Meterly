@@ -324,3 +324,145 @@ func (r privacyRepo) CountPurgeableDeliveryHMACs(ctx context.Context, cutoff tim
 func (r privacyRepo) PurgeDeliveryHMACs(ctx context.Context, cutoff time.Time) (int, error) {
 	return notifRepo{r.repos}.PurgeOldDestinationHMACs(ctx, cutoff)
 }
+
+const exportCols = `id, user_id::text, to_char(day, 'YYYY-MM-DD'), status, archive_ciphertext, archive_key_version,
+	token_hmac, token_ciphertext, token_key_version, expires_at, downloaded_at, error, created_at, updated_at`
+
+func scanExport(row interface{ Scan(dest ...any) error }) (privacy.ExportJob, error) {
+	var j privacy.ExportJob
+	err := row.Scan(&j.ID, &j.UserID, &j.Day, &j.Status, &j.ArchiveCiphertext, &j.ArchiveKeyVersion,
+		&j.TokenHMAC, &j.TokenCiphertext, &j.TokenKeyVersion, &j.ExpiresAt, &j.DownloadedAt, &j.Error, &j.CreatedAt, &j.UpdatedAt)
+	if err != nil {
+		return privacy.ExportJob{}, mapErr(err)
+	}
+	j.ExpiresAt = j.ExpiresAt.UTC()
+	j.CreatedAt = j.CreatedAt.UTC()
+	j.UpdatedAt = j.UpdatedAt.UTC()
+	if j.DownloadedAt != nil {
+		t := j.DownloadedAt.UTC()
+		j.DownloadedAt = &t
+	}
+	return j, nil
+}
+
+func (r privacyRepo) CreateExport(ctx context.Context, job privacy.ExportJob) error {
+	uid, err := uuid.Parse(job.UserID)
+	if err != nil {
+		return store.ErrNotFound
+	}
+	if job.ID == uuid.Nil {
+		job.ID = uuid.New()
+	}
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO data_exports (
+			id, user_id, day, status, archive_ciphertext, archive_key_version,
+			token_hmac, token_ciphertext, token_key_version, expires_at, downloaded_at, error, created_at, updated_at)
+		VALUES ($1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		job.ID, uid, job.Day, job.Status, job.ArchiveCiphertext, job.ArchiveKeyVersion,
+		job.TokenHMAC, job.TokenCiphertext, job.TokenKeyVersion, job.ExpiresAt.UTC(), job.DownloadedAt,
+		job.Error, job.CreatedAt.UTC(), job.UpdatedAt.UTC())
+	return mapErr(err)
+}
+
+func (r privacyRepo) GetExport(ctx context.Context, id uuid.UUID) (privacy.ExportJob, error) {
+	return scanExport(r.db.QueryRow(ctx, `SELECT `+exportCols+` FROM data_exports WHERE id = $1`, id))
+}
+
+func (r privacyRepo) GetExportForUserDay(ctx context.Context, userID, day string) (privacy.ExportJob, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return privacy.ExportJob{}, store.ErrNotFound
+	}
+	return scanExport(r.db.QueryRow(ctx, `SELECT `+exportCols+` FROM data_exports WHERE user_id = $1 AND day = $2::date`, uid, day))
+}
+
+func (r privacyRepo) UpdateExport(ctx context.Context, job privacy.ExportJob) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE data_exports SET
+			status = $2, archive_ciphertext = $3, archive_key_version = $4,
+			token_hmac = $5, token_ciphertext = $6, token_key_version = $7,
+			expires_at = $8, downloaded_at = $9, error = $10, updated_at = $11
+		WHERE id = $1`,
+		job.ID, job.Status, job.ArchiveCiphertext, job.ArchiveKeyVersion,
+		job.TokenHMAC, job.TokenCiphertext, job.TokenKeyVersion,
+		job.ExpiresAt.UTC(), job.DownloadedAt, job.Error, job.UpdatedAt.UTC())
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r privacyRepo) ListPendingExports(ctx context.Context, limit int) ([]privacy.ExportJob, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT `+exportCols+` FROM data_exports
+		WHERE status = 'PENDING'
+		ORDER BY created_at ASC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	var out []privacy.ExportJob
+	for rows.Next() {
+		j, err := scanExport(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func (r privacyRepo) ExpireDueExports(ctx context.Context, now time.Time, batch int) (int, error) {
+	if batch <= 0 {
+		batch = 500
+	}
+	tag, err := r.db.Exec(ctx, `
+		UPDATE data_exports SET
+			status = 'EXPIRED', archive_ciphertext = NULL, token_ciphertext = NULL, updated_at = $1
+		WHERE id IN (
+			SELECT id FROM data_exports
+			WHERE expires_at <= $1 AND status IN ('PENDING', 'READY')
+			LIMIT $2
+		)`, now.UTC(), batch)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+func (r privacyRepo) PurgeDataExports(ctx context.Context, cutoff time.Time, batch int, dryRun bool, held map[string]bool) (int, error) {
+	if batch <= 0 {
+		batch = 500
+	}
+	heldIDs := heldUUIDs(held)
+	if dryRun {
+		var n int
+		err := r.db.QueryRow(ctx, `
+			SELECT count(*) FROM (
+				SELECT id FROM data_exports
+				WHERE created_at < $1
+				  AND (cardinality($2::uuid[]) = 0 OR NOT (user_id = ANY($2)))
+				LIMIT $3
+			) s`, cutoff.UTC(), heldIDs, batch).Scan(&n)
+		return n, mapErr(err)
+	}
+	tag, err := r.db.Exec(ctx, `
+		DELETE FROM data_exports
+		WHERE id IN (
+			SELECT id FROM data_exports
+			WHERE created_at < $1
+			  AND (cardinality($2::uuid[]) = 0 OR NOT (user_id = ANY($2)))
+			LIMIT $3
+		)`, cutoff.UTC(), heldIDs, batch)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return int(tag.RowsAffected()), nil
+}

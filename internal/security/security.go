@@ -22,6 +22,7 @@ const (
 	ActionRevokeSession = "REVOKE_SESSION"
 	ActionRevokeOthers  = "REVOKE_OTHERS"
 	ActionChangeContact = "CHANGE_CONTACT"
+	ActionDataExport    = "DATA_EXPORT"
 
 	OutcomeAllow    = "ALLOW"
 	OutcomeStepUp   = "STEP_UP"

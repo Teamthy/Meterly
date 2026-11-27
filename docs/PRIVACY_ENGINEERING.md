@@ -90,6 +90,11 @@ Meter **numbers** and STS **tokens** are encrypted / HMAC elsewhere (`meters.num
 
 ## Not in this document (later batches)
 
-- B2 subject-access export
 - B3 account erasure (anonymise financial rows, delete contacts)
 - Partner API personal data (B4+)
+
+## Subject-access export (B2)
+
+`POST /v1/me/data-export` (passkey step-up, rate-limited, audited) creates one job per user per UTC day. A worker writes an encrypted JSON archive (`data_exports.archive_ciphertext`). `GET …/download` is single-use and expires in 24 hours (`DATA_EXPORT_TTL`); ciphertext is then deleted. The archive includes the subject's decrypted email/phone, masked meters, token-free receipts, consents, preferences, own household membership (not other members' contacts), own support threads (agent/system decrypted; human E2E plaintext is not on the server), and security events. It never includes STS tokens, raw meter numbers, or another user's PII.
+
+Retention: `data_exports` DELETE after the TTL (`RETENTION` uses `DATA_EXPORT_TTL`). Legal holds skip the user's rows.

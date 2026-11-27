@@ -43,7 +43,7 @@ func (e *Engine) stepUpAfter() time.Duration {
 
 func sensitive(action string) bool {
 	switch action {
-	case ActionTokenRead, ActionSaveCard, ActionDeletePasskey, ActionAddPasskey, ActionChangeContact, ActionRevokeOthers, ActionRevokeSession:
+	case ActionTokenRead, ActionSaveCard, ActionDeletePasskey, ActionAddPasskey, ActionChangeContact, ActionRevokeOthers, ActionRevokeSession, ActionDataExport:
 		return true
 	}
 	return false
