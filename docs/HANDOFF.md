@@ -285,6 +285,7 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
+- **2026-11-27: batch plan written.** `docs/prompts/MASTER_PROMPT_BATCHES.md` splits the remaining work into B0–B10 (hygiene, NDPA in three parts, partner platform in three parts, developer portal, hardening, founder-gated go-live, post-pilot). Docs only; no code changed, nothing to verify. PR #24 and #25 are merged to `main`; the "on this branch" wording in section 0 is stale and is B0's first task.
 - **2026-11-27: review of PR #24 (P0–P4) and merge.**
   - PR #24's CI was red: the pilot tests used a non-UUID operator ID.
   - Review found:
