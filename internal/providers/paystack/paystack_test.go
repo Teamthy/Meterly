@@ -336,4 +336,19 @@ func TestListTransactionsRefundsSettlements(t *testing.T) {
 	if err != nil || len(settlements) != 1 || settlements[0].ID != 42 || settlements[0].TotalFees != 10000 {
 		t.Fatalf("settlements %+v %v", settlements, err)
 	}
+	f.SeedDispute(2867, "ref-list", "awaiting-merchant-feedback", 510000)
+	ds, err := c.ListDisputes(ctx, from, to)
+	if err != nil || len(ds) != 1 || ds[0].ID != 2867 || ds[0].Reference != "ref-list" {
+		t.Fatalf("disputes %+v %v", ds, err)
+	}
+	got, err := c.FetchDispute(ctx, 2867)
+	if err != nil || got.ID != 2867 {
+		t.Fatalf("fetch %+v %v", got, err)
+	}
+	if err := c.AddEvidence(ctx, 2867, "ops@example.com", "Meterly", "08000000000", "prepaid electricity token delivered"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ResolveDispute(ctx, 2867, "declined", "token was delivered", 0); err != nil {
+		t.Fatal(err)
+	}
 }

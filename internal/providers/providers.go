@@ -119,6 +119,14 @@ type WebhookEvent struct {
 	Type      string
 	Reference string // payment reference; empty when Relevant is false
 	Relevant  bool   // false for event types we acknowledge but ignore
+	// Dispute fields are set for charge.dispute.* events (Paystack).
+	DisputeID   string
+	AmountMinor int64
+	Currency    string
+	Status      string
+	Resolution  string
+	Category    string
+	DueAt       *time.Time
 }
 
 // ErrBadSignature means a webhook failed authentication.

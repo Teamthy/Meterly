@@ -68,6 +68,17 @@ type settlement struct {
 	SettlementDate  time.Time
 }
 
+type dispute struct {
+	ID           int64
+	RefundAmount int64
+	Currency     string
+	Status       string
+	Resolution   string
+	Category     string
+	Reference    string
+	Evidence     bool
+}
+
 type Fake struct {
 	*httptest.Server
 	Secret string
@@ -78,6 +89,7 @@ type Fake struct {
 	auths       map[string]*CardAuth
 	refunds     []*refund
 	settlements []*settlement
+	disputes    []*dispute
 	// Fault injection: the next N requests to a path prefix get HTTP 500
 	// after the operation is applied ("lost response").
 	failAfterApply map[string]int
@@ -114,6 +126,14 @@ func (f *Fake) SeedSettlement(id int64, status string, total, fees, effective in
 	f.settlements = append(f.settlements, &settlement{
 		ID: id, Status: status, Currency: "NGN",
 		TotalAmount: total, TotalFees: fees, EffectiveAmount: effective, SettlementDate: at,
+	})
+}
+
+func (f *Fake) SeedDispute(id int64, ref, status string, amount int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disputes = append(f.disputes, &dispute{
+		ID: id, Reference: ref, Status: status, RefundAmount: amount, Currency: "NGN",
 	})
 }
 
@@ -310,6 +330,9 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/settlement" || strings.HasPrefix(r.URL.Path, "/settlement/") {
 		f.Requests[r.Method+" /settlement"]++
+	}
+	if r.URL.Path == "/dispute" {
+		f.Requests[r.Method+" /dispute"]++
 	}
 	lose := false
 	for p, n := range f.failAfterApply {
@@ -593,6 +616,81 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending", MerchantNote: body.MerchantNote, TxnRef: t.Reference}
 		f.refunds = append(f.refunds, rf)
 		reply(200, true, "Refund has been queued for processing", map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
+
+	case r.Method == "GET" && r.URL.Path == "/dispute":
+		out := []map[string]any{}
+		for _, d := range f.disputes {
+			out = append(out, map[string]any{
+				"id": d.ID, "refund_amount": d.RefundAmount, "currency": d.Currency,
+				"status": d.Status, "resolution": d.Resolution, "category": d.Category,
+				"transaction": map[string]any{"reference": d.Reference},
+			})
+		}
+		reply(200, true, "Disputes retrieved", out)
+
+	case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/dispute/") && !strings.Contains(r.URL.Path[len("/dispute/"):], "/"):
+		id, _ := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/dispute/"), 10, 64)
+		for _, d := range f.disputes {
+			if d.ID == id {
+				reply(200, true, "Dispute retrieved", map[string]any{
+					"id": d.ID, "refund_amount": d.RefundAmount, "currency": d.Currency,
+					"status": d.Status, "resolution": d.Resolution, "category": d.Category,
+					"transaction": map[string]any{"reference": d.Reference},
+				})
+				return
+			}
+		}
+		reply(404, false, "Dispute not found", nil)
+
+	case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/evidence") && strings.HasPrefix(r.URL.Path, "/dispute/"):
+		mid := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/dispute/"), "/evidence")
+		id, _ := strconv.ParseInt(mid, 10, 64)
+		var body struct {
+			CustomerEmail  string `json:"customer_email"`
+			CustomerName   string `json:"customer_name"`
+			CustomerPhone  string `json:"customer_phone"`
+			ServiceDetails string `json:"service_details"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if strings.TrimSpace(body.CustomerEmail) == "" || strings.TrimSpace(body.CustomerName) == "" ||
+			strings.TrimSpace(body.CustomerPhone) == "" || strings.TrimSpace(body.ServiceDetails) == "" {
+			reply(400, false, "customer_email, customer_name, customer_phone and service_details are required", nil)
+			return
+		}
+		for _, d := range f.disputes {
+			if d.ID == id {
+				d.Evidence = true
+				reply(200, true, "Evidence created", map[string]any{"id": d.ID})
+				return
+			}
+		}
+		reply(404, false, "Dispute not found", nil)
+
+	case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/resolve") && strings.HasPrefix(r.URL.Path, "/dispute/"):
+		mid := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/dispute/"), "/resolve")
+		id, _ := strconv.ParseInt(mid, 10, 64)
+		var body struct {
+			Resolution string `json:"resolution"`
+			Message    string `json:"message"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Resolution != "merchant-accepted" && body.Resolution != "declined" {
+			reply(400, false, "resolution must be merchant-accepted or declined", nil)
+			return
+		}
+		if strings.TrimSpace(body.Message) == "" {
+			reply(400, false, "message is required", nil)
+			return
+		}
+		for _, d := range f.disputes {
+			if d.ID == id {
+				d.Resolution = body.Resolution
+				d.Status = "resolved"
+				reply(200, true, "Dispute resolved", map[string]any{"id": d.ID, "status": d.Status, "resolution": d.Resolution})
+				return
+			}
+		}
+		reply(404, false, "Dispute not found", nil)
 
 	default:
 		write(w, 404, false, "Not found", nil)

@@ -16,6 +16,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/conversation"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/households"
@@ -30,6 +31,7 @@ import (
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
 	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -100,6 +102,8 @@ type Repos interface {
 	Readings() MeterReadingRepo
 	LowUnitAlerts() LowUnitAlertRepo
 	Reconcile() reconcile.Repo
+	Risk() risk.Repo
+	Disputes() disputes.Repo
 }
 
 // MeterReadingRepo stores observed remote kWh samples used to compute

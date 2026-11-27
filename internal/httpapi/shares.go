@@ -46,7 +46,7 @@ func (s *Server) recordTokenCopy(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	share, err := s.O.RecordTokenSend(r.Context(), userID(r), id, key, ch, body.Destination)
+	share, err := s.O.RecordTokenSend(r.Context(), userID(r), id, key, ch, body.Destination, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		s.mapErr(w, r, err)
 		return

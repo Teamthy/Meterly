@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/auth"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/idempotency"
 	"github.com/teamthy/meterly/internal/identity"
@@ -31,6 +32,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
 	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -622,7 +624,7 @@ func (s *Server) createTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	t, _, err := s.O.CreateTransaction(r.Context(), orchestrator.CreateRequest{
 		CustomerID: userID(r), QuoteID: req.QuoteID, Email: req.Email, IsGift: req.IsGift, RecipientName: req.RecipientName, RecipientPhone: req.RecipientPhone, NotifyRecipient: req.NotifyRecipient,
-		IdempotencyKey: key, RequestHash: requestHash,
+		IdempotencyKey: key, RequestHash: requestHash, IP: s.clientIP(r), UserAgent: r.UserAgent(),
 	})
 	if err != nil && t == nil {
 		s.mapErr(w, r, err)
@@ -754,7 +756,7 @@ func (s *Server) paymentWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(evt.Type, "charge.dispute") {
-		if err := s.O.HandleChargeDispute(r.Context(), evt.Reference); err != nil {
+		if err := s.O.HandlePaymentDispute(r.Context(), disputeNotice(evt)); err != nil {
 			s.Log.Warn("dispute webhook", "err", err)
 		}
 		writeJSON(w, 200, map[string]string{"status": "received"})
@@ -908,6 +910,8 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 422, "NAME_NOT_CONFIRMED", "confirm the disco account name before paying")
 	case errors.Is(err, orchestrator.ErrAccountSuspended):
 		writeErr(w, 403, "ACCOUNT_SUSPENDED", "purchases are paused on this account")
+	case errors.Is(err, orchestrator.ErrRiskDenied):
+		writeErr(w, 403, "FORBIDDEN", "this payment was declined")
 	case errors.Is(err, orchestrator.ErrVendingPaused):
 		writeErr(w, 503, "VENDING_PAUSED", "electricity vending is paused")
 	case errors.Is(err, meters.ErrNotFound):
@@ -983,6 +987,8 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, orchestrator.ErrProviderDisabled):
 		writeErr(w, 503, "PROVIDER_UNAVAILABLE", "provider temporarily disabled")
+	case errors.Is(err, risk.ErrNotFound), errors.Is(err, disputes.ErrNotFound):
+		writeErr(w, 404, "NOT_FOUND", "not found")
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, 404, "NOT_FOUND", "not found")
 	case errors.Is(err, tx.ErrNotFound):

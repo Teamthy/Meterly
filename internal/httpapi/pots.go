@@ -203,6 +203,8 @@ func (s *Server) contributeToPot(w http.ResponseWriter, r *http.Request) {
 		Phone:             req.Phone,
 		OptInSMS:          req.OptInSMS,
 		IdempotencyKey:    key,
+		IP:                s.clientIP(r),
+		UserAgent:         r.UserAgent(),
 	})
 	if err != nil {
 		s.mapPotErr(w, r, err)

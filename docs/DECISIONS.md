@@ -44,6 +44,28 @@ Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTp
 - **Corrections never post themselves.** An operator proposes an adjusting entry; a *different* admin approves it (`recon-adj:{id}`). Same person cannot approve. Resolve/write-off without an adjustment is notes-only (false positive), not a ledger change.
 - Settlement reference `psp-settle:{id}` and vend-wallet reference `vend-wallet:{txn}` are ledger-idempotent, so a retried failed run does not double-post.
 
+## Risk engine and chargebacks (P3)
+
+`FEATURE_RISK_ENGINE` defaults **on** in `MODE=dev` and `MODE=staging` (pilot), **off** in production until explicitly enabled. Evaluation is skipped when the flag is off; dispute ingestion still runs.
+
+- **Surfaces:** transaction create, Pay-for-Me public checkout, pot contribution, save-card, AutoPower rule create, third-party token send.
+- **Never deny after payment** on purchase / Pay-for-Me / pot: a post-capture DENY is coerced to REVIEW (`risk:<rule>`) so money is not stranded. Save-card / AutoPower / token-send may DENY (no new charge).
+- **Velocity** counts `checkout` observations under the user-row lock (or the public-link row lock). Concurrent checkouts cannot slip past the cap.
+- **Public-link card testing:** too many distinct `authorization.signature` values, or too many failed payments, pauses the link (`risk_link_pauses`) and DENYs further checkouts.
+- **Denylist** is admin-managed: card signature, email HMAC, phone HMAC, IP CIDR. Raw IPs are matched in memory and never stored.
+- **Decisions** (`risk_decisions`) store HMACs and metadata only. They appear on admin transaction detail.
+- **Dispute ledger** (finance default; revisit against the merchant contract):
+
+| Event | Debit | Credit | Ref |
+|---|---|---|---|
+| Open | `DISPUTE_LOSS` | `DISPUTE_RESERVE` | `dispute-open:{psp_id}` |
+| Win | `DISPUTE_RESERVE` | `DISPUTE_LOSS` | `dispute-win:{psp_id}` |
+| Loss / merchant-accepted | `DISPUTE_RESERVE` | `PSP_SETTLEMENT_RECEIVABLE` | `dispute-loss:{psp_id}` |
+
+  Open is a conservative P&L provision. Win reverses it. Loss keeps the expense and reduces the PSP receivable (Paystack will not settle the charge). Posts are ledger-idempotent. Evidence packs have receipt/vend/delivery timestamps and `token_issued` — never the STS token.
+- **Paystack APIs** used as documented: [Disputes API](https://paystack.com/docs/api/dispute/), [manage disputes](https://paystack.com/docs/payments/manage-disputes/), webhooks `charge.dispute.create|remind|resolve`.
+- Two lost/accepted disputes on one user feed the email/card denylist.
+
 ## Resume and reconciliation (M2)
 
 | Setting | Default | Why |
@@ -54,7 +76,7 @@ Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTp
 | `RESUME_MAX_ATTEMPTS` | 12 | Checks without progress before escalating to MANUAL_REVIEW (about 2.5 hours at the defaults). Unpaid transactions don't escalate; `PAYMENT_EXPIRY` bounds them. |
 | `RESUME_LEASE` | 2m | A claimed transaction is hidden from other workers for this long. |
 
-- **MANUAL_REVIEW is a `review_reason` on the transaction**, not another payment state. Setting it stops all automation. Current reasons: payment amount mismatch, payment arriving after expiry, the HES losing an accepted command, and reconciliation exhausted. M4 adds the operator API to resolve them.
+- **MANUAL_REVIEW is a `review_reason` on the transaction**, not another payment state. Setting it stops all automation. Current reasons: payment amount mismatch, payment arriving after expiry, the HES losing an accepted command, reconciliation exhausted, and `risk:<rule>` (P3). M4 adds the operator API to resolve them.
 - **The HES losing a credit command it had accepted goes to review, not a re-send.** Re-sending could double-credit if the original is still queued at the HES.
 - **`cmd/worker` refuses to run with mock providers.** Mocks keep their state in the process that called them, so a separate worker would see none of the API's simulated payments. In dev, the worker runs inside `cmd/api` (`RUN_WORKER=true`, the default). `cmd/worker` becomes usable once real adapters exist (M3).
 - **Outbox delivery is at-least-once.** Events are marked published in the same transaction that claimed them, after the sink accepts them. The sink currently logs metadata only; M5 notification consumers replace it and must dedupe on the event ID.

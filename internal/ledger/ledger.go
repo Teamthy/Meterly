@@ -29,6 +29,8 @@ const (
 	PSPFeesExpense          AccountCode = "PSP_FEES_EXPENSE"          // expense
 	VendorWalletPrefund     AccountCode = "VENDOR_WALLET_PREFUND"     // asset
 	VendorCommissionIncome  AccountCode = "VENDOR_COMMISSION_INCOME"  // income
+	DisputeReserve          AccountCode = "DISPUTE_RESERVE"           // liability
+	DisputeLoss             AccountCode = "DISPUTE_LOSS"              // expense
 )
 
 type Direction string

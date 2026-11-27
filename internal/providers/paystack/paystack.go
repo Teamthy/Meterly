@@ -2,10 +2,11 @@
 //
 //   - Initialize: POST /transaction/initialize (amount in kobo).
 //   - Verify:     GET  /transaction/verify/:reference, the source of truth.
-//   - List:       GET /transaction, GET /refund, GET /settlement
+//   - List:       GET /transaction, GET /refund, GET /settlement, GET /dispute
 //     (https://paystack.com/docs/api/transaction/#list,
 //     https://paystack.com/docs/api/refund/#list,
-//     https://paystack.com/docs/api/settlement/#list).
+//     https://paystack.com/docs/api/settlement/#list,
+//     https://paystack.com/docs/api/dispute/).
 //   - Refund:     POST /refund, made idempotent by first listing existing
 //     refunds for the transaction.
 //   - Webhooks:   HMAC-SHA512 of the raw body keyed with the secret key, in
@@ -404,6 +405,87 @@ type Settlement struct {
 	SettlementDate  time.Time
 }
 
+// Dispute is one row from GET /dispute.
+// Docs: https://paystack.com/docs/api/dispute/ and https://paystack.com/docs/payments/manage-disputes/
+type Dispute struct {
+	ID           int64
+	RefundAmount int64
+	Currency     string
+	Status       string
+	Resolution   string
+	Category     string
+	Reference    string
+	DueAt        *time.Time
+}
+
+func (c *Client) ListDisputes(ctx context.Context, from, to time.Time) ([]Dispute, error) {
+	var all []Dispute
+	err := c.listPages(ctx, "/dispute", from, to, func(raw json.RawMessage) error {
+		var rows []struct {
+			ID           int64  `json:"id"`
+			RefundAmount int64  `json:"refund_amount"`
+			Currency     string `json:"currency"`
+			Status       string `json:"status"`
+			Resolution   string `json:"resolution"`
+			Category     string `json:"category"`
+			Transaction  struct {
+				Reference string `json:"reference"`
+			} `json:"transaction"`
+		}
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			return fmt.Errorf("%w: paystack: dispute list", providers.ErrAmbiguous)
+		}
+		for _, d := range rows {
+			all = append(all, Dispute{
+				ID: d.ID, RefundAmount: d.RefundAmount, Currency: d.Currency,
+				Status: d.Status, Resolution: d.Resolution, Category: d.Category,
+				Reference: d.Transaction.Reference,
+			})
+		}
+		return nil
+	})
+	return all, err
+}
+
+func (c *Client) FetchDispute(ctx context.Context, id int64) (Dispute, error) {
+	var row struct {
+		ID           int64  `json:"id"`
+		RefundAmount int64  `json:"refund_amount"`
+		Currency     string `json:"currency"`
+		Status       string `json:"status"`
+		Resolution   string `json:"resolution"`
+		Category     string `json:"category"`
+		Transaction  struct {
+			Reference string `json:"reference"`
+		} `json:"transaction"`
+	}
+	if err := c.call(ctx, http.MethodGet, "/dispute/"+strconv.FormatInt(id, 10), nil, &row); err != nil {
+		return Dispute{}, err
+	}
+	return Dispute{
+		ID: row.ID, RefundAmount: row.RefundAmount, Currency: row.Currency,
+		Status: row.Status, Resolution: row.Resolution, Category: row.Category,
+		Reference: row.Transaction.Reference,
+	}, nil
+}
+
+func (c *Client) AddEvidence(ctx context.Context, id int64, customerEmail, customerName, customerPhone, serviceDetails string) error {
+	return c.call(ctx, http.MethodPost, "/dispute/"+strconv.FormatInt(id, 10)+"/evidence", map[string]any{
+		"customer_email":  customerEmail,
+		"customer_name":   customerName,
+		"customer_phone":  customerPhone,
+		"service_details": serviceDetails,
+	}, nil)
+}
+
+func (c *Client) ResolveDispute(ctx context.Context, id int64, resolution, message string, refundAmount int64) error {
+	return c.call(ctx, http.MethodPut, "/dispute/"+strconv.FormatInt(id, 10)+"/resolve", map[string]any{
+		"resolution":    resolution,
+		"message":       message,
+		"refund_amount": refundAmount,
+	}, nil)
+}
+
 // africaLagos is WAT (UTC+1, no DST) so list windows match the recon business date.
 var africaLagos = time.FixedZone("WAT", 3600)
 
@@ -516,9 +598,18 @@ func (c *Client) ParseWebhook(h http.Header, body []byte) (providers.WebhookEven
 	var evt struct {
 		Event string `json:"event"`
 		Data  struct {
-			Reference   string `json:"reference"`
-			Transaction struct {
+			ID           int64  `json:"id"`
+			RefundAmount int64  `json:"refund_amount"`
+			Currency     string `json:"currency"`
+			Status       string `json:"status"`
+			Resolution   string `json:"resolution"`
+			Category     string `json:"category"`
+			DueAt        string `json:"dueAt"`
+			Reference    string `json:"reference"`
+			Transaction  struct {
 				Reference string `json:"reference"`
+				Amount    int64  `json:"amount"`
+				Currency  string `json:"currency"`
 			} `json:"transaction"`
 		} `json:"data"`
 	}
@@ -537,7 +628,29 @@ func (c *Client) ParseWebhook(h http.Header, body []byte) (providers.WebhookEven
 		return providers.WebhookEvent{Type: evt.Event, Reference: ref, Relevant: true}, nil
 	case strings.HasPrefix(evt.Event, "charge.dispute"):
 		// Pause the buyer. Never treat this as a payment success.
-		return providers.WebhookEvent{Type: evt.Event, Reference: ref, Relevant: true}, nil
+		amt := evt.Data.RefundAmount
+		if amt <= 0 {
+			amt = evt.Data.Transaction.Amount
+		}
+		cur := evt.Data.Currency
+		if cur == "" {
+			cur = evt.Data.Transaction.Currency
+		}
+		out := providers.WebhookEvent{
+			Type: evt.Event, Reference: ref, Relevant: true,
+			AmountMinor: amt, Currency: cur,
+			Status: evt.Data.Status, Resolution: evt.Data.Resolution, Category: evt.Data.Category,
+		}
+		if evt.Data.ID != 0 {
+			out.DisputeID = strconv.FormatInt(evt.Data.ID, 10)
+		}
+		if evt.Data.DueAt != "" {
+			if ts, err := time.Parse(time.RFC3339, evt.Data.DueAt); err == nil {
+				t := ts.UTC()
+				out.DueAt = &t
+			}
+		}
+		return out, nil
 	default:
 		// refund.*, transfer.*, subscription.* and so on: acknowledged, ignored.
 		return providers.WebhookEvent{Type: evt.Event}, nil

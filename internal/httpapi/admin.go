@@ -37,6 +37,7 @@ func (s *Server) adminRoutes(mux *patternMux) {
 	mux.Handle("DELETE /v1/admin/remote-credit/cohorts/{id}", admin(s.adminRevokeRemoteCohort))
 	s.adminSupportRoutes(mux)
 	s.adminReconcileRoutes(mux)
+	s.adminRiskRoutes(mux)
 }
 
 // actor builds the audit actor from the caller and a {"reason": "..."} body.
@@ -159,12 +160,13 @@ func (s *Server) adminDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"transaction":   adminView(d.Transaction),
-		"ledger":        d.Ledger,
-		"events":        d.Events,
-		"audit":         d.Audit,
-		"notifications": d.Notifications,
-		"investigation": orchestrator.InvestigationFrom(d, callerOf(r).Principal.Has(auth.RoleAdmin)),
+		"transaction":    adminView(d.Transaction),
+		"ledger":         d.Ledger,
+		"events":         d.Events,
+		"audit":          d.Audit,
+		"notifications":  d.Notifications,
+		"risk_decisions": d.RiskDecisions,
+		"investigation":  orchestrator.InvestigationFrom(d, callerOf(r).Principal.Has(auth.RoleAdmin)),
 	})
 }
 

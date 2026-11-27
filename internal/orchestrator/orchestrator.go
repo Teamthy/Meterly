@@ -33,6 +33,7 @@ import (
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/registry"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
@@ -102,6 +103,7 @@ var (
 	ErrInFlight          = errors.New("a purchase for this meter is already in progress")
 	ErrNameNotConfirmed  = errors.New("confirm the disco account name before paying")
 	ErrAccountSuspended  = errors.New("purchases are paused on this account")
+	ErrRiskDenied        = risk.ErrDenied
 	ErrVendingPaused     = errors.New("electricity vending is paused")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
@@ -118,16 +120,17 @@ var (
 var errSkip = errors.New("skip")
 
 type Orchestrator struct {
-	cfg            Config
-	st             store.Store
-	Meters         *registry.Registry
-	box            *secure.Box
-	payments       providers.PaymentProvider
-	vending        providers.VendingProvider
-	remote         providers.RemoteCreditProvider // nil if no AMI/HES integration
-	readings       providers.MeterReadingProvider // nil if no remote balance reading
-	notifProviders []string
-	featureGiftSMS bool
+	cfg               Config
+	st                store.Store
+	Meters            *registry.Registry
+	box               *secure.Box
+	payments          providers.PaymentProvider
+	vending           providers.VendingProvider
+	remote            providers.RemoteCreditProvider // nil if no AMI/HES integration
+	readings          providers.MeterReadingProvider // nil if no remote balance reading
+	notifProviders    []string
+	featureGiftSMS    bool
+	featureRiskEngine bool
 	// ownershipNameMatch enables self-service ownership verification by
 	// display-name match. Off by default: see households.ErrSelfVerificationDisabled.
 	ownershipNameMatch bool
@@ -274,6 +277,9 @@ type CreateRequest struct {
 	// the reservation, the transaction and the completion commit together.
 	IdempotencyKey string
 	RequestHash    string
+	// IP and UserAgent are hashed into risk observations; never logged.
+	IP        string
+	UserAgent string
 }
 
 const opCreateTransaction = "create_transaction"
@@ -334,6 +340,15 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		if err := o.ensureNoInFlight(ctx, r, req.CustomerID, q.MeterID); err != nil {
 			return err
 		}
+		d, err := o.evaluateRisk(ctx, r, risk.Request{
+			Surface: risk.SurfacePurchase, UserID: req.CustomerID, MeterID: q.MeterID,
+			AmountMinor: q.Total.Minor, EmailHMAC: o.riskHash("email", req.Email),
+			IPHMAC: o.riskHash("ip", req.IP), DeviceHMAC: o.riskHash("device", req.UserAgent),
+			IP: req.IP,
+		})
+		if err != nil {
+			return err
+		}
 		if err := r.Quotes().MarkUsed(ctx, q.ID); err != nil {
 			if errors.Is(err, store.ErrConflict) {
 				return ErrQuoteExpired
@@ -343,6 +358,11 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		t = tx.New(req.CustomerID, q, req.IsGift, req.RecipientName, now)
 		if err := r.Transactions().Create(ctx, t); err != nil {
 			return err
+		}
+		if d.ID != uuid.Nil {
+			if err := r.Risk().BindDecisionTxn(ctx, d.ID, t.ID); err != nil && !errors.Is(err, risk.ErrNotFound) {
+				return err
+			}
 		}
 		if req.IsGift {
 			g := gifts.Gift{TransactionID: t.ID, PurchaserID: req.CustomerID, RecipientName: req.RecipientName, NotificationRequested: req.NotifyRecipient, CreatedAt: now}
@@ -471,6 +491,10 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
 				return err
 			}
+			o.recordRiskFailure(ctx, r, risk.Request{
+				Surface: risk.SurfacePurchase, UserID: t.CustomerID, MeterID: t.MeterID,
+				TransactionID: t.ID, AmountMinor: t.Total.Minor, LinkID: o.payRequestID(ctx, r, t.ID),
+			})
 			return emit(ctx, r, "payment.failed", t.ID, map[string]any{"reason": "expired"})
 		case providers.PaymentFailed:
 			if err := t.SetPayment(tx.PayFailed, "provider reports failure"); err != nil {
@@ -479,6 +503,10 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 			if err := o.releasePayRequestSlotInTx(ctx, r, t.ID, now); err != nil {
 				return err
 			}
+			o.recordRiskFailure(ctx, r, risk.Request{
+				Surface: risk.SurfacePurchase, UserID: t.CustomerID, MeterID: t.MeterID,
+				TransactionID: t.ID, AmountMinor: t.Total.Minor, LinkID: o.payRequestID(ctx, r, t.ID),
+			})
 			return emit(ctx, r, "payment.failed", t.ID, nil)
 		case providers.PaymentSucceeded:
 			if v.Amount != t.Total {
@@ -495,6 +523,25 @@ func (o *Orchestrator) checkPayment(ctx context.Context, t *tx.Transaction) (*tx
 				ledger.Entry{Account: ledger.CustomerFundsClearing, Direction: ledger.Credit, Amount: t.Total},
 			); err != nil {
 				return err
+			}
+			var card string
+			if v.Authorization != nil {
+				card = v.Authorization.Signature
+			}
+			post := risk.Request{
+				Surface: risk.SurfacePurchase, UserID: t.CustomerID, MeterID: t.MeterID,
+				TransactionID: t.ID, AmountMinor: t.Total.Minor, Paid: true, CardSignature: card,
+				LinkID: o.payRequestID(ctx, r, t.ID),
+			}
+			d, rerr := o.evaluateRisk(ctx, r, post)
+			if rerr != nil && !errors.Is(rerr, risk.ErrDenied) {
+				return rerr
+			}
+			o.applyReview(t, d)
+			if decs, lerr := r.Risk().ListDecisionsByTxn(ctx, t.ID); lerr == nil {
+				for _, prev := range decs {
+					o.applyReview(t, prev)
+				}
 			}
 			return emit(ctx, r, "payment.confirmed", t.ID, nil)
 		}

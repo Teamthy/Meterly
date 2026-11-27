@@ -15,6 +15,7 @@ import (
 	"github.com/teamthy/meterly/internal/audit"
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/conversation"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/gifts"
 	"github.com/teamthy/meterly/internal/households"
@@ -29,6 +30,7 @@ import (
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
 	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/support"
@@ -115,10 +117,17 @@ type Store struct {
 	reconEx           map[uuid.UUID]*reconcile.Exception
 	reconExFP         map[string]uuid.UUID
 	reconAdj          map[uuid.UUID]*reconcile.Adjustment
+	riskRules         map[string]*risk.Rule
+	riskObs           []risk.Observation
+	riskDec           map[uuid.UUID]*risk.Decision
+	riskDeny          map[uuid.UUID]*risk.DenyEntry
+	riskPauses        map[uuid.UUID]risk.LinkPause
+	disputes          map[uuid.UUID]*disputes.Dispute
+	disputesByPSP     map[string]uuid.UUID
 }
 
 func New() *Store {
-	return &Store{
+	s := &Store{
 		users: map[string]string{}, userIDs: map[string]bool{}, userExt: map[string]string{},
 		userStatus:   map[string]string{},
 		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
@@ -130,6 +139,12 @@ func New() *Store {
 		reconEx:        map[uuid.UUID]*reconcile.Exception{},
 		reconExFP:      map[string]uuid.UUID{},
 		reconAdj:       map[uuid.UUID]*reconcile.Adjustment{},
+		riskRules:      map[string]*risk.Rule{},
+		riskDec:        map[uuid.UUID]*risk.Decision{},
+		riskDeny:       map[uuid.UUID]*risk.DenyEntry{},
+		riskPauses:     map[uuid.UUID]risk.LinkPause{},
+		disputes:       map[uuid.UUID]*disputes.Dispute{},
+		disputesByPSP:  map[string]uuid.UUID{},
 		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
@@ -177,6 +192,12 @@ func New() *Store {
 		ownership:         map[string]households.Ownership{},
 		remoteCohorts:     map[uuid.UUID]meters.RemoteCohort{},
 	}
+	for _, rule := range risk.DefaultRules() {
+		r := rule
+		r.UpdatedAt = time.Now().UTC()
+		s.riskRules[r.Code] = &r
+	}
+	return s
 }
 
 func (s *Store) Close() {}
@@ -272,6 +293,8 @@ func (r *repos) Auth() store.AuthRepo                                    { retur
 func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
 func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
 func (r *repos) Reconcile() reconcile.Repo                               { return reconRepo{r} }
+func (r *repos) Risk() risk.Repo                                         { return riskRepo{r} }
+func (r *repos) Disputes() disputes.Repo                                 { return disputeRepo{r} }
 
 // ---- users -------------------------------------------------------------------
 

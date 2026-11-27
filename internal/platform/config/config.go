@@ -116,6 +116,9 @@ type Config struct {
 	FeatureSupport bool
 	// Households: verified ownership + membership (FR-008).
 	FeatureHouseholds bool
+	// FeatureRiskEngine gates the P3 abuse-control engine (DENY/REVIEW).
+	// Defaults on in MODE=dev and MODE=staging (pilot); off in production.
+	FeatureRiskEngine bool
 	// FeatureOwnershipNameMatch enables self-service meter ownership by
 	// display-name match. Spoofable (display names are user-editable and
 	// meter validation reveals the DisCo name): dev only by default.
@@ -391,6 +394,16 @@ func Load(getenv func(string) string) (Config, error) {
 		c.FeatureHouseholds = false
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_HOUSEHOLDS: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_RISK_ENGINE"))) {
+	case "":
+		c.FeatureRiskEngine = c.Mode == Dev || c.Mode == Staging
+	case "true", "1":
+		c.FeatureRiskEngine = true
+	case "false", "0":
+		c.FeatureRiskEngine = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_RISK_ENGINE: must be true or false"))
 	}
 
 	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)

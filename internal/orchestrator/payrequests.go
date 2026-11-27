@@ -16,6 +16,7 @@ import (
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/receipts"
 	"github.com/teamthy/meterly/internal/registry"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -98,6 +99,8 @@ type PublicCheckoutRequest struct {
 	Email          string // sensitive; never logged or stored in plaintext
 	PayerName      string // optional; never logged or stored in plaintext
 	IdempotencyKey string
+	IP             string
+	UserAgent      string
 }
 
 // PublicCheckoutResult returns the transaction checkout and guest status code.
@@ -454,6 +457,17 @@ func (o *Orchestrator) CheckoutPublicPayLink(ctx context.Context, req PublicChec
 			return fmt.Errorf("%w: %d–%d kobo", ErrAmountOutOfRange, o.cfg.MinAmountMinor, o.cfg.MaxAmountMinor)
 		}
 
+		totalMinor := chosenMinor + o.cfg.FeeMinor
+		d, err := o.evaluateRisk(ctx, r, risk.Request{
+			Surface: risk.SurfacePayForMe, UserID: pr.RequesterID, MeterID: pr.MeterID, LinkID: pr.ID,
+			AmountMinor: totalMinor, EmailHMAC: o.riskHash("email", normEmail),
+			IPHMAC: o.riskHash("ip", req.IP), DeviceHMAC: o.riskHash("device", req.UserAgent),
+			IP: req.IP,
+		})
+		if err != nil {
+			return err
+		}
+
 		options := []tx.DeliveryMethod{tx.MethodToken}
 		method := tx.MethodToken
 		if o.remote != nil && m.Capabilities.RemoteCreditUsable() {
@@ -484,6 +498,11 @@ func (o *Orchestrator) CheckoutPublicPayLink(ctx context.Context, req PublicChec
 		t = tx.New(pr.RequesterID, q, false, "", now)
 		if err := r.Transactions().Create(ctx, t); err != nil {
 			return err
+		}
+		if d.ID != uuid.Nil {
+			if err := r.Risk().BindDecisionTxn(ctx, d.ID, t.ID); err != nil && !errors.Is(err, risk.ErrNotFound) {
+				return err
+			}
 		}
 
 		statusCode, err = payrequests.GenerateCode()

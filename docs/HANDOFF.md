@@ -22,6 +22,7 @@
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
 | 6 | Legal sign-off before prod flags | Legal | `docs/LEGAL.md` — NDPA / NCC / CBN / NERC / LASERC |
 | 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
+| 8 | P3 risk engine + chargebacks | Eng | **In code** on this branch (migration `0023`, unapplied hosted) |
 
 ---
 
@@ -48,7 +49,9 @@ OPay airtime works because every phone has a **network account** the telco can c
 | Security engine | ✅ `main` (PR #22) | `internal/security`, `/security` |
 | VTpass / Paystack adapters | ✅ code, **not certified** (no keys) | `internal/providers/*`, `internal/certify` |
 | Households, token send, support E2E, Power Desk, USSD, pots | ✅ code, flags mostly off outside dev | feature flags §7 |
-| Hosted API (Render) + migrations `0018`–`0021` | ⏳ | `docs/DEPLOY.md` |
+| P2 daily settlement recon | ✅ code (PR #24) | `internal/reconcile`, `0022` **unapplied hosted** |
+| P3 risk engine + chargebacks | ✅ code | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
+| Hosted API (Render) + migrations `0018`–`0023` | ⏳ | `docs/DEPLOY.md` |
 
 **Git:** `origin/main` @ `9cac48b` (merge #23) is merged into this branch. Review-fix content from `b573cff` is `b6c4f7d` here. PR #24. CI `test` went red at `cfeaca2` because `IssueQuote` re-verifies the meter: `TestObservabilityMetricsAndOTLPTracing` (Postgres-only) still expected `validate_meter` count 1. That assertion is now 2. P1 is **not live-certified**.
 
@@ -71,7 +74,7 @@ internal/store          InTx unit of work (memstore / pgstore)
 internal/providers      payment, vending, remote-credit — kept separate
 internal/httpapi        /v1 + admin + public pay/pots + /v1/security
 web/                    Next.js 15 (root directory on Vercel)
-migrations/             0001 … 0021_security.sql
+migrations/             0001 … 0023_risk.sql
 ```
 
 Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
@@ -146,6 +149,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | `FEATURE_POWER_DESK` | false | legal |
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
 | `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
+| `FEATURE_RISK_ENGINE` | on in dev + staging | DENY/REVIEW; disputes always ingest |
 | `FEATURE_OWNERSHIP_NAME_MATCH` | false | self-service ownership by display-name match is spoofable; operators attest via `/v1/admin/meters/{id}/ownership` |
 
 ---
@@ -162,7 +166,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
   - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
   - ownership name match is off outside dev.
 
-- Migrations are **immutable** once applied. Add `0022_*.sql`, never edit applied files.
+- Migrations are **immutable** once applied. Add `0024_*.sql`, never edit applied files. Hosted `0022`/`0023` are still unapplied; do not run them from this sandbox.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
 - Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
 - `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
@@ -274,6 +278,8 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
+- **2026-11-27: P3 risk controls and chargebacks.** `internal/risk` + `internal/disputes` + migration `0023`. DENY never charges; REVIEW never vends; dispute open/win/loss postings balance. Paystack `GET /dispute` and `charge.dispute.*` payload fields. `FEATURE_RISK_ENGINE` on in dev/staging. Unverified: live Paystack dispute webhooks; hosted `0023`. Do not apply hosted migrations from this sandbox. Next is P4 (pilot ops).
+- **2026-11-27: P2 daily settlement recon landed** (`3797530`). Engine `RunDay`/`CatchUp`, admin exceptions, `0022` unapplied hosted.
 - **2026-11-27: CI Postgres failure from quote re-verify.** `TestObservabilityMetricsAndOTLPTracing` expected one `mockvend.validate_meter`; register + quote is two. Actions logs are not readable from this sandbox (`results-receiver.githubusercontent.com`). Unverified: CI green after the assertion change; P2 settlement not started.
 - **2026-11-27: P1 certify harness.** `internal/certify` + `cmd/certify`. Untagged tests run the scenarios against in-repo fakes (pass). `go test -tags certify` and `cmd/certify` skip every provider here (no keys) and write a 30-scenario skipped report. Paystack fake gained documented `/charge`; VTpass fake rejects non-dates as `085`. Unverified: every live sandbox. Next is P2 settlement/reconciliation (`0022`).
 - **2026-11-27: review fixes of PRs #5–#23 landed here.** Guest-payer cards cannot be saved; session IP binds once; passkey UV + step-up to add; attested key preferred; prepaid vend needs an STS token; VTpass `083` is pending; AutoPower Paystack refs use `apchg-`; ownership name-match is flagged off outside dev. `origin/main` (`9cac48b`) merged.
