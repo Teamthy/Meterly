@@ -27,7 +27,8 @@ SELECT t.id, t.customer_id::text, t.meter_id, t.quote_id, t.is_gift, coalesce(g.
        coalesce(dp.name, ''), coalesce(d.provider_reference, ''),
        coalesce(t.failure_code, ''), coalesce(NULLIF(rf.reason, ''), t.refund_reason, ''),
        coalesce(rf.provider_reference, ''), CASE WHEN coalesce(rf.amount_minor, 0) > 0 THEN rf.amount_minor ELSE t.refund_amount_minor END,
-       t.review_reason, t.check_attempts, t.next_check_at, t.version, t.created_at, t.updated_at
+       t.review_reason, t.check_attempts, t.next_check_at, t.version, t.created_at, t.updated_at,
+       t.partner_id, coalesce(t.partner_ref, '')
 FROM electricity_transactions t
 LEFT JOIN gift_transactions g ON g.transaction_id = t.id
 LEFT JOIN payments p          ON p.transaction_id = t.id
@@ -42,6 +43,7 @@ LEFT JOIN refunds rf          ON rf.transaction_id = t.id
 func (r txnRepo) load(ctx context.Context, where string, arg any) (*tx.Transaction, error) {
 	var t tx.Transaction
 	var cur, fundingSrc string
+	var partnerID *uuid.UUID
 	err := r.db.QueryRow(ctx, txnSelect+where, arg).Scan(
 		&t.ID, &t.CustomerID, &t.MeterID, &t.QuoteID, &t.IsGift, &t.RecipientName,
 		&t.Amount.Minor, &t.Fee.Minor, &t.Total.Minor, &cur, &fundingSrc,
@@ -51,12 +53,16 @@ func (r txnRepo) load(ctx context.Context, where string, arg any) (*tx.Transacti
 		&t.TokenKeyVersion, &t.UnitsKWh,
 		&t.DeliveryProviderName, &t.DeliveryProviderRef,
 		&t.FailureCode, &t.RefundReason, &t.RefundProviderRef, &t.RefundAmount.Minor,
-		&t.ReviewReason, &t.CheckAttempts, &t.NextCheckAt, &t.Version, &t.CreatedAt, &t.UpdatedAt)
+		&t.ReviewReason, &t.CheckAttempts, &t.NextCheckAt, &t.Version, &t.CreatedAt, &t.UpdatedAt,
+		&partnerID, &t.PartnerRef)
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	c := money.Currency(cur)
 	t.FundingSource = tx.FundingSource(fundingSrc)
+	if partnerID != nil {
+		t.PartnerID = *partnerID
+	}
 	t.Amount.Currency, t.Fee.Currency, t.Total.Currency, t.RefundAmount.Currency = c, c, c, c
 	t.NextCheckAt, t.CreatedAt, t.UpdatedAt = t.NextCheckAt.UTC(), t.CreatedAt.UTC(), t.UpdatedAt.UTC()
 
@@ -93,6 +99,22 @@ func (r txnRepo) ByPaymentRef(ctx context.Context, ref string) (*tx.Transaction,
 	return r.load(ctx, `WHERE p.provider_reference = $1`, ref)
 }
 
+func (r txnRepo) GetByPartnerRef(ctx context.Context, partnerID uuid.UUID, partnerRef string) (*tx.Transaction, error) {
+	var id uuid.UUID
+	err := r.db.QueryRow(ctx, `SELECT id FROM electricity_transactions WHERE partner_id = $1 AND partner_ref = $2`, partnerID, partnerRef).Scan(&id)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return r.Get(ctx, id)
+}
+
+func nilUUID(id uuid.UUID) any {
+	if id == uuid.Nil {
+		return nil
+	}
+	return id
+}
+
 func (r txnRepo) Create(ctx context.Context, t *tx.Transaction) error {
 	return r.atomic(ctx, func(db DB) error {
 		src := string(t.EffectiveFundingSource())
@@ -100,12 +122,14 @@ func (r txnRepo) Create(ctx context.Context, t *tx.Transaction) error {
 			INSERT INTO electricity_transactions (id, customer_id, meter_id, quote_id, amount_minor, fee_minor, total_minor,
 			    currency, funding_source, refund_reason, refund_amount_minor,
 			    payment_status, vending_status, delivery_status, delivery_method, is_gift, failure_code,
-			    review_reason, check_attempts, next_check_at, version, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NULLIF($17, ''), $18, $19, $20, 1, $21, $22)`,
+			    review_reason, check_attempts, next_check_at, version, created_at, updated_at,
+			    partner_id, partner_ref)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NULLIF($17, ''), $18, $19, $20, 1, $21, $22, $23, $24)`,
 			t.ID, t.CustomerID, t.MeterID, t.QuoteID, t.Amount.Minor, t.Fee.Minor, t.Total.Minor,
 			string(t.Total.Currency), src, t.RefundReason, t.RefundAmount.Minor,
 			t.Payment, t.Vending, t.Delivery, t.DeliveryMethod, t.IsGift, t.FailureCode,
-			t.ReviewReason, t.CheckAttempts, t.NextCheckAt, t.CreatedAt, t.UpdatedAt)
+			t.ReviewReason, t.CheckAttempts, t.NextCheckAt, t.CreatedAt, t.UpdatedAt,
+			nilUUID(t.PartnerID), t.PartnerRef)
 		if err != nil {
 			return mapErr(err)
 		}

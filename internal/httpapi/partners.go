@@ -25,6 +25,12 @@ func (s *Server) requirePartnerAPI(w http.ResponseWriter) bool {
 func (s *Server) partnerRoutes(mux *patternMux) {
 	me := s.partnerAuthed("")
 	mux.Handle("GET /v1/partner/me", me(s.partnerMe))
+	mux.Handle("POST /v1/partner/meters/validate", s.partnerAuthed(partners.ScopeMetersValidate)(s.validateMeter))
+	mux.Handle("POST /v1/partner/quotes", s.partnerAuthed(partners.ScopeQuotesCreate)(s.partnerCreateQuote))
+	mux.Handle("POST /v1/partner/purchases", s.partnerAuthed(partners.ScopePurchasesCreate)(s.partnerCreatePurchase))
+	mux.Handle("GET /v1/partner/purchases/{id}", s.partnerAuthed(partners.ScopePurchasesRead)(s.partnerGetPurchase))
+	mux.Handle("GET /v1/partner/purchases", s.partnerAuthed(partners.ScopePurchasesRead)(s.partnerLookupPurchase))
+	mux.Handle("GET /v1/partner/float", s.partnerAuthed(partners.ScopeFloatRead)(s.partnerGetFloat))
 }
 
 func (s *Server) adminPartnerRoutes(mux *patternMux) {
@@ -39,6 +45,10 @@ func (s *Server) adminPartnerRoutes(mux *patternMux) {
 	mux.Handle("POST /v1/admin/partners/{id}/keys/{key_id}/rotate", op(s.adminRotatePartnerKey))
 	mux.Handle("POST /v1/admin/partners/{id}/keys/{key_id}/revoke", op(s.adminRevokePartnerKey))
 	mux.Handle("GET /v1/admin/partners/{id}/usage", op(s.adminPartnerUsage))
+	mux.Handle("GET /v1/admin/partners/{id}/float", op(s.adminGetPartnerFloat))
+	mux.Handle("POST /v1/admin/partners/{id}/float/topups", op(s.adminProposePartnerFloatTopup))
+	mux.Handle("POST /v1/admin/partners/{id}/float/topups/{topup_id}/approve", op(s.adminApprovePartnerFloatTopup))
+	mux.Handle("POST /v1/admin/partners/{id}/float/topups/{topup_id}/reject", op(s.adminRejectPartnerFloatTopup))
 }
 
 func (s *Server) partnerAuthed(scope string) func(http.HandlerFunc) http.Handler {

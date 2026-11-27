@@ -21,8 +21,9 @@ type FundingSource string
 type Overall string
 
 const (
-	FundingPSP FundingSource = "PSP"
-	FundingPot FundingSource = "POT"
+	FundingPSP          FundingSource = "PSP"
+	FundingPot          FundingSource = "POT"
+	FundingPartnerFloat FundingSource = "PARTNER_FLOAT"
 
 	PayCreated       PaymentState = "CREATED"
 	PayPending       PaymentState = "PENDING"
@@ -117,6 +118,8 @@ type Transaction struct {
 	Fee            money.Amount   `json:"fee"`
 	Total          money.Amount   `json:"total"`
 	FundingSource  FundingSource  `json:"funding_source,omitempty"`
+	PartnerID      uuid.UUID      `json:"partner_id,omitempty"`
+	PartnerRef     string         `json:"partner_ref,omitempty"`
 	Payment        PaymentState   `json:"payment_status"`
 	Vending        VendingState   `json:"vending_status"`
 	Delivery       DeliveryState  `json:"delivery_status"`
@@ -179,6 +182,23 @@ func NewPotFunded(customerID string, q *Quote, now time.Time) *Transaction {
 		Payment:       PayConfirmed, Vending: VendNotStarted, Delivery: DelNotStarted, DeliveryMethod: q.DeliveryMethod,
 		History: []Event{{
 			At: now.UTC(), Dimension: "payment", From: "", To: string(PayConfirmed), Note: "funded from pot allocation",
+		}},
+		NextCheckAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+// NewPartnerFloatFunded returns a partner-float-funded transaction whose
+// payment is already CONFIRMED inside the surrounding purchase DB
+// transaction. It carries no PSP reference; a vend-failure refund returns
+// money to PARTNER_FLOAT.
+func NewPartnerFloatFunded(customerID string, q *Quote, partnerID uuid.UUID, partnerRef string, now time.Time) *Transaction {
+	return &Transaction{
+		ID: uuid.New(), CustomerID: customerID, MeterID: q.MeterID, QuoteID: q.ID,
+		Amount: q.Amount, Fee: q.Fee, Total: q.Total,
+		FundingSource: FundingPartnerFloat, PartnerID: partnerID, PartnerRef: partnerRef,
+		Payment: PayConfirmed, Vending: VendNotStarted, Delivery: DelNotStarted, DeliveryMethod: q.DeliveryMethod,
+		History: []Event{{
+			At: now.UTC(), Dimension: "payment", From: "", To: string(PayConfirmed), Note: "funded from partner float",
 		}},
 		NextCheckAt: now, CreatedAt: now, UpdatedAt: now,
 	}
@@ -292,6 +312,7 @@ func (t *Transaction) FlagForReview(reason string) {
 type Quote struct {
 	ID              uuid.UUID        `json:"quote_id"`
 	CustomerID      string           `json:"-"`
+	PartnerID       uuid.UUID        `json:"-"`
 	MeterID         uuid.UUID        `json:"meter_id"`
 	Amount          money.Amount     `json:"amount"`
 	Fee             money.Amount     `json:"fee"`

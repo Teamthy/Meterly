@@ -518,9 +518,31 @@ None yet — no founder sandbox keys in this environment. Every provider is **no
 - **HMAC-SHA256, not Argon2id.** Partner secrets are 32 cryptographically random bytes (`mtr_test_` / `mtr_live_` + base64url). Lookup is by a short prefix; verification is `Box.Hash("partner-key:"+secret)` with constant-time compare — the same construction as `mls_` sessions. Argon2id would add per-request latency without helping high-entropy keys.
 - **Plaintext is shown once** on issue/rotate and is never a column, log field or audit metadata. List/get return prefix, scopes and timestamps only.
 - **Sandbox create is ACTIVE** (one operator). **Production create is PENDING**; activation is two-person (proposer cannot approve), matching reconciliation adjustments.
-- **Keys work only while the partner is ACTIVE** and the key environment matches both the partner and `PROVIDER_ENVIRONMENT`. Suspended partners fail at once. Daily value cap is stored (`daily_value_cap_minor`) and **not enforced until B5**.
+- **Keys work only while the partner is ACTIVE** and the key environment matches both the partner and `PROVIDER_ENVIRONMENT`. Suspended partners fail at once. Daily value cap is stored (`daily_value_cap_minor`) and **enforced in B5** (0 = unlimited).
 - **`FEATURE_PARTNER_API`** defaults on in `MODE=dev`, off otherwise. Disabled routes are `404 FEATURE_DISABLED`.
 - **B5** mounts `/v1/partner/meters|quotes|purchases|float`. B4 exposes `GET /v1/partner/me` plus the admin surface, and keeps the scope catalogue in `partners.RouteCatalog()` so the matrix exists now.
+
+## Partner float and purchase API (B5)
+
+**Founder default: prefunded.** Partners buy only against float they have already lodged. There is no postpaid / invoice path in this batch.
+
+**Holding partner float is a regulatory question.** CBN/NCC review of whether Meterly may hold partner prefunding is not signed off. Until it is:
+
+- **`FEATURE_PARTNER_FLOAT`** defaults on in `MODE=dev`, **off otherwise**. When off, top-up and purchase routes return `404 FEATURE_DISABLED`; validate/quote still work so integrations can be built.
+- Books use a single CoA liability `PARTNER_FLOAT` plus a per-partner subledger (`partner_float.available_minor`). The global account is not a per-partner balance.
+
+| Event | Debit | Credit |
+|---|---|---|
+| Top-up (approved bank receipt) | `CASH_AT_BANK` | `PARTNER_FLOAT` |
+| Quote accepted / purchase created | `PARTNER_FLOAT` | `CUSTOMER_FUNDS_CLEARING` |
+| Vend confirmed | `CUSTOMER_FUNDS_CLEARING` | `PROVIDER_PAYABLE` (+ `PLATFORM_FEE_REVENUE` if fee > 0) |
+| Definitive vend-failure refund | `CUSTOMER_FUNDS_CLEARING` | `PARTNER_FLOAT` |
+
+- **Top-up** is two-person even in sandbox: an operator proposes against a bank `receipt_ref` (unique, idempotent); a *different* operator approves. Same person cannot approve. Ledger reference is `partner-float-topup:` + hex(sha256(receipt)[:16]).
+- **`FundingSource=PARTNER_FLOAT`**. Payment is `CONFIRMED` inside the purchase `InTx` (no PSP). Refunds branch like POT: reverse to `PARTNER_FLOAT`, never call Paystack. Invariants 1–12: debit float only after the quote is accepted; vend only after that commit; timeout is UNKNOWN (no refund); refund only after a definitive vend failure.
+- **Daily cap** is UTC day on `partner_usage.value_minor`, incremented at float debit (not reduced on refund — failed-vend loops cannot evade the cap). Cap `0` means unlimited.
+- **Synthetic user** `partner:{uuid}` owns the quote/transaction `customer_id` FK. Isolation is `partner_id` + that user. `partner_ref` is unique per partner.
+- **Token** is returned only on this authenticated channel, and only to keys with `purchases:create` (POST response) or `purchases:read` (GET). Never in logs or outbox. Remote delivery keeps ACCEPTED ≠ CONFIRMED.
 
 ## PR #24 review fixes (2026-11-27)
 

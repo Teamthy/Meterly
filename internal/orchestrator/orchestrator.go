@@ -113,6 +113,13 @@ var (
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
 
+	ErrInsufficientFloat  = errors.New("partner float is insufficient")
+	ErrPartnerDailyCap    = errors.New("partner daily value cap reached")
+	ErrPartnerRef         = errors.New("partner_ref is required")
+	ErrPartnerRefConflict = errors.New("partner_ref already used")
+	ErrReceiptRef         = errors.New("bank receipt reference is required")
+	ErrPartnerMeter       = errors.New("meter_id or meter_number and disco_code are required")
+
 	ErrTokenShareContact     = errors.New("no verified contact for this channel")
 	ErrTokenShareDisabled    = errors.New("sending a token to another destination is not enabled")
 	ErrTokenShareRateLimited = errors.New("daily token send limit reached")
@@ -897,12 +904,15 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 	if err != nil {
 		return nil, err
 	}
-	if cur.EffectiveFundingSource() == tx.FundingPot {
+	switch cur.EffectiveFundingSource() {
+	case tx.FundingPot:
 		return o.refundPotFunded(ctx, id, reason, nil)
+	case tx.FundingPartnerFloat:
+		return o.refundPartnerFloat(ctx, id, reason, nil)
 	}
 	claimed := false
 	t, err := o.mutate(ctx, id, func(t *tx.Transaction, r store.Repos) error {
-		if t.EffectiveFundingSource() == tx.FundingPot {
+		if t.EffectiveFundingSource() != tx.FundingPSP {
 			return errSkip
 		}
 		if t.Payment != tx.PayConfirmed || t.Vending != tx.VendFailed || t.ReviewReason != "" {
@@ -931,8 +941,11 @@ func (o *Orchestrator) refund(ctx context.Context, id uuid.UUID, reason string) 
 // executeRefund asks the PSP to refund (idempotent by our reference) and
 // records completion. On failure it stays REFUND_PENDING for Resume.
 func (o *Orchestrator) executeRefund(ctx context.Context, t *tx.Transaction) (*tx.Transaction, error) {
-	if t.EffectiveFundingSource() == tx.FundingPot {
+	switch t.EffectiveFundingSource() {
+	case tx.FundingPot:
 		return o.refundPotFunded(ctx, t.ID, t.RefundReason, nil)
+	case tx.FundingPartnerFloat:
+		return o.refundPartnerFloat(ctx, t.ID, t.RefundReason, nil)
 	}
 	pctx, cancel := o.pctx(ctx)
 	ref, err := o.payments.RefundPayment(pctx, providers.RefundRequest{ProviderRef: t.PaymentProviderRef, Amount: t.RefundAmount, Reference: "refund:" + t.ID.String()})

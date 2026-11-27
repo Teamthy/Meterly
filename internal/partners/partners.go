@@ -1,5 +1,5 @@
 // Package partners is the identity and access layer for approved Meterly
-// partners (B4). Purchases, float and webhooks land in later batches.
+// partners (B4) plus the B5 float subledger. Outbound webhooks land in B6.
 package partners
 
 import (
@@ -59,6 +59,9 @@ var (
 	ErrEnvMismatch     = errors.New("partners: key environment mismatch")
 	ErrUnauthenticated = errors.New("partners: unauthenticated")
 	ErrInvalidInput    = errors.New("partners: invalid input")
+	ErrReceiptConflict = errors.New("partners: receipt reference conflict")
+	ErrNotPendingTopup = errors.New("partners: top-up is not pending")
+	ErrFloatConflict   = errors.New("partners: concurrent float update")
 )
 
 type Partner struct {
@@ -125,6 +128,18 @@ type Repo interface {
 
 	IncrementUsage(ctx context.Context, partnerID uuid.UUID, day time.Time, requests, valueMinor int64) error
 	ListUsage(ctx context.Context, partnerID uuid.UUID, from, to time.Time) ([]Usage, error)
+	GetUsage(ctx context.Context, partnerID uuid.UUID, day time.Time) (Usage, error)
+
+	GetFloat(ctx context.Context, partnerID uuid.UUID) (Float, error)
+	GetFloatForUpdate(ctx context.Context, partnerID uuid.UUID) (Float, error)
+	EnsureFloatForUpdate(ctx context.Context, partnerID uuid.UUID, now time.Time) (Float, error)
+	UpdateFloat(ctx context.Context, f Float) error
+
+	CreateTopup(ctx context.Context, t FloatTopup) error
+	GetTopup(ctx context.Context, id uuid.UUID) (FloatTopup, error)
+	GetTopupForUpdate(ctx context.Context, id uuid.UUID) (FloatTopup, error)
+	GetTopupByReceipt(ctx context.Context, receiptRef string) (FloatTopup, error)
+	UpdateTopup(ctx context.Context, t FloatTopup) error
 }
 
 // Route describes a partner API route and the scope it will require.
