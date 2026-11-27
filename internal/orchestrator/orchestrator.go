@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,6 +106,9 @@ var (
 	ErrAccountSuspended  = errors.New("purchases are paused on this account")
 	ErrRiskDenied        = risk.ErrDenied
 	ErrVendingPaused     = errors.New("electricity vending is paused")
+	ErrServicePaused     = errors.New("service is paused")
+	ErrPilotCap          = errors.New("pilot daily cap reached")
+	ErrInvalidPilot      = errors.New("invalid pilot allow-list entry")
 	// ErrProviderDisabled: an operator switched the provider off. The step
 	// is paused, not failed; Resume retries once it is re-enabled.
 	ErrProviderDisabled = errors.New("provider disabled by an operator")
@@ -145,6 +149,13 @@ type Orchestrator struct {
 	walletAt  time.Time
 	walletBal int64
 	walletOK  bool
+	spendAvg  int64
+	spendAt   time.Time
+
+	pilotMode      bool
+	pilotUserCap   int64
+	pilotGlobalCap int64
+	servicePaused  atomic.Bool
 }
 
 func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
@@ -291,7 +302,7 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 	if err := gifts.Validate(req.IsGift, req.RecipientPhone, req.NotifyRecipient); err != nil {
 		return nil, false, err
 	}
-	if err := o.ensureVendingOpen(ctx); err != nil {
+	if err := o.ensurePurchasesOpen(ctx); err != nil {
 		return nil, false, err
 	}
 	now := o.Now()
@@ -332,6 +343,9 @@ func (o *Orchestrator) CreateTransaction(ctx context.Context, req CreateRequest)
 		}
 		if q.Used || now.After(q.ExpiresAt) {
 			return ErrQuoteExpired
+		}
+		if err := o.ensurePilot(ctx, req.CustomerID, q.MeterID, q.Amount.Minor); err != nil {
+			return err
 		}
 		// Serialize this authorization and creation with meter access changes.
 		if _, err := registry.AuthorizeForUpdateIn(ctx, r, req.CustomerID, q.MeterID, meters.PermPurchase); err != nil {

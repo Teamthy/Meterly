@@ -2532,6 +2532,145 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/pilot:
+    get:
+      operationId: adminGetPilot
+      tags: [Admin]
+      summary: Pilot mode, pause flag, caps and allow-list
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Pilot status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/pilot/allowlist:
+    post:
+      operationId: adminAddPilotAllowlist
+      tags: [Admin]
+      summary: Add a pilot allow-list entry (admin + reason)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Created entry.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      operationId: adminRemovePilotAllowlist
+      tags: [Admin]
+      summary: Remove a pilot allow-list entry (admin + reason)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/pilot/pause:
+    post:
+      operationId: adminPausePilotService
+      tags: [Admin]
+      summary: Pause purchases process-wide (admin + reason)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Paused.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/pilot/resume:
+    post:
+      operationId: adminResumePilotService
+      tags: [Admin]
+      summary: Resume purchases (admin + reason)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Resumed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/admin/disputes:
     get:
       operationId: adminListDisputes
@@ -4470,6 +4609,8 @@ components:
         - PURCHASE_IN_FLIGHT
         - ACCOUNT_SUSPENDED
         - VENDING_PAUSED
+        - SERVICE_PAUSED
+        - PILOT_CAP
         - QUOTE_EXPIRED
         - TRANSACTION_NOT_FOUND
         - PAYMENT_UNCONFIRMED

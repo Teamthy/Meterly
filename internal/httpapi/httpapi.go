@@ -381,8 +381,12 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	body := map[string]any{"status": "ready", "vending": "ok"}
+	body := map[string]any{"status": "ready", "vending": "ok", "service": "ok"}
 	if s.O != nil {
+		if s.O.ServicePaused() {
+			body["status"] = "degraded"
+			body["service"] = "paused"
+		}
 		h := s.O.VendingHealth(r.Context())
 		if h.Paused {
 			body["status"] = "degraded"
@@ -914,6 +918,12 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 403, "FORBIDDEN", "this payment was declined")
 	case errors.Is(err, orchestrator.ErrVendingPaused):
 		writeErr(w, 503, "VENDING_PAUSED", "electricity vending is paused")
+	case errors.Is(err, orchestrator.ErrServicePaused):
+		writeErr(w, 503, "SERVICE_PAUSED", "service is paused")
+	case errors.Is(err, orchestrator.ErrPilotCap):
+		writeErr(w, 429, "PILOT_CAP", "pilot daily cap reached")
+	case errors.Is(err, orchestrator.ErrInvalidPilot):
+		writeErr(w, 400, "INVALID_REQUEST", "invalid pilot allow-list entry")
 	case errors.Is(err, meters.ErrNotFound):
 		writeErr(w, 404, "METER_NOT_FOUND", "meter not found")
 	case errors.Is(err, meters.ErrForbidden):

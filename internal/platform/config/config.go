@@ -119,6 +119,13 @@ type Config struct {
 	// FeatureRiskEngine gates the P3 abuse-control engine (DENY/REVIEW).
 	// Defaults on in MODE=dev and MODE=staging (pilot); off in production.
 	FeatureRiskEngine bool
+
+	// PilotMode restricts purchases to the audited allow-list (users, meters,
+	// optional DisCos) plus daily caps. SERVICE_PAUSED is a global kill switch.
+	PilotMode                bool
+	ServicePaused            bool
+	PilotDailyUserCapMinor   int64
+	PilotDailyGlobalCapMinor int64
 	// FeatureOwnershipNameMatch enables self-service meter ownership by
 	// display-name match. Spoofable (display names are user-editable and
 	// meter validation reveals the DisCo name): dev only by default.
@@ -405,6 +412,23 @@ func Load(getenv func(string) string) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_RISK_ENGINE: must be true or false"))
 	}
+
+	switch strings.ToLower(strings.TrimSpace(getenv("PILOT_MODE"))) {
+	case "", "false", "0":
+	case "true", "1":
+		c.PilotMode = true
+	default:
+		errs = append(errs, fmt.Errorf("PILOT_MODE: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("SERVICE_PAUSED"))) {
+	case "", "false", "0":
+	case "true", "1":
+		c.ServicePaused = true
+	default:
+		errs = append(errs, fmt.Errorf("SERVICE_PAUSED: must be true or false"))
+	}
+	c.PilotDailyUserCapMinor = integer("PILOT_DAILY_USER_CAP_MINOR", 0)
+	c.PilotDailyGlobalCapMinor = integer("PILOT_DAILY_GLOBAL_CAP_MINOR", 0)
 
 	c.OfflineReverifyAfter = dur("OFFLINE_REVERIFY_AFTER", conversation.DefaultReverifyAfter)
 	c.OfflineUnverifiedDailyMaxMinor = integer("OFFLINE_UNVERIFIED_DAILY_MAX_MINOR", conversation.DefaultUnverifiedDailyCapMinor)

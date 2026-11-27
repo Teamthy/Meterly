@@ -75,3 +75,19 @@ METERLY_API_ORIGIN=https://meterly-api.onrender.com
 - Remote meter credit — `REMOTE_PROVIDER=none` until a partner implements Meterly's `heshttp` gateway (or we write a documented translator). Cohorts and confirmation webhooks are in code.
 - Production feature flags (`FEATURE_SPLIT_METER`, gift SMS, USSD, …) pending legal sign-off.
 - More than one API replica: set `REDIS_URL` (`redis://` or `rediss://`) so write/auth/webhook budgets are shared. One instance can keep the in-memory limiter.
+
+## 6. Backups, PITR, restore drill
+
+Pilot RPO **5 minutes** (Supabase PITR / WAL on Pro). Pilot RTO **60 minutes** to a passing `cmd/integrity`.
+
+1. Enable PITR on the Supabase project. Do not use the transaction pooler (6543) for restore either.
+2. Practice on a **scratch** database, never in-place first:
+   `RESTORE_DATABASE_URL=postgres://... ./scripts/restore-drill.sh`
+   Optional `DUMP=` is a `pg_dump` custom file restored with `pg_restore`.
+3. The script applies `cmd/migrate` then `cmd/integrity` (trial balance must be 0). See `docs/runbooks/restore.md`.
+4. Key rotation: `docs/runbooks/key-rotation.md` (`cmd/rekey`).
+5. Alerts: `deployments/monitoring/alerts.yml`. Worker heartbeat needs `METRICS_ADDR` not `off` on at least one process that runs `RUN_WORKER=true`.
+
+## 7. Pilot gate
+
+`PILOT_MODE=true` allow-lists users, meters, optional DisCos (`POST /v1/admin/pilot/allowlist`). Daily caps: `PILOT_DAILY_USER_CAP_MINOR`, `PILOT_DAILY_GLOBAL_CAP_MINOR`. Kill switch: `SERVICE_PAUSED=true` or admin pause. Non-allow-listed callers see 503 `SERVICE_PAUSED` (no invitation leak).

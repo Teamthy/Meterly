@@ -265,6 +265,10 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	a.Orch.SetFeatureGiftSMS(cfg.FeatureGiftSMS)
 	a.Orch.SetFeatureRiskEngine(cfg.FeatureRiskEngine)
 	a.Orch.SetOwnershipNameMatch(cfg.FeatureOwnershipNameMatch)
+	a.Orch.SetPilot(cfg.PilotMode, cfg.PilotDailyUserCapMinor, cfg.PilotDailyGlobalCapMinor)
+	if cfg.ServicePaused {
+		a.Orch.SetServicePaused(true)
+	}
 	if wp, ok := rawVend.(providers.WalletProvider); ok {
 		a.Orch.SetWallet(wp, cfg.VTPassWalletMinMinor)
 	}
@@ -710,6 +714,11 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 		go func() { defer wg.Done(); a.loop(stopCtx, name, interval, fn) }()
 	}
 	defer wg.Wait()
+	start("heartbeat", 15*time.Second, func(ctx context.Context) {
+		if a.Metrics != nil {
+			a.Metrics.TouchWorkerHeartbeat(time.Now().UTC())
+		}
+	})
 	start("outbox", a.Cfg.OutboxInterval, func(ctx context.Context) {
 		for ctx.Err() == nil {
 			n, err := a.Publisher.PublishBatchWithDrain(ctx, drainCtx)
@@ -836,6 +845,9 @@ func (a *App) loop(ctx context.Context, name string, every time.Duration, fn fun
 	t := time.NewTicker(every)
 	defer t.Stop()
 	a.Log.Info("worker loop started", "loop", name, "every", every.String())
+	if a.Metrics != nil {
+		a.Metrics.TouchWorkerHeartbeat(time.Now().UTC())
+	}
 	for {
 		select {
 		case <-ctx.Done():

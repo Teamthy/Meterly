@@ -27,6 +27,22 @@ func TestDevDefaults(t *testing.T) {
 	if !c.FeatureRiskEngine {
 		t.Fatal("FEATURE_RISK_ENGINE must default to true in MODE=dev")
 	}
+	if c.PilotMode || c.ServicePaused {
+		t.Fatal("PILOT_MODE and SERVICE_PAUSED must default off")
+	}
+}
+
+func TestPilotModeEnv(t *testing.T) {
+	c, err := Load(env(map[string]string{
+		"MODE": "dev", "PILOT_MODE": "true", "SERVICE_PAUSED": "true",
+		"PILOT_DAILY_USER_CAP_MINOR": "5000000",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.PilotMode || !c.ServicePaused || c.PilotDailyUserCapMinor != 5_000_000 {
+		t.Fatalf("%+v", c)
+	}
 }
 
 func TestModeRequired(t *testing.T) {

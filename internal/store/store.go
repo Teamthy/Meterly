@@ -28,6 +28,7 @@ import (
 	"github.com/teamthy/meterly/internal/notificationintents"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/payrequests"
+	"github.com/teamthy/meterly/internal/pilot"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
 	"github.com/teamthy/meterly/internal/reconcile"
@@ -104,6 +105,7 @@ type Repos interface {
 	Reconcile() reconcile.Repo
 	Risk() risk.Repo
 	Disputes() disputes.Repo
+	Pilot() pilot.Repo
 }
 
 // MeterReadingRepo stores observed remote kWh samples used to compute

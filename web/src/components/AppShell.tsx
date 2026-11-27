@@ -67,6 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const isStaff = token.startsWith("operator:") || token.startsWith("admin:");
   const [ready, setReady] = useState<boolean | null>(null);
   const [vendingPaused, setVendingPaused] = useState(false);
+  const [servicePaused, setServicePaused] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [showCustomAuth, setShowCustomAuth] = useState(false);
   const [draftTok, setDraftTok] = useState("");
@@ -79,18 +80,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         setReady(r.ok);
         if (!r.ok) {
           setVendingPaused(false);
+          setServicePaused(false);
           return;
         }
         const data = (await r.json().catch(() => ({}))) as {
           status?: string;
           vending?: string;
+          service?: string;
         };
-        setVendingPaused(data.status === "degraded" || data.vending === "paused");
+        setServicePaused(data.service === "paused");
+        setVendingPaused(data.vending === "paused");
       })
       .catch(() => {
         if (!cancelled) {
           setReady(false);
           setVendingPaused(false);
+          setServicePaused(false);
         }
       });
     return () => {
@@ -204,20 +209,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <span
               className={`hidden h-1.5 w-1.5 rounded-full sm:inline-block ${
-                ready === true && !vendingPaused
+                ready === true && !vendingPaused && !servicePaused
                   ? "bg-volt"
                   : ready === false
                     ? "bg-rose-400"
                     : "bg-amber-400"
               }`}
               title={
-                vendingPaused
-                  ? "Vending paused"
-                  : ready === true
-                    ? "API ready"
-                    : ready === false
-                      ? "API offline"
-                      : "Checking"
+                servicePaused
+                  ? "Service paused"
+                  : vendingPaused
+                    ? "Vending paused"
+                    : ready === true
+                      ? "API ready"
+                      : ready === false
+                        ? "API offline"
+                        : "Checking"
               }
             />
             {!isPublicGuestPage && (
@@ -294,7 +301,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 text-paper sm:px-6 sm:py-8">
-        {vendingPaused ? (
+        {servicePaused ? (
+          <div
+            role="status"
+            className="mb-4 rounded-xl border border-amber-400/40 bg-amber-400/12 px-4 py-3 text-sm text-amber-100"
+          >
+            Service is paused. Do not pay — Meterly is temporarily unavailable.
+          </div>
+        ) : vendingPaused ? (
           <div
             role="status"
             className="mb-4 rounded-xl border border-amber-400/40 bg-amber-400/12 px-4 py-3 text-sm text-amber-100"

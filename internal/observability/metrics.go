@@ -127,9 +127,10 @@ type Registry struct {
 
 	resumeEscalations atomic.Uint64
 
-	vendingWalletMinor atomic.Int64
-	vendingPaused      atomic.Int64
-	readyDegraded      atomic.Int64
+	vendingWalletMinor  atomic.Int64
+	vendingPaused       atomic.Int64
+	readyDegraded       atomic.Int64
+	workerHeartbeatUnix atomic.Int64
 }
 
 func NewRegistry() *Registry {
@@ -254,6 +255,16 @@ func (r *Registry) SetVendingHealth(walletMinor int64, paused bool) {
 	}
 	r.vendingPaused.Store(0)
 	r.readyDegraded.Store(0)
+}
+
+func (r *Registry) TouchWorkerHeartbeat(now time.Time) {
+	if r == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	r.workerHeartbeatUnix.Store(now.UTC().Unix())
 }
 
 func (r *Registry) SetReconExceptionsOpen(counts []ReconOpenCount) {
@@ -424,6 +435,10 @@ func (r *Registry) Render() string {
 	b.WriteString("# HELP ready_degraded 1 when /readyz is serving degraded.\n")
 	b.WriteString("# TYPE ready_degraded gauge\n")
 	fmt.Fprintf(&b, "ready_degraded %d\n", r.readyDegraded.Load())
+
+	b.WriteString("# HELP worker_heartbeat_unix Unix time of the last worker loop tick. 0 means the worker has never run in this process.\n")
+	b.WriteString("# TYPE worker_heartbeat_unix gauge\n")
+	fmt.Fprintf(&b, "worker_heartbeat_unix %d\n", r.workerHeartbeatUnix.Load())
 
 	b.WriteString("# HELP reconciliation_exceptions_open Open or investigating reconciliation exceptions by provider and category.\n")
 	b.WriteString("# TYPE reconciliation_exceptions_open gauge\n")

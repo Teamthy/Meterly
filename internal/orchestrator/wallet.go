@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/teamthy/meterly/internal/providers"
+	tx "github.com/teamthy/meterly/internal/transactions"
 )
 
 const walletCacheTTL = 30 * time.Second
@@ -42,7 +43,8 @@ func (o *Orchestrator) VendingHealth(ctx context.Context) VendingHealth {
 	if !ok {
 		return VendingHealth{}
 	}
-	paused := bal <= 0 || (o.walletMin > 0 && bal < o.walletMin)
+	avg := o.threeDayAvgDailySpend(ctx)
+	paused := walletShouldPause(bal, o.walletMin, avg)
 	if o.metrics != nil {
 		o.metrics.SetVendingHealth(bal, paused)
 	}
@@ -50,6 +52,14 @@ func (o *Orchestrator) VendingHealth(ctx context.Context) VendingHealth {
 		return VendingHealth{Paused: true, Reason: "wallet_low"}
 	}
 	return VendingHealth{}
+}
+
+func walletShouldPause(bal, minMinor, avgDaily int64) bool {
+	floor := minMinor
+	if avgDaily > floor {
+		floor = avgDaily
+	}
+	return bal <= 0 || (floor > 0 && bal < floor)
 }
 
 func (o *Orchestrator) cachedWallet(ctx context.Context) (int64, bool) {
@@ -76,7 +86,8 @@ func (o *Orchestrator) cachedWallet(ctx context.Context) (int64, bool) {
 	if err != nil {
 		o.log.Warn("vending wallet lookup failed", "err", err)
 		if o.walletOK && !o.walletAt.IsZero() && now.Sub(o.walletAt) < 5*ttl {
-			paused := o.walletBal <= 0 || (o.walletMin > 0 && o.walletBal < o.walletMin)
+			avg := o.spendAvg
+			paused := walletShouldPause(o.walletBal, o.walletMin, avg)
 			if paused {
 				return o.walletBal, true
 			}
@@ -86,8 +97,48 @@ func (o *Orchestrator) cachedWallet(ctx context.Context) (int64, bool) {
 	o.walletBal = got.Minor
 	o.walletAt = now
 	o.walletOK = true
-	if got.Minor <= 0 || (o.walletMin > 0 && got.Minor < o.walletMin) {
+	if walletShouldPause(got.Minor, o.walletMin, o.spendAvg) {
 		o.log.Warn("vending wallet below floor")
 	}
 	return got.Minor, true
+}
+
+// threeDayAvgDailySpend is the mean daily confirmed electricity value over
+// the last 72 hours (kobo). Lookup errors fail open (return 0).
+func (o *Orchestrator) threeDayAvgDailySpend(ctx context.Context) int64 {
+	if o == nil || o.st == nil {
+		return 0
+	}
+	now := o.Now()
+	ttl := o.walletTTL
+	if ttl <= 0 {
+		ttl = walletCacheTTL
+	}
+	o.walletMu.Lock()
+	if !o.spendAt.IsZero() && now.Sub(o.spendAt) < ttl {
+		v := o.spendAvg
+		o.walletMu.Unlock()
+		return v
+	}
+	o.walletMu.Unlock()
+
+	from := now.Add(-72 * time.Hour)
+	list, err := o.st.Repos().Transactions().ListCreatedBetween(ctx, from, now.Add(time.Second))
+	if err != nil {
+		o.log.Warn("vending spend window lookup failed", "err", err)
+		return 0
+	}
+	var sum int64
+	for _, t := range list {
+		if t == nil || t.Payment != tx.PayConfirmed {
+			continue
+		}
+		sum += t.Amount.Minor
+	}
+	avg := sum / 3
+	o.walletMu.Lock()
+	o.spendAvg = avg
+	o.spendAt = now
+	o.walletMu.Unlock()
+	return avg
 }

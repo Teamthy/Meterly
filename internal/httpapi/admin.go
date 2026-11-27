@@ -38,6 +38,7 @@ func (s *Server) adminRoutes(mux *patternMux) {
 	s.adminSupportRoutes(mux)
 	s.adminReconcileRoutes(mux)
 	s.adminRiskRoutes(mux)
+	s.adminPilotRoutes(mux)
 }
 
 // actor builds the audit actor from the caller and a {"reason": "..."} body.

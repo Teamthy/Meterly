@@ -28,6 +28,7 @@ func TestPrometheusExpositionAndLabelSafety(t *testing.T) {
 	reg.SetTransactionGauges(map[string]int64{"COMPLETED": 7, "MANUAL_REVIEW": 2}, 2, 1.5)
 	reg.IncResumeEscalations()
 	reg.IncNotificationDelivery("SMS", "SENT")
+	reg.TouchWorkerHeartbeat(time.Unix(1_700_000_000, 0).UTC())
 
 	srv := httptest.NewServer(reg.Handler())
 	defer srv.Close()
@@ -66,6 +67,7 @@ func TestPrometheusExpositionAndLabelSafety(t *testing.T) {
 		`resume_escalations_total 1`,
 		`outbox_lag_seconds 1.5`,
 		`notification_deliveries_total{channel="SMS",status="SENT"} 1`,
+		`worker_heartbeat_unix 1700000000`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing metric line %q in:\n%s", want, body)

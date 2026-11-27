@@ -23,6 +23,7 @@
 | 6 | Legal sign-off before prod flags | Legal | `docs/LEGAL.md` — NDPA / NCC / CBN / NERC / LASERC |
 | 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
 | 8 | P3 risk engine + chargebacks | Eng | **In code** on this branch (migration `0023`, unapplied hosted) |
+| 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **In code** on this branch (migration `0024`, unapplied hosted) |
 
 ---
 

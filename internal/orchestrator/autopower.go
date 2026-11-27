@@ -1307,6 +1307,10 @@ func (o *Orchestrator) executeRun(ctx context.Context, runID uuid.UUID) error {
 	if err := o.requireEnabled(ctx, o.vending.Name()); err != nil {
 		return err
 	}
+	if err := o.ensurePurchasesOpen(ctx); err != nil {
+		// Wallet/service pause: retry on the next tick. Do not fail the rule.
+		return nil
+	}
 
 	rn0, err := o.st.Repos().AutoPower().GetRun(ctx, runID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -1321,6 +1325,9 @@ func (o *Orchestrator) executeRun(ctx context.Context, runID uuid.UUID) error {
 	}
 	if err != nil {
 		return err
+	}
+	if err := o.ensurePilot(ctx, rl0.UserID, rl0.MeterID, rn0.AmountMinor); err != nil {
+		return nil
 	}
 
 	now := o.Now().UTC()

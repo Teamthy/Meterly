@@ -366,6 +366,10 @@ func (o *Orchestrator) CheckoutPublicPayLink(ctx context.Context, req PublicChec
 	idemScope := "paylink:" + codeHMAC
 	reqHash := o.box.Hash(fmt.Sprintf("public-checkout:%s:%d:%s:%s", codeHMAC, req.AmountMinor, normEmail, payerName))
 
+	if err := o.ensurePurchasesOpen(ctx); err != nil {
+		return nil, false, err
+	}
+
 	now := o.Now().UTC()
 	var (
 		t          *tx.Transaction
@@ -455,6 +459,9 @@ func (o *Orchestrator) CheckoutPublicPayLink(ctx context.Context, req PublicChec
 		}
 		if chosenMinor < o.cfg.MinAmountMinor || chosenMinor > o.cfg.MaxAmountMinor {
 			return fmt.Errorf("%w: %d–%d kobo", ErrAmountOutOfRange, o.cfg.MinAmountMinor, o.cfg.MaxAmountMinor)
+		}
+		if err := o.ensurePilot(ctx, pr.RequesterID, pr.MeterID, chosenMinor); err != nil {
+			return err
 		}
 
 		totalMinor := chosenMinor + o.cfg.FeeMinor
