@@ -21,6 +21,7 @@ func TestHouseholdOwnershipAndDelegation(t *testing.T) {
 	box, _ := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "t1")
 	pay, vend, remote := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit()
 	o := orchestrator.New(orchestrator.DefaultConfig(), st, registry.New(st, box, vend, remote), box, pay, vend, remote, log)
+	o.SetOwnershipNameMatch(true) // dev default; see TestOwnershipNameMatchDisabledByDefault
 	s := &httpapi.Server{O: o, Auth: auth.DevAuth{}, Payments: pay, Log: log, Dev: true}
 	srv := httptest.NewServer(s.Routes())
 	t.Cleanup(srv.Close)
@@ -98,5 +99,35 @@ func TestHouseholdsFeatureFlag(t *testing.T) {
 	c := client{t, srv}
 	if code, _ := c.do("POST", "/v1/households", "ada", map[string]any{"name": "x"}, nil); code != 404 {
 		t.Fatalf("disabled: %d", code)
+	}
+}
+
+// Display names are user-editable and meter validation reveals the DisCo
+// customer name, so self-service name matching must be off unless enabled.
+func TestOwnershipNameMatchDisabledByDefault(t *testing.T) {
+	st := memstore.New()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	box, _ := secure.NewBox(secure.RandomKey(32), secure.RandomKey(32), "t1")
+	pay, vend, remote := mock.NewPayments(), mock.NewVending(), mock.NewRemoteCredit()
+	o := orchestrator.New(orchestrator.DefaultConfig(), st, registry.New(st, box, vend, remote), box, pay, vend, remote, log)
+	s := &httpapi.Server{O: o, Auth: auth.DevAuth{}, Payments: pay, Log: log, Dev: true}
+	srv := httptest.NewServer(s.Routes())
+	t.Cleanup(srv.Close)
+	c := client{t, srv}
+
+	// Mallory learns the DisCo customer name from validation...
+	code, v := c.do("POST", "/v1/meters/validate", "mallory", map[string]any{"meter_number": "45012345678", "disco_code": "IKEDC"}, nil)
+	if code != 200 {
+		t.Fatalf("validate %d %v", code, v)
+	}
+	_, m := c.do("POST", "/v1/meters", "mallory", map[string]any{"meter_number": "45012345678", "disco_code": "IKEDC"}, nil)
+	// ...sets it as her display name, and tries to become the owner.
+	spoof := map[string]string{"X-Dev-Display-Name": v["customer_name"].(string)}
+	code, body := c.do("POST", "/v1/meters/"+m["meter_id"].(string)+"/ownership/verify", "mallory", map[string]any{}, spoof)
+	if code != 403 {
+		t.Fatalf("spoofed ownership verification must be refused, got %d %v", code, body)
+	}
+	if e, _ := body["error"].(map[string]any); e["code"] != "OWNERSHIP_REVIEW_REQUIRED" {
+		t.Fatalf("error %v", body)
 	}
 }

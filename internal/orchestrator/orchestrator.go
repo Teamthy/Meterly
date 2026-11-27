@@ -123,9 +123,12 @@ type Orchestrator struct {
 	readings       providers.MeterReadingProvider // nil if no remote balance reading
 	notifProviders []string
 	featureGiftSMS bool
-	metrics        *observability.Registry
-	log            *slog.Logger
-	Now            func() time.Time
+	// ownershipNameMatch enables self-service ownership verification by
+	// display-name match. Off by default: see households.ErrSelfVerificationDisabled.
+	ownershipNameMatch bool
+	metrics            *observability.Registry
+	log                *slog.Logger
+	Now                func() time.Time
 }
 
 func New(cfg Config, st store.Store, reg *registry.Registry, box *secure.Box,
@@ -160,6 +163,11 @@ func (o *Orchestrator) RegisterNotificationProviders(names ...string) {
 // (the same NDPA control as gift-recipient SMS). Self-send to the purchaser's
 // own verified contact is always allowed.
 func (o *Orchestrator) SetFeatureGiftSMS(v bool) { o.featureGiftSMS = v }
+
+// SetOwnershipNameMatch enables self-service ownership verification by
+// display-name match (FEATURE_OWNERSHIP_NAME_MATCH). Keep it off wherever
+// ownership matters: the match is spoofable.
+func (o *Orchestrator) SetOwnershipNameMatch(v bool) { o.ownershipNameMatch = v }
 
 func (o *Orchestrator) pctx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, o.cfg.ProviderTimeout)
@@ -587,6 +595,14 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 	inFlight := func(t *tx.Transaction) bool { return t.Vending == tx.VendPending || t.Vending == tx.VendUnknown }
 	switch res.Status {
 	case providers.VendSucceeded:
+		// A prepaid vend is only complete once the STS token exists. Some
+		// providers (VTpass requery) report "delivered" before the token is
+		// available; confirming then would hand the customer a blank token.
+		// Treat it as still pending so Resume re-queries later.
+		if strings.TrimSpace(res.Token) == "" && !o.isPostpaidMeter(ctx, id) {
+			o.log.Warn("vend reported success without a token; still pending", "txn", id)
+			return o.Get(ctx, id)
+		}
 		ct, err := o.box.Encrypt(res.Token)
 		if err != nil {
 			return nil, err
@@ -635,6 +651,21 @@ func (o *Orchestrator) applyVendResult(ctx context.Context, id uuid.UUID, res pr
 		return o.Get(ctx, id) // provider still working; Resume picks it up
 	}
 	return nil, fmt.Errorf("unexpected vend status %q", res.Status)
+}
+
+// isPostpaidMeter reports whether the transaction's meter is postpaid (bill
+// payment, no STS token). Unknown or unreadable means "not postpaid", which is
+// the safe default: never confirm a prepaid vend without a token.
+func (o *Orchestrator) isPostpaidMeter(ctx context.Context, txnID uuid.UUID) bool {
+	t, err := o.Get(ctx, txnID)
+	if err != nil {
+		return false
+	}
+	m, err := o.Meters.Get(ctx, t.MeterID)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(m.MeterType), "POSTPAID")
 }
 
 // ---- Delivery -------------------------------------------------------------------

@@ -114,7 +114,11 @@ type Config struct {
 	// Support chat (agent + E2E human operators).
 	FeatureSupport bool
 	// Households: verified ownership + membership (FR-008).
-	FeatureHouseholds              bool
+	FeatureHouseholds bool
+	// FeatureOwnershipNameMatch enables self-service meter ownership by
+	// display-name match. Spoofable (display names are user-editable and
+	// meter validation reveals the DisCo name): dev only by default.
+	FeatureOwnershipNameMatch      bool
 	USSDSharedSecret               string
 	USSDAllowedIPs                 []string
 	OfflineReverifyAfter           time.Duration
@@ -364,6 +368,16 @@ func Load(getenv func(string) string) (Config, error) {
 		c.FeatureSupport = false
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_SUPPORT: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_OWNERSHIP_NAME_MATCH"))) {
+	case "":
+		c.FeatureOwnershipNameMatch = c.Mode == Dev
+	case "true", "1":
+		c.FeatureOwnershipNameMatch = true
+	case "false", "0":
+		c.FeatureOwnershipNameMatch = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_OWNERSHIP_NAME_MATCH: must be true or false"))
 	}
 	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_HOUSEHOLDS"))) {
 	case "":

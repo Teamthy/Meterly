@@ -39,7 +39,7 @@ func (m *mem) GetSession(_ context.Context, id uuid.UUID) (identity.Session, err
 	}
 	return identity.Session{}, ErrNoSession
 }
-func (m *mem) MarkSessionStepUp(_ context.Context, id uuid.UUID, at time.Time) error {
+func (m *mem) MarkSessionStepUp(_ context.Context, id uuid.UUID, ipHMAC string, at time.Time) error {
 	for i, s := range m.sessions {
 		if s.ID == id {
 			m.sessions[i].StepUpAt = &at

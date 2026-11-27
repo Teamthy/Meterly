@@ -200,12 +200,15 @@ func (r *repos) RevokeOtherSessions(_ context.Context, userID string, keep uuid.
 	return nil
 }
 
-func (r *repos) MarkSessionStepUp(_ context.Context, id uuid.UUID, at time.Time) error {
+func (r *repos) MarkSessionStepUp(_ context.Context, id uuid.UUID, ipHMAC string, at time.Time) error {
 	defer r.lock()()
 	for k, s := range r.s.authSessions {
-		if s.ID == id {
+		if s.ID == id && s.RevokedAt == nil {
 			s.StepUpAt = &at
 			s.LastSeenAt = at
+			if ipHMAC != "" {
+				s.IPHMAC = ipHMAC
+			}
 			r.s.authSessions[k] = s
 			return nil
 		}
@@ -218,7 +221,8 @@ func (r *repos) TouchSession(_ context.Context, id uuid.UUID, ipHMAC, uaHMAC str
 	for k, s := range r.s.authSessions {
 		if s.ID == id {
 			s.LastSeenAt = at
-			if ipHMAC != "" {
+			// Bind the network once; only a passkey step-up may move it.
+			if ipHMAC != "" && s.IPHMAC == "" {
 				s.IPHMAC = ipHMAC
 			}
 			if uaHMAC != "" {

@@ -17,7 +17,8 @@
 //     providers.ErrAmbiguous (the pay may have happened).
 //   - code 000 means "processed": inspect content.transactions.status
 //     (delivered / pending / initiated). Never treat 000 alone as success.
-//   - code 099 (and any undocumented code) is PENDING; requery.
+//   - code 099, 083 (system error) and any undocumented code are PENDING;
+//     requery. Only codes meaning "not processed" are definitive failures.
 //   - code 015 on requery is NOT_FOUND (safe to retry pay with a new key).
 //   - code 014 (request id already exists) is reconciled by requery, not a
 //     second pay.
@@ -405,7 +406,9 @@ func mapPayEnvelope(raw []byte, requestID, variation string, requery bool) (mapp
 		return mapped{notFound: true}, nil
 	case "016", "091", "010", "011", "012", "013", "017", "018", "019",
 		"021", "022", "023", "024", "025", "026", "027", "028",
-		"030", "031", "032", "034", "035", "040", "083", "085", "087":
+		"030", "031", "032", "034", "035", "040", "085", "087":
+		// 083 (SYSTEM ERROR) is deliberately absent: the pay may have been
+		// processed, so it falls through to PENDING and is requeried.
 		return mapped{VendResult: providers.VendResult{
 			ProviderRef: ref,
 			Status:      providers.VendFailed,

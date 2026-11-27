@@ -12,6 +12,7 @@ import (
 	"github.com/teamthy/meterly/internal/autopower"
 	"github.com/teamthy/meterly/internal/meters"
 	"github.com/teamthy/meterly/internal/orchestrator"
+	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/providers/paystack"
@@ -904,4 +905,42 @@ func TestExpiredCardAndSendOTPPendingResolution(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A Pay-for-Me transaction belongs to the requester but is paid with a guest
+// payer's card; the requester must never be able to save that card.
+func TestPayForMePayerCardCannotBeSavedByRequester(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		uid := e.user(t, "ada")
+		m := e.register(t, "ada", "45011122299")
+		link, err := e.o.CreatePaymentRequest(e.ctx, orchestrator.CreatePayRequestParams{
+			RequesterID: uid, MeterID: m.ID, AmountMode: payrequests.ModeFixed, AmountMinor: 500000,
+			PublicBaseURL: "https://meterly.test",
+		})
+		if err != nil {
+			t.Fatalf("create pay link: %v", err)
+		}
+		res, _, err := e.o.CheckoutPublicPayLink(e.ctx, orchestrator.PublicCheckoutRequest{
+			Code: link.Code, Email: "uncle@example.com", PayerName: "Uncle", IdempotencyKey: "guest-checkout-0001",
+		})
+		if err != nil {
+			t.Fatalf("guest checkout: %v", err)
+		}
+		ref := res.Transaction.PaymentProviderRef
+		if err := e.pay.Complete(ref, true, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.o.HandlePaymentNotification(e.ctx, ref); err != nil {
+			t.Fatal(err)
+		}
+		_, err = e.o.SavePaymentMethod(e.ctx, orchestrator.SavePaymentMethodParams{
+			UserID: uid, TransactionID: res.Transaction.ID, Consent: true,
+		})
+		if !errors.Is(err, autopower.ErrPaymentMethodNotReusable) {
+			t.Fatalf("requester saved the guest payer's card: err=%v", err)
+		}
+		if pms, _ := e.o.ListPaymentMethods(e.ctx, uid); len(pms) != 0 {
+			t.Fatalf("payment method stored: %+v", pms)
+		}
+	})
 }

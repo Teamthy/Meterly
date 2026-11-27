@@ -184,7 +184,7 @@ type AuthRepo interface {
 	ListSessions(ctx context.Context, userID string) ([]identity.Session, error)
 	RevokeSession(ctx context.Context, id uuid.UUID, at time.Time) error
 	RevokeOtherSessions(ctx context.Context, userID string, keep uuid.UUID, at time.Time) error
-	MarkSessionStepUp(ctx context.Context, id uuid.UUID, at time.Time) error
+	MarkSessionStepUp(ctx context.Context, id uuid.UUID, ipHMAC string, at time.Time) error
 	TouchSession(ctx context.Context, id uuid.UUID, ipHMAC, uaHMAC string, at time.Time) error
 	InsertSecurityEvent(ctx context.Context, e security.Event) error
 	ListSecurityEvents(ctx context.Context, userID string, limit int) ([]security.Event, error)

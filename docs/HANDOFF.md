@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-26 after PR **#22** (security engine) merged to `main` (`b623755`). Hardening (IP bind, headers, step-up with no passkeys) follows on this branch.
+> **Last updated:** 2026-11-27, after reviewing PRs #5–#23 and fixing 9 defects (branch `claude/loving-wozniak-yr6igw`). `main` was at `9cac48b` (PR #23).
 
 ## 0. Start here
 
@@ -138,10 +138,21 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | `FEATURE_POWER_DESK` | false | legal |
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
 | `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
+| `FEATURE_OWNERSHIP_NAME_MATCH` | false | self-service ownership by display-name match is spoofable; operators attest via `/v1/admin/meters/{id}/ownership` |
 
 ---
 
 ## 8. Gotchas
+
+- **Review fixes (2026-11-27), see DECISIONS "Review fixes":**
+  - sessions stay bound to their first network until a passkey step-up;
+  - passkey assertions need UV;
+  - adding a passkey needs a step-up;
+  - Pay-for-Me payer cards can't be saved;
+  - a prepaid vend without a token stays pending;
+  - VTpass `083` is pending;
+  - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
+  - ownership name match is off outside dev.
 
 - Migrations are **immutable** once applied. Add `0022_*.sql`, never edit applied files.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
@@ -249,6 +260,21 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-27: review and fixes of PRs #5–#23.**
+  - Reviewed everything after `68acdab` and fixed 9 defects:
+    - a Pay-for-Me requester could save the guest payer's card for AutoPower;
+    - session IP binding never fired;
+    - passkey UV not enforced;
+    - passkey add without step-up;
+    - client key trusted over the attested key;
+    - VTpass requery could confirm a blank token;
+    - VTpass `083` triggered automatic refunds;
+    - the AutoPower Paystack reference was invalid (`apchg:`);
+    - meter ownership spoofable by display name.
+  - Each fix has a regression test, and I confirmed each test fails without its fix.
+  - Verified: `go test -race ./...` on memory and PostgreSQL 16, 462 passed / 0 skipped / 0 failed (82 PostgreSQL subtests); concurrent suites repeated 2×; gofmt and vet clean; no test DBs left.
+  - Still unverified: live Paystack, VTpass and IdP sandboxes (no keys).
 
 - **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.
 - **2026-11-26: PR #21 merged.** Restyle + coming-soon Auto-renew + consoles.

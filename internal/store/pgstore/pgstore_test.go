@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/teamthy/meterly/internal/events"
 	"github.com/teamthy/meterly/internal/idempotency"
+	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/money"
 	"github.com/teamthy/meterly/internal/store"
@@ -121,5 +122,46 @@ func TestIdempotencyExpiredKeyIsReplaced(t *testing.T) {
 	}
 	if ex, _ := st.Repos().Idempotency().Reserve(ctx, rec); ex == nil || ex.RequestHash != "h2" {
 		t.Fatalf("live key should be returned, got %+v", ex)
+	}
+}
+
+// Ordinary requests bind a session's network only once; only a passkey
+// step-up may move it.
+func TestSessionNetworkBindingOnlyMovesOnStepUp(t *testing.T) {
+	pool := pgtest.NewPool(t)
+	st := pgstore.New(pool, "SANDBOX")
+	ctx := context.Background()
+	uid, err := st.Repos().Users().EnsureByExternalID(ctx, "binding-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	sess := identity.Session{ID: uuid.New(), UserID: uid, TokenHMAC: "tok-hmac-binding", ExpiresAt: now.Add(time.Hour), LastSeenAt: now, CreatedAt: now}
+	auth := st.Repos().Auth()
+	if err := auth.InsertSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	ip := func() string {
+		t.Helper()
+		got, err := auth.GetSession(ctx, sess.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.IPHMAC
+	}
+	if err := auth.TouchSession(ctx, sess.ID, "net-A", "ua", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := auth.TouchSession(ctx, sess.ID, "net-B", "ua", now); err != nil {
+		t.Fatal(err)
+	}
+	if got := ip(); got != "net-A" {
+		t.Fatalf("a plain request moved the bound network to %q", got)
+	}
+	if err := auth.MarkSessionStepUp(ctx, sess.ID, "net-B", now); err != nil {
+		t.Fatal(err)
+	}
+	if got := ip(); got != "net-B" {
+		t.Fatalf("step-up did not re-bind the network, got %q", got)
 	}
 }

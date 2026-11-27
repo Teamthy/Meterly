@@ -350,3 +350,16 @@ func TestRemoteHTTPConfig(t *testing.T) {
 		t.Fatalf("invented vendor remote must fail: %v", err)
 	}
 }
+
+func TestOwnershipNameMatchOffOutsideDev(t *testing.T) {
+	if c, err := Load(env(map[string]string{"MODE": "dev"})); err != nil || !c.FeatureOwnershipNameMatch {
+		t.Fatalf("dev default: %v %+v", err, c.FeatureOwnershipNameMatch)
+	}
+	c, _ := Load(env(map[string]string{"MODE": "staging"}))
+	if c.FeatureOwnershipNameMatch {
+		t.Fatal("self-service ownership name match must default off outside dev")
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_OWNERSHIP_NAME_MATCH": "maybe"})); err == nil {
+		t.Fatal("invalid flag value accepted")
+	}
+}

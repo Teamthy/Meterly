@@ -294,6 +294,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			reply(400, false, "Invalid amount", nil)
 			return
 		}
+		if !validReference(body.Reference) {
+			// Paystack: "Only -, ., = and alphanumeric characters allowed."
+			reply(400, false, "Invalid transaction reference", nil)
+			return
+		}
 		if _, dup := f.txns[body.Reference]; dup {
 			reply(400, false, "Duplicate Transaction Reference", nil)
 			return
@@ -325,6 +330,11 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		amt, err := strconv.ParseInt(body.Amount, 10, 64)
 		if err != nil || amt <= 0 {
 			reply(400, false, "Invalid amount", nil)
+			return
+		}
+		if !validReference(body.Reference) {
+			// Paystack: "Only -, ., = and alphanumeric characters allowed."
+			reply(400, false, "Invalid transaction reference", nil)
 			return
 		}
 		if _, dup := f.txns[body.Reference]; dup {
@@ -428,4 +438,20 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		write(w, 404, false, "Not found", nil)
 	}
+}
+
+// validReference mirrors Paystack's rule for transaction references: only
+// letters, digits, '-', '.' and '=' are allowed.
+func validReference(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '.', r == '=':
+		default:
+			return false
+		}
+	}
+	return true
 }
