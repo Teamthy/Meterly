@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"github.com/teamthy/meterly/internal/money"
 	"io"
 	"log/slog"
 	"net/http/httptest"
@@ -18,7 +19,6 @@ import (
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/store"
-	"github.com/teamthy/meterly/internal/store/memstore"
 )
 
 func newReconEnv(t *testing.T, st store.Store) (client, *reconcile.Engine) {
@@ -106,14 +106,33 @@ func TestReconciliationAdmin(t *testing.T) {
 }
 
 func TestReconciliationWalletTopupRequiresAdmin(t *testing.T) {
-	st := memstore.New()
-	c, _ := newReconEnv(t, st)
-	body := map[string]any{"reason": "funded vtpass wallet from zenith", "amount_minor": 500000, "currency": "NGN"}
-	if code, _ := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "operator:ola", body, nil); code != 403 {
-		t.Fatalf("operator topup: %d", code)
-	}
-	code, got := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "admin:ada", body, nil)
-	if code != 201 || got["reference"] == nil {
-		t.Fatalf("admin topup %d %v", code, got)
-	}
+	eachStore(t, func(t *testing.T, st store.Store) {
+		c, _ := newReconEnv(t, st)
+		body := map[string]any{"reason": "funded vtpass wallet from zenith", "amount_minor": 500000, "currency": "NGN"}
+		key := map[string]string{"Idempotency-Key": "topup-2026-11-27-zenith-0001"}
+		if code, _ := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "operator:ola", body, key); code != 403 {
+			t.Fatalf("operator topup: %d", code)
+		}
+		if code, _ := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "admin:ada", body, nil); code != 400 {
+			t.Fatalf("topup without Idempotency-Key must be rejected: %d", code)
+		}
+		code, got := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "admin:ada", body, key)
+		if code != 201 || got["reference"] == nil {
+			t.Fatalf("admin topup %d %v", code, got)
+		}
+		// A retry (double click, network retry) must not book the money twice.
+		code, again := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "admin:ada", body, key)
+		if code != 201 || again["reference"] != got["reference"] {
+			t.Fatalf("replay %d %v", code, again)
+		}
+		bal, err := st.Repos().Ledger().Balance(context.Background(), ledger.VendorWalletPrefund, money.NGN)
+		if err != nil || bal != 500000 {
+			t.Fatalf("wallet prefund %d (%v): top-up booked more than once", bal, err)
+		}
+		// The same key for a different amount is a conflict, not a silent no-op.
+		body["amount_minor"] = 900000
+		if code, _ := c.do("POST", "/v1/admin/reconciliation/wallet-topup", "admin:ada", body, key); code != 409 {
+			t.Fatalf("reused key with a different amount: %d", code)
+		}
+	})
 }

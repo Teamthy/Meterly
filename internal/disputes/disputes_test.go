@@ -35,3 +35,11 @@ func TestDisputePostingsBalance(t *testing.T) {
 		t.Fatal("won")
 	}
 }
+
+func TestUnknownResolutionIsNotGuessed(t *testing.T) {
+	for _, r := range []string{"", "auto-accepted", "something-new"} {
+		if got := disputes.OutcomeFromResolution(r, "resolved"); got != "" {
+			t.Fatalf("resolution %q guessed as %s", r, got)
+		}
+	}
+}

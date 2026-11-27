@@ -272,7 +272,7 @@ func (s *Server) adminReconWalletTopup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := audit.Actor{UserID: userID(r), Type: audit.ActorOperator, Reason: body.Reason, CorrelationID: audit.CorrelationFrom(r.Context())}
-	posted, err := eng.RecordWalletTopup(r.Context(), actor, body.AmountMinor, body.Currency)
+	posted, err := eng.RecordWalletTopup(r.Context(), actor, r.Header.Get("Idempotency-Key"), body.AmountMinor, body.Currency)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return

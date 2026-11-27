@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"github.com/teamthy/meterly/internal/store"
 	"net/http"
 	"strconv"
 	"strings"
@@ -83,6 +84,7 @@ func (s *Server) adminRiskUpdateRule(w http.ResponseWriter, r *http.Request) {
 		s.mapErr(w, r, err)
 		return
 	}
+	before := rule
 	if body.Enabled != nil {
 		rule.Enabled = *body.Enabled
 	}
@@ -109,13 +111,24 @@ func (s *Server) adminRiskUpdateRule(w http.ResponseWriter, r *http.Request) {
 	}
 	rule.UpdatedBy = actor.UserID
 	rule.UpdatedAt = time.Now().UTC()
-	if err := repo.UpdateRule(r.Context(), rule); err != nil {
+	// The change and its audit row commit together: a fraud rule must never
+	// be loosened without a durable record of who did it and why.
+	err = s.O.Store().InTx(r.Context(), func(repos store.Repos) error {
+		if err := repos.Risk().UpdateRule(r.Context(), rule); err != nil {
+			return err
+		}
+		return repos.Audit().Add(r.Context(), actor.Event("risk.rule.update", "risk_rule", uuid.Nil, map[string]any{
+			"code":           code,
+			"enabled_before": before.Enabled, "enabled_after": rule.Enabled,
+			"action_before": string(before.Action), "action_after": string(rule.Action),
+			"window_before": before.WindowSeconds, "window_after": rule.WindowSeconds,
+			"threshold_before": before.Threshold, "threshold_after": rule.Threshold,
+		}))
+	})
+	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
-	_ = s.O.Store().Repos().Audit().Add(r.Context(), actor.Event("risk.rule.update", "risk_rule", uuid.Nil, map[string]any{
-		"code": code,
-	}))
 	writeJSON(w, 200, ruleView(rule))
 }
 

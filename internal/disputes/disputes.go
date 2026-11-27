@@ -155,19 +155,15 @@ func LossPosting(d Dispute, now time.Time) ledger.Transaction {
 // OutcomeFromResolution maps Paystack's documented resolution values.
 // merchant-accepted → we lost (accepted the chargeback).
 // declined → we won (the issuer declined the claim).
-func OutcomeFromResolution(resolution, pspStatus string) Status {
-	r := resolution
-	switch r {
+// Anything else, including an empty resolution, returns "" (unknown): the
+// caller keeps the dispute open for an operator instead of guessing, because
+// a guessed loss writes money off and feeds the repeat-chargeback deny-list.
+func OutcomeFromResolution(resolution, _ string) Status {
+	switch resolution {
 	case "merchant-accepted":
 		return StatusAccepted
 	case "declined":
 		return StatusWon
-	}
-	switch pspStatus {
-	case "resolved":
-		if r == "" {
-			return StatusLost
-		}
 	}
 	return ""
 }

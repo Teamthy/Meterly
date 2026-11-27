@@ -157,6 +157,12 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 
 ## 8. Gotchas
 
+- **PR #24 review fixes (2026-11-27), see DECISIONS:**
+  - dispute outcomes are never guessed and are final once set;
+  - wallet top-ups need an `Idempotency-Key`;
+  - risk rule changes are audited in the same transaction;
+  - tests must use real user UUIDs for operators (PostgreSQL rejects `"admin:test"`).
+
 - **Review fixes (2026-11-27), see DECISIONS "Review fixes":**
   - sessions stay bound to their first network until a passkey step-up;
   - passkey assertions need UV;
@@ -278,6 +284,18 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-27: review of PR #24 (P0–P4) and merge.**
+  - PR #24's CI was red: the pilot tests used a non-UUID operator ID.
+  - Review found:
+    - dispute outcomes guessed as LOST on unknown resolutions;
+    - a dispute outcome flip that could release the reserve twice;
+    - non-idempotent wallet top-ups;
+    - risk rule changes audited outside their transaction with errors ignored;
+    - a template-database leak in the reconcile tests.
+  - Fixed on `claude/loving-wozniak-yr6igw` (PR #24 merged in plus the fixes), with tests on both stores.
+  - Verified: full suite with the race detector on memory and PostgreSQL 16, 544 passed / 0 skipped / 0 failed (95 PostgreSQL subtests); concurrent suites repeated; no test DBs left.
+  - Merged to `main` via the follow-up PR, which also marks #24 merged.
 
 - **2026-11-27: P3 risk controls and chargebacks.** `internal/risk` + `internal/disputes` + migration `0023`. DENY never charges; REVIEW never vends; dispute open/win/loss postings balance. Paystack `GET /dispute` and `charge.dispute.*` payload fields. `FEATURE_RISK_ENGINE` on in dev/staging. Unverified: live Paystack dispute webhooks; hosted `0023`. Do not apply hosted migrations from this sandbox. Next is P4 (pilot ops).
 - **2026-11-27: P2 daily settlement recon landed** (`3797530`). Engine `RunDay`/`CatchUp`, admin exceptions, `0022` unapplied hosted.

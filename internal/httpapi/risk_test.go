@@ -52,6 +52,14 @@ func TestRiskAdminRulesAndDenylist(t *testing.T) {
 		if code != 200 || updated["threshold"].(float64) != 2 {
 			t.Fatalf("update %d %v", code, updated)
 		}
+		// The change is audited atomically, with what changed.
+		evs, err := st.Repos().Audit().ForResource(context.Background(), "risk_rule", uuid.Nil)
+		if err != nil || len(evs) != 1 || evs[0].Action != "risk.rule.update" {
+			t.Fatalf("audit %v %+v", err, evs)
+		}
+		if evs[0].Metadata["threshold_after"] != float64(2) && evs[0].Metadata["threshold_after"] != int64(2) && evs[0].Metadata["threshold_after"] != 2 {
+			t.Fatalf("audit lacks before/after values: %+v", evs[0].Metadata)
+		}
 		if code, _ := c.do("GET", "/v1/admin/risk/denylist", "operator:ola", nil, nil); code != 403 {
 			t.Fatalf("operator denylist get: %d", code)
 		}

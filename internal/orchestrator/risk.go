@@ -108,6 +108,7 @@ func (o *Orchestrator) persistDispute(ctx context.Context, n disputes.Notice) er
 				return err
 			}
 		}
+		unknownOutcome := false
 		switch {
 		case strings.HasSuffix(n.Type, ".remind"):
 			d.Status = disputes.StatusReminded
@@ -115,16 +116,31 @@ func (o *Orchestrator) persistDispute(ctx context.Context, n disputes.Notice) er
 		case strings.HasSuffix(n.Type, ".resolve"):
 			if out := disputes.OutcomeFromResolution(n.Resolution, n.PSPStatus); out != "" {
 				d.Status = out
+				d.ResolvedAt = now
 			} else {
-				d.Status = disputes.StatusLost
+				// Never guess an outcome: a guessed LOST writes money off and
+				// feeds the repeat-chargeback deny-list. Keep the dispute open
+				// for an operator, with Paystack's resolution recorded.
+				unknownOutcome = true
+				o.log.Warn("dispute resolved with an unrecognised outcome; left open for review",
+					"psp_dispute", d.PSPDisputeID, "resolution", n.Resolution, "psp_status", n.PSPStatus)
 			}
-			d.ResolvedAt = now
 		}
 		if existing, err := r.Disputes().ByPSP(ctx, d.PSPDisputeID); err == nil {
 			d.ID = existing.ID
-			if existing.Status.Terminal() && !d.Status.Terminal() {
+			switch {
+			case existing.Status.Terminal():
+				// An outcome is final: flipping WON<->LOST would post both the
+				// win and the loss entries and release the reserve twice.
+				if d.Status != existing.Status {
+					o.log.Warn("conflicting dispute outcome ignored; outcome is final",
+						"psp_dispute", d.PSPDisputeID, "kept", existing.Status, "ignored", d.Status)
+				}
 				d.Status = existing.Status
 				d.ResolvedAt = existing.ResolvedAt
+			case unknownOutcome:
+				d.Status = existing.Status
+				d.RemindedAt = existing.RemindedAt
 			}
 		} else if err != nil && !errors.Is(err, disputes.ErrNotFound) {
 			return err

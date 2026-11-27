@@ -20,7 +20,7 @@ func TestPilotAllowListAndCaps(t *testing.T) {
 		}); !errors.Is(err, orchestrator.ErrServicePaused) {
 			t.Fatalf("unlisted user: %v", err)
 		}
-		actor := audit.Actor{UserID: "admin:test", Type: audit.ActorOperator, Reason: "pilot cohort household"}
+		actor := audit.Actor{UserID: e.user(t, "pilot-admin"), Type: audit.ActorOperator, Reason: "pilot cohort household"}
 		if err := e.o.AddPilotEntry(e.ctx, actor, pilot.Entry{Kind: pilot.KindUser, Value: uid}); err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +66,7 @@ func TestServicePausedBlocksQuotes(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
 		uid := e.user(t, "ada")
 		m := e.register(t, "ada", "45011118882")
-		if err := e.o.PauseService(e.ctx, audit.Actor{UserID: "admin:test", Type: audit.ActorOperator, Reason: "disco float incident"}); err != nil {
+		if err := e.o.PauseService(e.ctx, audit.Actor{UserID: e.user(t, "pilot-admin"), Type: audit.ActorOperator, Reason: "disco float incident"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{
@@ -74,7 +74,7 @@ func TestServicePausedBlocksQuotes(t *testing.T) {
 		}); !errors.Is(err, orchestrator.ErrServicePaused) {
 			t.Fatalf("paused: %v", err)
 		}
-		if err := e.o.ResumeService(e.ctx, audit.Actor{UserID: "admin:test", Type: audit.ActorOperator, Reason: "float restored after topup"}); err != nil {
+		if err := e.o.ResumeService(e.ctx, audit.Actor{UserID: e.user(t, "pilot-admin"), Type: audit.ActorOperator, Reason: "float restored after topup"}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := e.o.IssueQuote(e.ctx, orchestrator.QuoteSpec{

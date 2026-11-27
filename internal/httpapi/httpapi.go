@@ -973,6 +973,10 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "DELIVERY_FAILED", "no token is available for this transaction")
 	case errors.Is(err, meters.ErrInvalidCohort):
 		writeErr(w, 422, "INVALID_REQUEST", "invalid remote-credit cohort")
+	case errors.Is(err, reconcile.ErrIdempotencyKey):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, reconcile.ErrIdempotencyConflict):
+		writeErr(w, 409, "IDEMPOTENCY_CONFLICT", err.Error())
 	case errors.Is(err, reconcile.ErrSameApprover):
 		writeErr(w, 409, "INVALID_REQUEST", "proposer cannot approve")
 	case errors.Is(err, reconcile.ErrNotProposed):

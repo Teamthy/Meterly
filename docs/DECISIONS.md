@@ -476,3 +476,14 @@ One command proves each adapter against that provider's real sandbox, and only w
 ### Sandbox findings
 
 None yet — no founder sandbox keys in this environment. Every provider is **not certified**. Differences found later against a real sandbox must change the fake, add a regression test, and land here.
+
+## PR #24 review fixes (2026-11-27)
+
+Reviewing PR #24 (P0–P4) found these, now fixed with tests on both stores:
+
+- **CI was red.** The pilot tests passed `"admin:test"` as an operator's user ID. Production passes the internal UUID; PostgreSQL rejects non-UUIDs in `audit_events.actor_user_id`, and memstore didn't. The tests now use a real user.
+- **Dispute outcomes are never guessed.** An unrecognised or empty Paystack `resolution` previously became LOST, which posted a write-off and counted toward the repeat-chargeback deny-list. It now stays OPEN/REMINDED for an operator, with Paystack's resolution recorded. Only `merchant-accepted` (lost) and `declined` (won) are mapped.
+- **Dispute outcomes are final.** A dispute already WON/LOST/ACCEPTED never changes status. A conflicting later event is logged and ignored, because flipping would post both the win and the loss entries and release `DISPUTE_RESERVE` twice.
+- **Wallet top-ups are idempotent.** `POST /v1/admin/reconciliation/wallet-topup` requires an `Idempotency-Key`. The ledger reference is derived from it, so a retry or double click books the money once, and the same key with a different amount returns 409.
+- **Risk rule changes are audited atomically.** The rule update and its audit row (with before/after values) commit in one transaction, and the update fails if the audit can't be written. Previously the audit was written separately and its error ignored.
+- **`internal/reconcile` tests leaked template databases** (no `TestMain` calling `pgtest.DropTemplate()`). Fixed.

@@ -165,3 +165,51 @@ func TestDisputeLossPosting(t *testing.T) {
 	}
 	e.assertBalanced(t)
 }
+
+// A dispute outcome is never guessed, and once final it never flips: either
+// would post a loss that didn't happen or release the reserve twice.
+func TestDisputeOutcomeNeverGuessedAndFinal(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		txn := e.buy(t, "ada", "61100000017", orchestrator.PrefToken)
+		n := disputes.Notice{
+			Type: "charge.dispute.create", PSPDisputeID: "7001",
+			Reference: txn.PaymentProviderRef, AmountMinor: txn.Total.Minor, Currency: "NGN",
+		}
+		if err := e.o.HandlePaymentDispute(e.ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		// Unknown resolution: stays open, nothing written off.
+		n.Type, n.PSPStatus, n.Resolution = "charge.dispute.resolve", "resolved", "something-new"
+		if err := e.o.HandlePaymentDispute(e.ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		d, err := e.st.Repos().Disputes().ByPSP(e.ctx, "7001")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Status.Terminal() {
+			t.Fatalf("unknown resolution guessed as %s", d.Status)
+		}
+		if e.balance(t, ledger.DisputeReserve) != -txn.Total.Minor {
+			t.Fatalf("reserve must stay provisioned: %d", e.balance(t, ledger.DisputeReserve))
+		}
+		// A real outcome arrives: lost.
+		n.Resolution = "merchant-accepted"
+		if err := e.o.HandlePaymentDispute(e.ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		// A conflicting later "won" is ignored: no second reserve release.
+		n.Resolution = "declined"
+		if err := e.o.HandlePaymentDispute(e.ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		d, _ = e.st.Repos().Disputes().ByPSP(e.ctx, "7001")
+		if d.Status != disputes.StatusAccepted {
+			t.Fatalf("final outcome flipped to %s", d.Status)
+		}
+		if e.balance(t, ledger.DisputeReserve) != 0 || e.balance(t, ledger.DisputeLoss) != txn.Total.Minor {
+			t.Fatalf("reserve=%d loss=%d", e.balance(t, ledger.DisputeReserve), e.balance(t, ledger.DisputeLoss))
+		}
+		e.assertBalanced(t)
+	})
+}

@@ -157,6 +157,11 @@ var (
 	ErrUnknownAccount = errors.New("reconcile: unknown ledger account")
 	ErrNoSource       = errors.New("reconcile: no statement source for provider")
 	ErrBadStatus      = errors.New("reconcile: invalid status")
+	// ErrIdempotencyKey: money-recording operator actions need a 16–128
+	// character Idempotency-Key so a retry or double click posts once.
+	ErrIdempotencyKey = errors.New("reconcile: Idempotency-Key header (16–128 chars) is required")
+	// ErrIdempotencyConflict: the key was already used for a different amount.
+	ErrIdempotencyConflict = errors.New("reconcile: Idempotency-Key was already used for a different top-up")
 )
 
 // Fingerprint is the idempotency key for an exception across re-runs of the

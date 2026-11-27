@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -576,7 +578,14 @@ func (e *Engine) ApproveAdjustment(ctx context.Context, actor audit.Actor, adjus
 	return out, err
 }
 
-func (e *Engine) RecordWalletTopup(ctx context.Context, actor audit.Actor, amount int64, currency string) (ledger.Transaction, error) {
+// RecordWalletTopup books a VTpass wallet top-up. It is idempotent per
+// idempotencyKey: a retried request (or double click) returns the original
+// posting instead of recording the money twice.
+func (e *Engine) RecordWalletTopup(ctx context.Context, actor audit.Actor, idempotencyKey string, amount int64, currency string) (ledger.Transaction, error) {
+	key := strings.TrimSpace(idempotencyKey)
+	if len(key) < 16 || len(key) > 128 {
+		return ledger.Transaction{}, ErrIdempotencyKey
+	}
 	if amount <= 0 {
 		return ledger.Transaction{}, ErrUnknownAccount
 	}
@@ -584,12 +593,14 @@ func (e *Engine) RecordWalletTopup(ctx context.Context, actor audit.Actor, amoun
 		currency = "NGN"
 	}
 	cur := money.Currency(currency)
+	sum := sha256.Sum256([]byte("vtpass-topup:" + key))
+	ref := "vtpass-topup:" + hex.EncodeToString(sum[:16])
 	id := uuid.New()
 	var posted ledger.Transaction
 	err := e.Host.InTx(ctx, func(t Tx) error {
 		var err error
 		posted, err = t.PostLedger(ctx, ledger.Transaction{
-			Reference: "vtpass-topup:" + id.String(), SourceType: "vendor_wallet_topup", SourceID: id,
+			ID: id, Reference: ref, SourceType: "vendor_wallet_topup", SourceID: id,
 			Description: "VTpass wallet top-up from bank", PostedAt: e.Now().UTC(),
 			Entries: []ledger.Entry{
 				{Account: ledger.VendorWalletPrefund, Direction: ledger.Debit, Amount: money.New(amount, cur)},
@@ -598,6 +609,14 @@ func (e *Engine) RecordWalletTopup(ctx context.Context, actor audit.Actor, amoun
 		})
 		if err != nil {
 			return err
+		}
+		if posted.ID != id { // replay of an already-recorded top-up
+			for _, en := range posted.Entries {
+				if en.Account == ledger.VendorWalletPrefund && en.Direction == ledger.Debit && en.Amount != money.New(amount, cur) {
+					return ErrIdempotencyConflict
+				}
+			}
+			return nil
 		}
 		return t.AddAudit(ctx, actor.Event("reconciliation.wallet_topup", "ledger", posted.ID, map[string]any{
 			"amount_minor": amount,
