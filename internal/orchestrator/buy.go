@@ -25,6 +25,10 @@ type QuoteSpec struct {
 	Pref                DeliveryPreference
 	ConfirmCustomerName bool
 	RequireNameConfirm  bool
+	// PartnerID, when set, marks a partner-API quote. SkipAuthorize lets
+	// partners buy for any validated meter (no consumer grant).
+	PartnerID     uuid.UUID
+	SkipAuthorize bool
 }
 
 type ScreenLine struct {
@@ -237,13 +241,27 @@ func (o *Orchestrator) IssueQuote(ctx context.Context, spec QuoteSpec) (*tx.Quot
 	} else if amountMinor < o.cfg.MinAmountMinor || amountMinor > o.cfg.MaxAmountMinor {
 		return nil, fmt.Errorf("%w: %d–%d kobo", ErrAmountOutOfRange, o.cfg.MinAmountMinor, o.cfg.MaxAmountMinor)
 	}
-	if err := o.ensurePurchaseAllowed(ctx, spec.CustomerID, spec.MeterID, amountMinor); err != nil {
-		return nil, err
+	if spec.SkipAuthorize {
+		if err := o.ensurePurchasesOpen(ctx); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := o.ensurePurchaseAllowed(ctx, spec.CustomerID, spec.MeterID, amountMinor); err != nil {
+			return nil, err
+		}
+		if err := o.ensurePurchaserActive(ctx, o.st.Repos(), spec.CustomerID); err != nil {
+			return nil, err
+		}
 	}
-	if err := o.ensurePurchaserActive(ctx, o.st.Repos(), spec.CustomerID); err != nil {
-		return nil, err
+	var (
+		m   *meters.Meter
+		err error
+	)
+	if spec.SkipAuthorize {
+		m, err = o.Meters.Get(ctx, spec.MeterID)
+	} else {
+		m, err = o.Meters.Authorize(ctx, spec.CustomerID, spec.MeterID, meters.PermPurchase)
 	}
-	m, err := o.Meters.Authorize(ctx, spec.CustomerID, spec.MeterID, meters.PermPurchase)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +314,7 @@ func (o *Orchestrator) IssueQuote(ctx context.Context, spec QuoteSpec) (*tx.Quot
 	total, _ := amt.Add(fee)
 	now := o.Now()
 	q := &tx.Quote{
-		ID: uuid.New(), CustomerID: spec.CustomerID, MeterID: spec.MeterID,
+		ID: uuid.New(), CustomerID: spec.CustomerID, PartnerID: spec.PartnerID, MeterID: spec.MeterID,
 		Amount: amt, Fee: fee, Total: total,
 		DeliveryMethod: method, DeliveryOptions: options, ExpiresAt: now.Add(o.cfg.QuoteTTL), CreatedAt: now,
 		PackID: packID, DiscoCode: m.DiscoCode, TariffBand: string(band), KoboPerKWh: kobo,

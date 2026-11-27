@@ -3217,7 +3217,7 @@ paths:
     get:
       operationId: adminGetPartnerUsage
       tags: [Admin]
-      summary: Daily partner usage counters (request count now; value_minor enforced in B5)
+      summary: Daily partner usage counters (request count and B5 value_minor)
       security:
         - bearerAuth: []
       parameters:
@@ -3251,6 +3251,169 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/partners/{id}/float:
+    get:
+      operationId: adminGetPartnerFloat
+      tags: [Admin]
+      summary: Partner float available balance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Float balance.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/partners/{id}/float/topups:
+    post:
+      operationId: adminProposePartnerFloatTopup
+      tags: [Admin]
+      summary: Propose a two-person partner float top-up against a bank receipt
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Proposed (or idempotent replay of the same receipt).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/partners/{id}/float/topups/{topup_id}/approve:
+    post:
+      operationId: adminApprovePartnerFloatTopup
+      tags: [Admin]
+      summary: Approve a partner float top-up (must be a different operator)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: topup_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Approved top-up; ledger posted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/partners/{id}/float/topups/{topup_id}/reject:
+    post:
+      operationId: adminRejectPartnerFloatTopup
+      tags: [Admin]
+      summary: Reject a pending partner float top-up
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: topup_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Rejected top-up.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
   /v1/partner/me:
     get:
       operationId: partnerMe
@@ -3270,6 +3433,196 @@ paths:
                 additionalProperties: true
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/partner/meters/validate:
+    post:
+      operationId: partnerValidateMeter
+      tags: [Partners]
+      summary: Validate a meter number with the vending provider
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Validation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/partner/quotes:
+    post:
+      operationId: partnerCreateQuote
+      tags: [Partners]
+      summary: Price an electricity purchase against partner float
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "201":
+          description: Quote.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/partner/purchases:
+    post:
+      operationId: partnerCreatePurchase
+      tags: [Partners]
+      summary: Debit partner float and vend (Idempotency-Key and partner_ref required)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Idempotent replay of an existing purchase.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "201":
+          description: Purchase created; payment is CONFIRMED from float.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    get:
+      operationId: partnerLookupPurchase
+      tags: [Partners]
+      summary: Look up a purchase by partner_ref
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: partner_ref
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Purchase.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/partner/purchases/{id}:
+    get:
+      operationId: partnerGetPurchase
+      tags: [Partners]
+      summary: Get a purchase by id (token only if the key may see it)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Purchase.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/partner/float:
+    get:
+      operationId: partnerGetFloat
+      tags: [Partners]
+      summary: Available partner float
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Float balance.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -5259,6 +5612,11 @@ components:
         - SCOPE_DENIED
         - SAME_APPROVER
         - PARTNER_PENDING
+        - INSUFFICIENT_FLOAT
+        - RECEIPT_CONFLICT
+        - PARTNER_REF_CONFLICT
+        - DAILY_CAP
+        - FLOAT_CONFLICT
         - INTERNAL_ERROR
 
     ErrorEnvelope:

@@ -171,12 +171,12 @@ func TestNotificationProvidersAndGiftSMSFlag(t *testing.T) {
 	if c.AccountErasureCooling != 7*24*time.Hour || c.AccountErasureInterval != 5*time.Second || c.AccountErasureBatchSize != 20 || !c.FeatureAccountErasure {
 		t.Fatalf("unexpected account-erasure defaults: %+v", c)
 	}
-	if !c.FeaturePartnerAPI || c.RatePartnerPerMin != 60 {
+	if !c.FeaturePartnerAPI || !c.FeaturePartnerFloat || c.RatePartnerPerMin != 60 {
 		t.Fatalf("unexpected partner-api defaults: %+v", c)
 	}
 	stg, _ := Load(env(map[string]string{"MODE": "staging"}))
-	if stg.FeaturePartnerAPI {
-		t.Fatal("FEATURE_PARTNER_API must default off outside dev")
+	if stg.FeaturePartnerAPI || stg.FeaturePartnerFloat {
+		t.Fatal("FEATURE_PARTNER_API and FEATURE_PARTNER_FLOAT must default off outside dev")
 	}
 	offPartner, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_PARTNER_API": "false"}))
 	if err != nil || offPartner.FeaturePartnerAPI {
@@ -184,6 +184,9 @@ func TestNotificationProvidersAndGiftSMSFlag(t *testing.T) {
 	}
 	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_PARTNER_API": "yes"})); err == nil || !strings.Contains(err.Error(), "FEATURE_PARTNER_API") {
 		t.Fatalf("invalid FEATURE_PARTNER_API must fail: %v", err)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_PARTNER_FLOAT": "yes"})); err == nil || !strings.Contains(err.Error(), "FEATURE_PARTNER_FLOAT") {
+		t.Fatalf("invalid FEATURE_PARTNER_FLOAT must fail: %v", err)
 	}
 
 	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_GIFT_SMS": "yes"})); err == nil || !strings.Contains(err.Error(), "FEATURE_GIFT_SMS") {

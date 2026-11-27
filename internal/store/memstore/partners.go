@@ -251,3 +251,145 @@ func (r partnerRepo) ListUsage(_ context.Context, partnerID uuid.UUID, from, to 
 	sort.Slice(out, func(i, j int) bool { return out[i].Day.Before(out[j].Day) })
 	return out, nil
 }
+
+func utcDay(day time.Time) time.Time {
+	return time.Date(day.UTC().Year(), day.UTC().Month(), day.UTC().Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func (r partnerRepo) GetUsage(_ context.Context, partnerID uuid.UUID, day time.Time) (partners.Usage, error) {
+	defer r.lock()()
+	day = utcDay(day)
+	if u, ok := r.s.partnerUsage[usageKey(partnerID, day)]; ok {
+		return *u, nil
+	}
+	return partners.Usage{PartnerID: partnerID, Day: day}, nil
+}
+
+func cloneFloat(f partners.Float) partners.Float { return f }
+
+func cloneTopup(t partners.FloatTopup) partners.FloatTopup {
+	out := t
+	if t.ApprovedAt != nil {
+		at := *t.ApprovedAt
+		out.ApprovedAt = &at
+	}
+	if t.RejectedAt != nil {
+		at := *t.RejectedAt
+		out.RejectedAt = &at
+	}
+	return out
+}
+
+func (r partnerRepo) GetFloat(_ context.Context, partnerID uuid.UUID) (partners.Float, error) {
+	defer r.lock()()
+	f, ok := r.s.partnerFloat[partnerID]
+	if !ok {
+		return partners.Float{PartnerID: partnerID, Currency: "NGN"}, nil
+	}
+	return cloneFloat(*f), nil
+}
+
+func (r partnerRepo) GetFloatForUpdate(_ context.Context, partnerID uuid.UUID) (partners.Float, error) {
+	defer r.lock()()
+	f, ok := r.s.partnerFloat[partnerID]
+	if !ok {
+		return partners.Float{}, store.ErrNotFound
+	}
+	return cloneFloat(*f), nil
+}
+
+func (r partnerRepo) EnsureFloatForUpdate(_ context.Context, partnerID uuid.UUID, now time.Time) (partners.Float, error) {
+	defer r.lock()()
+	if f, ok := r.s.partnerFloat[partnerID]; ok {
+		return cloneFloat(*f), nil
+	}
+	n := partners.Float{PartnerID: partnerID, Currency: "NGN", Version: 1, UpdatedAt: now.UTC()}
+	cp := n
+	r.s.partnerFloat[partnerID] = &cp
+	r.onUndo(func() { delete(r.s.partnerFloat, partnerID) })
+	return n, nil
+}
+
+func (r partnerRepo) UpdateFloat(_ context.Context, f partners.Float) error {
+	defer r.lock()()
+	cur, ok := r.s.partnerFloat[f.PartnerID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if cur.Version != f.Version {
+		return partners.ErrFloatConflict
+	}
+	if f.AvailableMinor < 0 {
+		return partners.ErrInvalidInput
+	}
+	prev := *cur
+	cur.AvailableMinor = f.AvailableMinor
+	cur.Currency = f.Currency
+	if cur.Currency == "" {
+		cur.Currency = "NGN"
+	}
+	cur.Version++
+	cur.UpdatedAt = f.UpdatedAt.UTC()
+	r.onUndo(func() { *cur = prev })
+	return nil
+}
+
+func (r partnerRepo) CreateTopup(_ context.Context, t partners.FloatTopup) error {
+	defer r.lock()()
+	if t.ID == uuid.Nil {
+		t.ID = uuid.New()
+	}
+	if _, ok := r.s.partnerTopups[t.ID]; ok {
+		return store.ErrDuplicate
+	}
+	if _, ok := r.s.partnerTopupsByReceipt[t.ReceiptRef]; ok {
+		return store.ErrDuplicate
+	}
+	cp := cloneTopup(t)
+	r.s.partnerTopups[t.ID] = &cp
+	r.s.partnerTopupsByReceipt[t.ReceiptRef] = t.ID
+	r.onUndo(func() {
+		delete(r.s.partnerTopups, t.ID)
+		delete(r.s.partnerTopupsByReceipt, t.ReceiptRef)
+	})
+	return nil
+}
+
+func (r partnerRepo) getTopupLocked(id uuid.UUID) (partners.FloatTopup, error) {
+	t, ok := r.s.partnerTopups[id]
+	if !ok {
+		return partners.FloatTopup{}, store.ErrNotFound
+	}
+	return cloneTopup(*t), nil
+}
+
+func (r partnerRepo) GetTopup(_ context.Context, id uuid.UUID) (partners.FloatTopup, error) {
+	defer r.lock()()
+	return r.getTopupLocked(id)
+}
+
+func (r partnerRepo) GetTopupForUpdate(ctx context.Context, id uuid.UUID) (partners.FloatTopup, error) {
+	return r.GetTopup(ctx, id)
+}
+
+func (r partnerRepo) GetTopupByReceipt(_ context.Context, receiptRef string) (partners.FloatTopup, error) {
+	defer r.lock()()
+	id, ok := r.s.partnerTopupsByReceipt[receiptRef]
+	if !ok {
+		return partners.FloatTopup{}, store.ErrNotFound
+	}
+	return r.getTopupLocked(id)
+}
+
+func (r partnerRepo) UpdateTopup(_ context.Context, t partners.FloatTopup) error {
+	defer r.lock()()
+	cur, ok := r.s.partnerTopups[t.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	prev := *cur
+	cp := cloneTopup(t)
+	*cur = cp
+	r.onUndo(func() { *cur = prev })
+	return nil
+}

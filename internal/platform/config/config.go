@@ -95,6 +95,7 @@ type Config struct {
 	AccountErasureBatchSize     int
 	FeatureAccountErasure       bool
 	FeaturePartnerAPI           bool
+	FeaturePartnerFloat         bool
 	RatePartnerPerMin           int
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
@@ -463,6 +464,16 @@ func Load(getenv func(string) string) (Config, error) {
 		c.FeaturePartnerAPI = false
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_PARTNER_API: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_PARTNER_FLOAT"))) {
+	case "":
+		c.FeaturePartnerFloat = c.Mode == Dev
+	case "true", "1":
+		c.FeaturePartnerFloat = true
+	case "false", "0":
+		c.FeaturePartnerFloat = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_PARTNER_FLOAT: must be true or false"))
 	}
 	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_RISK_ENGINE"))) {
 	case "":

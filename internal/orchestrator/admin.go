@@ -162,8 +162,11 @@ func (o *Orchestrator) OperatorRefund(ctx context.Context, id uuid.UUID, actor a
 	if t.Vending != tx.VendNotStarted && t.Vending != tx.VendFailed {
 		return t, ErrRefundNotSafe
 	}
-	if t.EffectiveFundingSource() == tx.FundingPot {
+	switch t.EffectiveFundingSource() {
+	case tx.FundingPot:
 		return o.refundPotFunded(ctx, id, "operator refund: "+actor.Reason, &actor)
+	case tx.FundingPartnerFloat:
+		return o.refundPartnerFloat(ctx, id, "operator refund: "+actor.Reason, &actor)
 	}
 	if t.PaymentProviderRef == "" {
 		return t, ErrNothingToRefund

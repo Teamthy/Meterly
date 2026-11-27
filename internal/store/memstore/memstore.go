@@ -44,101 +44,105 @@ import (
 type Store struct {
 	mu sync.Mutex
 
-	users             map[string]string
-	userIDs           map[string]bool
-	userExt           map[string]string
-	userStatus        map[string]string
-	userProfiles      map[string]identity.Profile
-	userContacts      map[string]notifications.UserContacts
-	authChallenges    map[string]identity.Challenge
-	authCreds         map[string]identity.Credential
-	authSessions      map[string]identity.Session
-	securityEvents    []security.Event
-	meters            map[uuid.UUID]*meters.Meter
-	meterByHash       map[string]uuid.UUID
-	grants            []*meters.Grant
-	quotes            map[uuid.UUID]*tx.Quote
-	txns              map[uuid.UUID]*tx.Transaction
-	txnByPayRef       map[string]uuid.UUID
-	ledger            []ledger.Transaction
-	ledgerByRef       map[string]int
-	outbox            []*events.Event
-	idem              map[string]*idempotency.Record
-	audit             []audit.Event
-	providerOff       map[string]bool
-	tokenShares       []tokenshares.Share
-	gifts             map[uuid.UUID]gifts.Gift
-	candidates        map[uuid.UUID]notificationintents.Intent
-	notifPrefs        map[string]notifications.Preferences
-	optOuts           map[string]notifications.OptOut
-	waWindows         map[string]time.Time
-	deliveries        map[uuid.UUID]*notifications.Delivery
-	deliveryByKey     map[string]uuid.UUID
-	payReqs           map[uuid.UUID]*payrequests.PaymentRequest
-	payReqByCodeHMAC  map[string]uuid.UUID
-	payers            map[uuid.UUID]payrequests.Payer
-	payerByStatusHMAC map[string]uuid.UUID
-	pots              map[uuid.UUID]*pots.Pot
-	potByCodeHMAC     map[string]uuid.UUID
-	contribs          map[uuid.UUID]*pots.Contribution
-	contribByPayRef   map[string]uuid.UUID
-	allocs            map[uuid.UUID]*pots.Allocation
-	allocByTxn        map[uuid.UUID]uuid.UUID
-	payMethods        map[uuid.UUID]*autopower.SavedPaymentMethod
-	apRules           map[uuid.UUID]*autopower.Rule
-	apRuns            map[uuid.UUID]*autopower.Run
-	apRunBySlot       map[string]uuid.UUID
-	apRunByTxn        map[uuid.UUID]uuid.UUID
-	orgs              map[uuid.UUID]*powerdesk.Organisation
-	orgMembers        map[string]*powerdesk.Member // "<org_id>:<user_id>"
-	properties        map[uuid.UUID]*powerdesk.Property
-	buildings         map[uuid.UUID]*powerdesk.Building
-	units             map[uuid.UUID]*powerdesk.Unit
-	unitMeters        map[uuid.UUID]*powerdesk.UnitMeter
-	bulkTopups        map[uuid.UUID]*powerdesk.BulkTopup
-	bulkTopupByIdem   map[string]uuid.UUID // "<org_id>:<key>"
-	bulkItems         map[uuid.UUID]*powerdesk.BulkTopupItem
-	phoneLinks        map[string]*conversation.PhoneLink
-	channelOTPs       map[uuid.UUID]*conversation.ChannelOTP
-	convSessions      map[uuid.UUID]*conversation.Session
-	convSessionByProv map[string]uuid.UUID // "<channel>:<provider_session_id>"
-	processedMsgs     map[string]time.Time // "<channel>:<message_id>"
-	offlinePurchases  map[uuid.UUID]*conversation.OfflinePurchase
-	tokenResends      []*conversation.TokenResend
-	supportKeys       map[string]*support.IdentityKey
-	supportThreads    map[uuid.UUID]*support.Thread
-	supportMessages   map[uuid.UUID]*support.Message
-	supportWraps      map[string]*support.WrappedKey // threadID + ":" + holder
-	households        map[uuid.UUID]households.Household
-	hhMembers         map[string]households.Member    // householdID:userID
-	hhMeters          map[string]households.MeterLink // householdID:meterID
-	ownership         map[string]households.Ownership // meterID:userID
-	remoteCohorts     map[uuid.UUID]meters.RemoteCohort
-	readingSamples    map[uuid.UUID][]meters.ReadingSample
-	lowUnitAlerts     map[string]lowUnitAlert
-	reconRuns         map[string]*reconcile.Run
-	reconEx           map[uuid.UUID]*reconcile.Exception
-	reconExFP         map[string]uuid.UUID
-	reconAdj          map[uuid.UUID]*reconcile.Adjustment
-	riskRules         map[string]*risk.Rule
-	riskObs           []risk.Observation
-	riskDec           map[uuid.UUID]*risk.Decision
-	riskDeny          map[uuid.UUID]*risk.DenyEntry
-	riskPauses        map[uuid.UUID]risk.LinkPause
-	disputes          map[uuid.UUID]*disputes.Dispute
-	disputesByPSP     map[string]uuid.UUID
-	pilotAllow        map[string]*pilot.Entry
-	consents          []privacy.Record
-	legalHolds        map[uuid.UUID]privacy.Hold
-	retentionRuns     []privacy.RetentionRun
-	dataExports       map[uuid.UUID]privacy.ExportJob
-	dataExportByDay   map[string]uuid.UUID
-	erasureReqs       map[uuid.UUID]privacy.ErasureRequest
-	erasureByUser     map[string]uuid.UUID
-	partners          map[uuid.UUID]*partners.Partner
-	partnerKeys       map[uuid.UUID]*partners.APIKey
-	partnerKeysPrefix map[string]uuid.UUID
-	partnerUsage      map[string]*partners.Usage
+	users                  map[string]string
+	userIDs                map[string]bool
+	userExt                map[string]string
+	userStatus             map[string]string
+	userProfiles           map[string]identity.Profile
+	userContacts           map[string]notifications.UserContacts
+	authChallenges         map[string]identity.Challenge
+	authCreds              map[string]identity.Credential
+	authSessions           map[string]identity.Session
+	securityEvents         []security.Event
+	meters                 map[uuid.UUID]*meters.Meter
+	meterByHash            map[string]uuid.UUID
+	grants                 []*meters.Grant
+	quotes                 map[uuid.UUID]*tx.Quote
+	txns                   map[uuid.UUID]*tx.Transaction
+	txnByPayRef            map[string]uuid.UUID
+	ledger                 []ledger.Transaction
+	ledgerByRef            map[string]int
+	outbox                 []*events.Event
+	idem                   map[string]*idempotency.Record
+	audit                  []audit.Event
+	providerOff            map[string]bool
+	tokenShares            []tokenshares.Share
+	gifts                  map[uuid.UUID]gifts.Gift
+	candidates             map[uuid.UUID]notificationintents.Intent
+	notifPrefs             map[string]notifications.Preferences
+	optOuts                map[string]notifications.OptOut
+	waWindows              map[string]time.Time
+	deliveries             map[uuid.UUID]*notifications.Delivery
+	deliveryByKey          map[string]uuid.UUID
+	payReqs                map[uuid.UUID]*payrequests.PaymentRequest
+	payReqByCodeHMAC       map[string]uuid.UUID
+	payers                 map[uuid.UUID]payrequests.Payer
+	payerByStatusHMAC      map[string]uuid.UUID
+	pots                   map[uuid.UUID]*pots.Pot
+	potByCodeHMAC          map[string]uuid.UUID
+	contribs               map[uuid.UUID]*pots.Contribution
+	contribByPayRef        map[string]uuid.UUID
+	allocs                 map[uuid.UUID]*pots.Allocation
+	allocByTxn             map[uuid.UUID]uuid.UUID
+	payMethods             map[uuid.UUID]*autopower.SavedPaymentMethod
+	apRules                map[uuid.UUID]*autopower.Rule
+	apRuns                 map[uuid.UUID]*autopower.Run
+	apRunBySlot            map[string]uuid.UUID
+	apRunByTxn             map[uuid.UUID]uuid.UUID
+	orgs                   map[uuid.UUID]*powerdesk.Organisation
+	orgMembers             map[string]*powerdesk.Member // "<org_id>:<user_id>"
+	properties             map[uuid.UUID]*powerdesk.Property
+	buildings              map[uuid.UUID]*powerdesk.Building
+	units                  map[uuid.UUID]*powerdesk.Unit
+	unitMeters             map[uuid.UUID]*powerdesk.UnitMeter
+	bulkTopups             map[uuid.UUID]*powerdesk.BulkTopup
+	bulkTopupByIdem        map[string]uuid.UUID // "<org_id>:<key>"
+	bulkItems              map[uuid.UUID]*powerdesk.BulkTopupItem
+	phoneLinks             map[string]*conversation.PhoneLink
+	channelOTPs            map[uuid.UUID]*conversation.ChannelOTP
+	convSessions           map[uuid.UUID]*conversation.Session
+	convSessionByProv      map[string]uuid.UUID // "<channel>:<provider_session_id>"
+	processedMsgs          map[string]time.Time // "<channel>:<message_id>"
+	offlinePurchases       map[uuid.UUID]*conversation.OfflinePurchase
+	tokenResends           []*conversation.TokenResend
+	supportKeys            map[string]*support.IdentityKey
+	supportThreads         map[uuid.UUID]*support.Thread
+	supportMessages        map[uuid.UUID]*support.Message
+	supportWraps           map[string]*support.WrappedKey // threadID + ":" + holder
+	households             map[uuid.UUID]households.Household
+	hhMembers              map[string]households.Member    // householdID:userID
+	hhMeters               map[string]households.MeterLink // householdID:meterID
+	ownership              map[string]households.Ownership // meterID:userID
+	remoteCohorts          map[uuid.UUID]meters.RemoteCohort
+	readingSamples         map[uuid.UUID][]meters.ReadingSample
+	lowUnitAlerts          map[string]lowUnitAlert
+	reconRuns              map[string]*reconcile.Run
+	reconEx                map[uuid.UUID]*reconcile.Exception
+	reconExFP              map[string]uuid.UUID
+	reconAdj               map[uuid.UUID]*reconcile.Adjustment
+	riskRules              map[string]*risk.Rule
+	riskObs                []risk.Observation
+	riskDec                map[uuid.UUID]*risk.Decision
+	riskDeny               map[uuid.UUID]*risk.DenyEntry
+	riskPauses             map[uuid.UUID]risk.LinkPause
+	disputes               map[uuid.UUID]*disputes.Dispute
+	disputesByPSP          map[string]uuid.UUID
+	pilotAllow             map[string]*pilot.Entry
+	consents               []privacy.Record
+	legalHolds             map[uuid.UUID]privacy.Hold
+	retentionRuns          []privacy.RetentionRun
+	dataExports            map[uuid.UUID]privacy.ExportJob
+	dataExportByDay        map[string]uuid.UUID
+	erasureReqs            map[uuid.UUID]privacy.ErasureRequest
+	erasureByUser          map[string]uuid.UUID
+	partners               map[uuid.UUID]*partners.Partner
+	partnerKeys            map[uuid.UUID]*partners.APIKey
+	partnerKeysPrefix      map[string]uuid.UUID
+	partnerUsage           map[string]*partners.Usage
+	partnerFloat           map[uuid.UUID]*partners.Float
+	partnerTopups          map[uuid.UUID]*partners.FloatTopup
+	partnerTopupsByReceipt map[string]uuid.UUID
+	txnByPartnerRef        map[string]uuid.UUID
 }
 
 func New() *Store {
@@ -147,30 +151,34 @@ func New() *Store {
 		userStatus:   map[string]string{},
 		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
 		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
-		authSessions:      map[string]identity.Session{},
-		readingSamples:    map[uuid.UUID][]meters.ReadingSample{},
-		lowUnitAlerts:     map[string]lowUnitAlert{},
-		reconRuns:         map[string]*reconcile.Run{},
-		reconEx:           map[uuid.UUID]*reconcile.Exception{},
-		reconExFP:         map[string]uuid.UUID{},
-		reconAdj:          map[uuid.UUID]*reconcile.Adjustment{},
-		riskRules:         map[string]*risk.Rule{},
-		riskDec:           map[uuid.UUID]*risk.Decision{},
-		riskDeny:          map[uuid.UUID]*risk.DenyEntry{},
-		riskPauses:        map[uuid.UUID]risk.LinkPause{},
-		disputes:          map[uuid.UUID]*disputes.Dispute{},
-		disputesByPSP:     map[string]uuid.UUID{},
-		pilotAllow:        map[string]*pilot.Entry{},
-		legalHolds:        map[uuid.UUID]privacy.Hold{},
-		dataExports:       map[uuid.UUID]privacy.ExportJob{},
-		dataExportByDay:   map[string]uuid.UUID{},
-		erasureReqs:       map[uuid.UUID]privacy.ErasureRequest{},
-		erasureByUser:     map[string]uuid.UUID{},
-		partners:          map[uuid.UUID]*partners.Partner{},
-		partnerKeys:       map[uuid.UUID]*partners.APIKey{},
-		partnerKeysPrefix: map[string]uuid.UUID{},
-		partnerUsage:      map[string]*partners.Usage{},
-		meters:            map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
+		authSessions:           map[string]identity.Session{},
+		readingSamples:         map[uuid.UUID][]meters.ReadingSample{},
+		lowUnitAlerts:          map[string]lowUnitAlert{},
+		reconRuns:              map[string]*reconcile.Run{},
+		reconEx:                map[uuid.UUID]*reconcile.Exception{},
+		reconExFP:              map[string]uuid.UUID{},
+		reconAdj:               map[uuid.UUID]*reconcile.Adjustment{},
+		riskRules:              map[string]*risk.Rule{},
+		riskDec:                map[uuid.UUID]*risk.Decision{},
+		riskDeny:               map[uuid.UUID]*risk.DenyEntry{},
+		riskPauses:             map[uuid.UUID]risk.LinkPause{},
+		disputes:               map[uuid.UUID]*disputes.Dispute{},
+		disputesByPSP:          map[string]uuid.UUID{},
+		pilotAllow:             map[string]*pilot.Entry{},
+		legalHolds:             map[uuid.UUID]privacy.Hold{},
+		dataExports:            map[uuid.UUID]privacy.ExportJob{},
+		dataExportByDay:        map[string]uuid.UUID{},
+		erasureReqs:            map[uuid.UUID]privacy.ErasureRequest{},
+		erasureByUser:          map[string]uuid.UUID{},
+		partners:               map[uuid.UUID]*partners.Partner{},
+		partnerKeys:            map[uuid.UUID]*partners.APIKey{},
+		partnerKeysPrefix:      map[string]uuid.UUID{},
+		partnerUsage:           map[string]*partners.Usage{},
+		partnerFloat:           map[uuid.UUID]*partners.Float{},
+		partnerTopups:          map[uuid.UUID]*partners.FloatTopup{},
+		partnerTopupsByReceipt: map[string]uuid.UUID{},
+		txnByPartnerRef:        map[string]uuid.UUID{},
+		meters:                 map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
 		gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},
@@ -598,6 +606,14 @@ func (r txnRepo) Create(_ context.Context, t *tx.Transaction) error {
 	}
 	t.Version = 1
 	t.PersistedEvents = len(t.History)
+	if t.PartnerID != uuid.Nil && t.PartnerRef != "" {
+		key := partnerRefKey(t.PartnerID, t.PartnerRef)
+		if _, ok := r.s.txnByPartnerRef[key]; ok {
+			return store.ErrDuplicate
+		}
+		r.s.txnByPartnerRef[key] = t.ID
+		r.onUndo(func() { delete(r.s.txnByPartnerRef, key) })
+	}
 	r.s.txns[t.ID] = cloneTxn(t)
 	r.onUndo(func() { delete(r.s.txns, t.ID) })
 	if t.PaymentProviderRef != "" {
@@ -606,6 +622,10 @@ func (r txnRepo) Create(_ context.Context, t *tx.Transaction) error {
 		r.onUndo(func() { delete(r.s.txnByPayRef, ref) })
 	}
 	return nil
+}
+
+func partnerRefKey(partnerID uuid.UUID, ref string) string {
+	return partnerID.String() + "\x00" + ref
 }
 
 func (r txnRepo) Get(_ context.Context, id uuid.UUID) (*tx.Transaction, error) {
@@ -619,6 +639,19 @@ func (r txnRepo) Get(_ context.Context, id uuid.UUID) (*tx.Transaction, error) {
 
 func (r txnRepo) GetForUpdate(ctx context.Context, id uuid.UUID) (*tx.Transaction, error) {
 	return r.Get(ctx, id)
+}
+
+func (r txnRepo) GetByPartnerRef(_ context.Context, partnerID uuid.UUID, partnerRef string) (*tx.Transaction, error) {
+	defer r.lock()()
+	id, ok := r.s.txnByPartnerRef[partnerRefKey(partnerID, partnerRef)]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	t, ok := r.s.txns[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return cloneTxn(t), nil
 }
 
 func (r txnRepo) ByPaymentRef(ctx context.Context, ref string) (*tx.Transaction, error) {

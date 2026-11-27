@@ -70,22 +70,23 @@ type Server struct {
 	Ready         func(context.Context) error
 	Limits        Limits
 	// NewLimiter, when set, builds shared (e.g. Redis) buckets. Nil = in-process.
-	NewLimiter         func(name string, perMinute, burst int) ratelimit.Limiter
-	PayForMeDisabled   bool
-	SplitMeterDisabled bool
-	AutoPowerDisabled  bool
-	PowerDeskDisabled  bool
-	USSDDisabled       bool
-	WhatsAppDisabled   bool
-	SupportDisabled    bool
-	HouseholdsDisabled bool
-	PublicBaseURL      string
-	ExportTTL          time.Duration
-	ErasureDisabled    bool
-	ErasureCooling     time.Duration
-	PartnerDisabled    bool
-	PartnerEnvironment string // SANDBOX | PRODUCTION; empty = SANDBOX
-	Partners           *partners.Engine
+	NewLimiter           func(name string, perMinute, burst int) ratelimit.Limiter
+	PayForMeDisabled     bool
+	SplitMeterDisabled   bool
+	AutoPowerDisabled    bool
+	PowerDeskDisabled    bool
+	USSDDisabled         bool
+	WhatsAppDisabled     bool
+	SupportDisabled      bool
+	HouseholdsDisabled   bool
+	PublicBaseURL        string
+	ExportTTL            time.Duration
+	ErasureDisabled      bool
+	ErasureCooling       time.Duration
+	PartnerDisabled      bool
+	PartnerFloatDisabled bool
+	PartnerEnvironment   string // SANDBOX | PRODUCTION; empty = SANDBOX
+	Partners             *partners.Engine
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
 	DevPay      *mock.Payments
@@ -1044,7 +1045,22 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, partners.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		writeErr(w, 404, "NOT_FOUND", "not found")
 	case errors.Is(err, partners.ErrSameApprover):
-		writeErr(w, 409, "SAME_APPROVER", "a different operator must approve production activation")
+		writeErr(w, 409, "SAME_APPROVER", "a different operator must approve")
+	case errors.Is(err, partners.ErrReceiptConflict):
+		writeErr(w, 409, "RECEIPT_CONFLICT", "this bank receipt was already recorded with different details")
+	case errors.Is(err, partners.ErrNotPendingTopup):
+		writeErr(w, 409, "INVALID_REQUEST", "top-up is not pending")
+	case errors.Is(err, partners.ErrFloatConflict):
+		writeErr(w, 409, "FLOAT_CONFLICT", "float was updated concurrently; retry")
+	case errors.Is(err, orchestrator.ErrInsufficientFloat):
+		writeErr(w, 409, "INSUFFICIENT_FLOAT", "partner float is too low for this purchase")
+	case errors.Is(err, orchestrator.ErrPartnerDailyCap):
+		writeErr(w, 429, "DAILY_CAP", "partner daily value cap reached")
+	case errors.Is(err, orchestrator.ErrPartnerRefConflict):
+		writeErr(w, 409, "PARTNER_REF_CONFLICT", "partner_ref already used")
+	case errors.Is(err, orchestrator.ErrPartnerRef), errors.Is(err, orchestrator.ErrReceiptRef),
+		errors.Is(err, orchestrator.ErrPartnerMeter):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, partners.ErrNotActive), errors.Is(err, partners.ErrNotPending):
 		writeErr(w, 409, "PARTNER_PENDING", "partner is not active")
 	case errors.Is(err, partners.ErrAlreadyActive):

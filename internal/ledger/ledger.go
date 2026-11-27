@@ -31,6 +31,7 @@ const (
 	VendorCommissionIncome  AccountCode = "VENDOR_COMMISSION_INCOME"  // income
 	DisputeReserve          AccountCode = "DISPUTE_RESERVE"           // liability
 	DisputeLoss             AccountCode = "DISPUTE_LOSS"              // expense
+	PartnerFloat            AccountCode = "PARTNER_FLOAT"             // liability
 )
 
 type Direction string

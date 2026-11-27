@@ -250,6 +250,7 @@ type TransactionRepo interface {
 	// GetForUpdate locks the row until the surrounding transaction ends.
 	GetForUpdate(ctx context.Context, id uuid.UUID) (*tx.Transaction, error)
 	ByPaymentRef(ctx context.Context, ref string) (*tx.Transaction, error)
+	GetByPartnerRef(ctx context.Context, partnerID uuid.UUID, partnerRef string) (*tx.Transaction, error)
 	// Save persists t if nobody saved since it was loaded (optimistic
 	// concurrency), appends new history, and increments t.Version.
 	Save(ctx context.Context, t *tx.Transaction) error

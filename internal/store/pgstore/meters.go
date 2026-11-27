@@ -223,11 +223,11 @@ func (r quoteRepo) Create(ctx context.Context, q *tx.Quote) error {
 	_, err := r.db.Exec(ctx, `
 		INSERT INTO quotes (id, customer_id, meter_id, amount_minor, fee_minor, total_minor, currency,
 		                    delivery_method, delivery_options, expires_at, status, created_at,
-		                    pack_id, tariff_band, kobo_per_kwh, estimated_units_milli, credit_minor, discount_minor)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'OPEN', $11, $12, $13, $14, $15, $16, $17)`,
+		                    pack_id, tariff_band, kobo_per_kwh, estimated_units_milli, credit_minor, discount_minor, partner_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'OPEN', $11, $12, $13, $14, $15, $16, $17, $18)`,
 		q.ID, q.CustomerID, q.MeterID, q.Amount.Minor, q.Fee.Minor, q.Total.Minor, string(q.Total.Currency),
 		q.DeliveryMethod, opts, q.ExpiresAt, q.CreatedAt,
-		q.PackID, q.TariffBand, q.KoboPerKWh, q.EstimatedUnitsMilli, q.CreditMinor, q.DiscountMinor)
+		q.PackID, q.TariffBand, q.KoboPerKWh, q.EstimatedUnitsMilli, q.CreditMinor, q.DiscountMinor, nilUUID(q.PartnerID))
 	return mapErr(err)
 }
 
@@ -235,18 +235,24 @@ func (r quoteRepo) get(ctx context.Context, id uuid.UUID, lock string) (*tx.Quot
 	var q tx.Quote
 	var cur, status string
 	var opts []string
+	var partnerID *uuid.UUID
 	err := r.db.QueryRow(ctx, `SELECT id, customer_id::text, meter_id, amount_minor, fee_minor, total_minor, currency,
 		delivery_method, delivery_options, expires_at, status, created_at,
 		coalesce(pack_id, ''), coalesce(tariff_band, ''), coalesce(kobo_per_kwh, 0),
-		coalesce(estimated_units_milli, 0), coalesce(credit_minor, 0), coalesce(discount_minor, 0)
+		coalesce(estimated_units_milli, 0), coalesce(credit_minor, 0), coalesce(discount_minor, 0),
+		partner_id
 		FROM quotes WHERE id = $1 `+lock, id).
 		Scan(&q.ID, &q.CustomerID, &q.MeterID, &q.Amount.Minor, &q.Fee.Minor, &q.Total.Minor, &cur,
 			&q.DeliveryMethod, &opts, &q.ExpiresAt, &status, &q.CreatedAt,
-			&q.PackID, &q.TariffBand, &q.KoboPerKWh, &q.EstimatedUnitsMilli, &q.CreditMinor, &q.DiscountMinor)
+			&q.PackID, &q.TariffBand, &q.KoboPerKWh, &q.EstimatedUnitsMilli, &q.CreditMinor, &q.DiscountMinor,
+			&partnerID)
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	q.Amount.Currency, q.Fee.Currency, q.Total.Currency = money.Currency(cur), money.Currency(cur), money.Currency(cur)
+	if partnerID != nil {
+		q.PartnerID = *partnerID
+	}
 	for _, o := range opts {
 		q.DeliveryOptions = append(q.DeliveryOptions, tx.DeliveryMethod(o))
 	}
