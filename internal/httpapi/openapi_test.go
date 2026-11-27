@@ -190,6 +190,40 @@ func TestOpenAPISpecMatchesMuxAndContracts(t *testing.T) {
 	if len(extraInSpec) > 0 {
 		t.Errorf("api/openapi.yaml routes that do not exist on production mux: %v", extraInSpec)
 	}
+
+	for _, want := range p2p4AdminRoutes {
+		if !muxSet[want] {
+			t.Errorf("P2–P4 admin route missing from mux: %s", want)
+		}
+		if !specSet[want] {
+			t.Errorf("P2–P4 admin route missing from api/openapi.yaml: %s", want)
+		}
+	}
+}
+
+// P2 reconciliation, P3 risk/disputes, P4 pilot — must stay on the production mux and OpenAPI.
+var p2p4AdminRoutes = []string{
+	"GET /v1/admin/reconciliation/exceptions",
+	"GET /v1/admin/reconciliation/exceptions/{id}",
+	"POST /v1/admin/reconciliation/exceptions/{id}/assign",
+	"POST /v1/admin/reconciliation/exceptions/{id}/resolve",
+	"POST /v1/admin/reconciliation/exceptions/{id}/adjustments",
+	"POST /v1/admin/reconciliation/adjustments/{id}/approve",
+	"GET /v1/admin/reconciliation/summary",
+	"POST /v1/admin/reconciliation/wallet-topup",
+	"GET /v1/admin/risk/rules",
+	"PUT /v1/admin/risk/rules/{code}",
+	"GET /v1/admin/risk/denylist",
+	"POST /v1/admin/risk/denylist",
+	"DELETE /v1/admin/risk/denylist/{id}",
+	"GET /v1/admin/disputes",
+	"GET /v1/admin/disputes/{id}",
+	"GET /v1/admin/disputes/{id}/evidence",
+	"GET /v1/admin/pilot",
+	"POST /v1/admin/pilot/allowlist",
+	"DELETE /v1/admin/pilot/allowlist",
+	"POST /v1/admin/pilot/pause",
+	"POST /v1/admin/pilot/resume",
 }
 
 func TestOpenAPIDriftDetection(t *testing.T) {

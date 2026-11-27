@@ -24,7 +24,9 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 
 ## Chart of accounts (P2 settlement)
 
-Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTpass wallet recon. **Fee and commission treatment is a founder/finance default** and must be revisited against the live merchant contract; the engine never invents a split.
+Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTpass wallet recon.
+
+**Pending founder/finance decision:** how to post Paystack fees, VTpass commission, and VAT on the convenience fee. Until signed off, use the default table below (`PSP_FEES_EXPENSE` only when a settlement batch balances; `VENDOR_COMMISSION_INCOME` never posted implicitly). Flagged in HANDOFF §9. The engine never invents a split.
 
 | Account | Type | Role | Default posting |
 |---|---|---|---|
