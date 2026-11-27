@@ -1,13 +1,13 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-27. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. Review fixes from PRs #5–#23 landed here; P1 certify harness is in code, providers **not certified** (no sandbox keys).
+> **Last updated:** 2026-11-27 (B0). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4 (PR #25 @ `1208ca6`). Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B0→B9).
 
 ## 0. Start here
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
 2. Branch: `arena/7cc28241-meterly`. **Do not switch branches.**
-3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, and the customer security engine are in code. Left is **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
+3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, and P0–P4 are **merged**. Engineering left is **B1+** (NDPA, partner API) plus **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
 4. Product truth: credit lands **on the meter**. `ACCEPTED ≠ CONFIRMED`. Keypad meters get STS fallback. **Do not invent AMI/HES APIs.**
 5. Do not commit secrets.
 
@@ -16,14 +16,15 @@
 | # | What | Who | Status |
 |---|---|---|---|
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
-| 2 | Render API + apply migrations `0018`–`0021` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`) |
+| 2 | Render API + apply migrations `0018`–`0024` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0024` **unapplied**. |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
 | 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
 | 6 | Legal sign-off before prod flags | Legal | `docs/LEGAL.md` — NDPA / NCC / CBN / NERC / LASERC |
 | 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
-| 8 | P3 risk engine + chargebacks | Eng | **In code** on this branch (migration `0023`, unapplied hosted) |
-| 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **In code** on this branch (migration `0024`, unapplied hosted) |
+| 8 | P3 risk engine + chargebacks | Eng | **Merged** — [PR #24](https://github.com/Teamthy/Meterly/pull/24) via [PR #25](https://github.com/Teamthy/Meterly/pull/25). Migration `0023` **unapplied hosted**. |
+| 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **Merged** — same PRs. Migration `0024` **unapplied hosted**. Dress rehearsal blocked on hosting. |
+| 10 | B1 NDPA (data map, consent, retention) | Eng | Next engineering batch after B0. `docs/prompts/MASTER_PROMPT_BATCHES.md` |
 
 ---
 
@@ -50,11 +51,12 @@ OPay airtime works because every phone has a **network account** the telco can c
 | Security engine | ✅ `main` (PR #22) | `internal/security`, `/security` |
 | VTpass / Paystack adapters | ✅ code, **not certified** (no keys) | `internal/providers/*`, `internal/certify` |
 | Households, token send, support E2E, Power Desk, USSD, pots | ✅ code, flags mostly off outside dev | feature flags §7 |
-| P2 daily settlement recon | ✅ code (PR #24) | `internal/reconcile`, `0022` **unapplied hosted** |
-| P3 risk engine + chargebacks | ✅ code | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
-| Hosted API (Render) + migrations `0018`–`0023` | ⏳ | `docs/DEPLOY.md` |
+| P2 daily settlement recon | ✅ `main` (PR #24/#25) | `internal/reconcile`, `0022` **unapplied hosted** |
+| P3 risk engine + chargebacks | ✅ `main` (PR #24/#25) | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
+| P4 pilot ops | ✅ `main` (PR #24/#25) | `PILOT_MODE`, alerts, `cmd/integrity`, `cmd/rekey`; `0024` **unapplied hosted** |
+| Hosted API (Render) + migrations `0018`–`0024` | ⏳ | `docs/DEPLOY.md` |
 
-**Git:** `origin/main` @ `9cac48b` (merge #23) is merged into this branch. Review-fix content from `b573cff` is `b6c4f7d` here. PR #24. CI `test` went red at `cfeaca2` because `IssueQuote` re-verifies the meter: `TestObservabilityMetricsAndOTLPTracing` (Postgres-only) still expected `validate_meter` count 1. That assertion is now 2. P1 is **not live-certified**.
+**Git:** `origin/main` @ `1208ca6` (merge [PR #25](https://github.com/Teamthy/Meterly/pull/25), which landed [PR #24](https://github.com/Teamthy/Meterly/pull/24) plus CI/review fixes). P0–P4 are **merged**. P1 is **not live-certified**. Next engineering: B1 (NDPA) in `docs/prompts/MASTER_PROMPT_BATCHES.md`.
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -75,7 +77,7 @@ internal/store          InTx unit of work (memstore / pgstore)
 internal/providers      payment, vending, remote-credit — kept separate
 internal/httpapi        /v1 + admin + public pay/pots + /v1/security
 web/                    Next.js 15 (root directory on Vercel)
-migrations/             0001 … 0023_risk.sql
+migrations/             0001 … 0024_pilot.sql (next file `0025_*.sql`)
 ```
 
 Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
@@ -151,6 +153,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
 | `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
 | `FEATURE_RISK_ENGINE` | on in dev + staging | DENY/REVIEW; disputes always ingest |
+| `PILOT_MODE` | false | env, not FEATURE_*; empty allow-list means nothing is purchasable when true |
 | `FEATURE_OWNERSHIP_NAME_MATCH` | false | self-service ownership by display-name match is spoofable; operators attest via `/v1/admin/meters/{id}/ownership` |
 
 ---
@@ -173,7 +176,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
   - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
   - ownership name match is off outside dev.
 
-- Migrations are **immutable** once applied. Add `0024_*.sql`, never edit applied files. Hosted `0022`/`0023` are still unapplied; do not run them from this sandbox.
+- Migrations are **immutable** once applied. Add `0025_*.sql`, never edit applied files. Hosted `0022`/`0023`/`0024` are still unapplied; do not run them from this sandbox.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
 - Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
 - `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
@@ -185,11 +188,25 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 
 ## 9. What's left
 
-**Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica.
+**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 hygiene (this session) → B1–B3 NDPA → B4–B7 partner API → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
+
+**Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica; P4 dress rehearsal (canary, restore-drill, forced alerts).
 
 **Blocked on documents / partners:** HES translator; undocumented DisCos; native apps.
 
 **Not engineering:** commercial agreements; real-meter AMI before marketing “no tokens”; legal flags; IdP choice; USSD shortcode; Meta templates.
+
+### Founder decisions (pending — do not assume)
+
+| Decision | Needed for | Default until decided |
+|---|---|---|
+| **Settlement fee, VTpass commission, VAT on the convenience fee** (ledger treatment) | P2 / B5 | Documented default table in `docs/DECISIONS.md` “Chart of accounts (P2)”. **Founder/finance must confirm against the live merchant contract.** `VENDOR_COMMISSION_INCOME` is unused until a rate is set. Engine never invents a split. |
+| Retention periods (financial, operational) | B1, B3 | 7 years financial; documented operational defaults |
+| Partner funding model; is holding float allowed | B5 | prefunded, `FEATURE_PARTNER_API` off |
+| Partner onboarding / KYB | B4 | operator-created partners only |
+| Sandbox keys, IdP, hosting go-live | B9 | providers “not certified”; staging not live |
+| Pilot scope (DisCo, estate, households, caps) | B9 | empty `PILOT_MODE` allow-list; nothing purchasable |
+| HES partner + API docs | B10 | `REMOTE_PROVIDER=none`; keep STS |
 
 ---
 
@@ -199,7 +216,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 2. [ ] https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
 3. [ ] `DATABASE_URL` = Supabase session pooler `:5432`, `sslmode=require`.
 4. [ ] `TOKEN_ENC_KEY` + `METER_HMAC_KEY` (64 hex each, not in git).
-5. [ ] Confirm migrate applied **through 0021**.
+5. [ ] Confirm migrate applied **through 0024** (`0018`–`0021` still unapplied on hosted; `0022`–`0024` also unapplied).
 6. [ ] `GET /healthz` and `/readyz`.
 7. [ ] Vercel `METERLY_API_ORIGIN=https://<render-host>` and redeploy.
 8. [ ] Later: `MODE=staging`, `PAYMENT_PROVIDER=paystack`, `VENDING_PROVIDER=vtpass`, `REMOTE_PROVIDER=none`.
@@ -284,6 +301,8 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-27: B0 repo hygiene.** `main` is `1208ca6` (PR #25 landed PR #24). Rewrote HANDOFF rows 8–9 and git/state as **merged**; kept hosted `0022`–`0024` unapplied. Added `TestEmbeddedMigrationsIncludeP2P4` (FS order, no PG) and `TestP2P4MigrationChain` (smoke-query every 0022–0024 table/account). OpenAPI/mux now lists P2–P4 admin routes explicitly. Recorded settlement fee/commission as a pending founder/finance decision. Plan file: `docs/prompts/MASTER_PROMPT_BATCHES.md`. Verified: `gofmt -l .` empty, `go vet ./...`, `go test -race ./...` (memory; PostgreSQL skipped, no `DATABASE_URL`). Unverified: CI with `DATABASE_URL` (the chain smoke needs PG). Blocked: hosted migrate, sandbox keys. Next: B1 NDPA (do not start until this PR merges).
 
 - **2026-11-27: review of PR #24 (P0–P4) and merge.**
   - PR #24's CI was red: the pilot tests used a non-UUID operator ID.

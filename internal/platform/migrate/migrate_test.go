@@ -2,7 +2,9 @@ package migrate_test
 
 import (
 	"context"
+	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -66,4 +68,104 @@ func TestBadFileNames(t *testing.T) {
 	if _, err := migrate.Up(context.Background(), pool, fstest.MapFS{"init.sql": {Data: []byte("SELECT 1")}}); err == nil {
 		t.Fatal("want naming error")
 	}
+}
+
+func TestEmbeddedMigrationsIncludeP2P4(t *testing.T) {
+	names, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(names)
+	if len(names) < 24 {
+		t.Fatalf("want at least 24 migrations, got %d: %v", len(names), names)
+	}
+	if names[0] != "0001_init.sql" {
+		t.Fatalf("first file %s", names[0])
+	}
+	prev := ""
+	for _, n := range names {
+		v, _, ok := strings.Cut(n, "_")
+		if !ok || len(v) != 4 {
+			t.Fatalf("want NNNN_name.sql, got %s", n)
+		}
+		if prev != "" && v <= prev {
+			t.Fatalf("versions not strictly increasing: %s then %s", prev, n)
+		}
+		prev = v
+	}
+	joined := strings.Join(names, " ")
+	for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("embedded FS missing %s: %v", want, names)
+		}
+	}
+}
+
+// TestP2P4MigrationChain applies the embedded chain (pgtest already ran Up)
+// and smoke-queries every table/account introduced in 0022–0024.
+func TestP2P4MigrationChain(t *testing.T) {
+	t.Run("postgres", func(t *testing.T) {
+		pool := pgtest.NewPool(t)
+		ctx := context.Background()
+		if n, err := migrate.Pending(ctx, pool, migrations.FS); err != nil || n != 0 {
+			t.Fatalf("pending %d err %v", n, err)
+		}
+		var versions []string
+		rows, err := pool.Query(ctx, `SELECT name FROM schema_migrations ORDER BY version`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				t.Fatal(err)
+			}
+			versions = append(versions, name)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		joined := strings.Join(versions, " ")
+		for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("schema_migrations missing %s: %v", want, versions)
+			}
+		}
+		i22, i23, i24 := indexOf(versions, "0022_reconciliation.sql"), indexOf(versions, "0023_risk.sql"), indexOf(versions, "0024_pilot.sql")
+		if i22 < 0 || i23 < 0 || i24 < 0 || !(i22 < i23 && i23 < i24) {
+			t.Fatalf("0022–0024 out of order: %v", versions)
+		}
+
+		tables := []string{
+			"reconciliation_runs", "reconciliation_exceptions", "reconciliation_adjustments",
+			"risk_rules", "risk_observations", "risk_decisions", "risk_denylist", "risk_link_pauses", "disputes",
+			"pilot_allowlist",
+		}
+		for _, tbl := range tables {
+			var n int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+tbl).Scan(&n); err != nil {
+				t.Fatalf("smoke %s: %v", tbl, err)
+			}
+		}
+		accounts := []string{
+			"CASH_AT_BANK", "PSP_FEES_EXPENSE", "VENDOR_WALLET_PREFUND", "VENDOR_COMMISSION_INCOME",
+			"DISPUTE_RESERVE", "DISPUTE_LOSS",
+		}
+		for _, code := range accounts {
+			var n int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM ledger_accounts WHERE account_code = $1`, code).Scan(&n); err != nil || n != 1 {
+				t.Fatalf("ledger account %s count=%d err=%v", code, n, err)
+			}
+		}
+	})
+}
+
+func indexOf(ss []string, want string) int {
+	for i, s := range ss {
+		if s == want {
+			return i
+		}
+	}
+	return -1
 }
