@@ -14,7 +14,7 @@ type Store interface {
 	ListSecurityEvents(ctx context.Context, userID string, limit int) ([]Event, error)
 	ListSessions(ctx context.Context, userID string) ([]identity.Session, error)
 	GetSession(ctx context.Context, id uuid.UUID) (identity.Session, error)
-	MarkSessionStepUp(ctx context.Context, id uuid.UUID, at time.Time) error
+	MarkSessionStepUp(ctx context.Context, id uuid.UUID, ipHMAC string, at time.Time) error
 	RevokeOtherSessions(ctx context.Context, userID string, keep uuid.UUID, at time.Time) error
 	TouchSession(ctx context.Context, id uuid.UUID, ipHMAC, uaHMAC string, at time.Time) error
 }
@@ -43,7 +43,7 @@ func (e *Engine) stepUpAfter() time.Duration {
 
 func sensitive(action string) bool {
 	switch action {
-	case ActionTokenRead, ActionSaveCard, ActionDeletePasskey, ActionChangeContact, ActionRevokeOthers, ActionRevokeSession:
+	case ActionTokenRead, ActionSaveCard, ActionDeletePasskey, ActionAddPasskey, ActionChangeContact, ActionRevokeOthers, ActionRevokeSession:
 		return true
 	}
 	return false
@@ -143,11 +143,15 @@ func (e *Engine) Console(ctx context.Context, userID string, current *identity.S
 	return c, nil
 }
 
-func (e *Engine) CompleteStepUp(ctx context.Context, sessionID uuid.UUID) error {
+// CompleteStepUp records a successful passkey step-up and (re)binds the
+// session to the network it was confirmed from. Ordinary requests never
+// change the bound network (see TouchSession), so a session replayed from
+// elsewhere keeps triggering step-up until a passkey is presented there.
+func (e *Engine) CompleteStepUp(ctx context.Context, sessionID uuid.UUID, ip string) error {
 	if e == nil || e.Store == nil {
 		return ErrNoSession
 	}
-	return e.Store.MarkSessionStepUp(ctx, sessionID, e.now())
+	return e.Store.MarkSessionStepUp(ctx, sessionID, e.HashIP(ip), e.now())
 }
 
 func (e *Engine) RevokeOthers(ctx context.Context, userID string, keep uuid.UUID) error {

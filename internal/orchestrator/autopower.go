@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	autoPowerChargeRefPrefix = "apchg:"
+	autoPowerChargeRefPrefix = "apchg-" // Paystack refs allow only letters, digits, - . =
 	autoPowerIdemPrefix      = "autopower:"
 )
 
@@ -129,6 +129,14 @@ func (o *Orchestrator) SavePaymentMethod(ctx context.Context, p SavePaymentMetho
 	}
 	if t.EffectiveFundingSource() != tx.FundingPSP || t.Payment != tx.PayConfirmed || t.PaymentProviderRef == "" {
 		return nil, autopower.ErrPaymentMethodNotReusable
+	}
+	// A Pay-for-Me transaction belongs to the requester but was paid with a
+	// guest payer's card. That card must never become the requester's saved
+	// payment method.
+	if _, err := o.st.Repos().PayRequests().GetPayer(ctx, t.ID); err == nil {
+		return nil, fmt.Errorf("%w: paid by someone else via a Pay-for-Me link", autopower.ErrPaymentMethodNotReusable)
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
 	}
 
 	pctx, cancel := o.pctx(ctx)

@@ -272,3 +272,28 @@ func TestWholeNairaRequired(t *testing.T) {
 		t.Fatalf("want APIError, got %T %v", err, err)
 	}
 }
+
+// "083 SYSTEM ERROR" with HTTP 200 means the pay may have been processed: it
+// must be PENDING (requery), never a definitive failure that triggers a refund.
+func TestCode083IsPendingNotFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"083","response_description":"SYSTEM ERROR"}`))
+	}))
+	defer srv.Close()
+	c, err := vtpass.New(vtpass.Config{APIKey: apiKey, SecretKey: secret, BaseURL: srv.URL, DefaultPhone: phone})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := c.NewVendKey("txn-083", time.Date(2026, 11, 26, 14, 30, 0, 0, vtpass.Lagos()))
+	res, err := c.Vend(ctx, providers.VendRequest{
+		MeterNumber: "45012345678", DiscoCode: "IKEDC", Amount: ngn(2000), IdempotencyKey: key, MeterType: "PREPAID",
+	})
+	if err != nil || res.Status != providers.VendPending {
+		t.Fatalf("083 must be pending, got %+v %v", res, err)
+	}
+	got, err := c.GetVendStatus(ctx, key)
+	if err != nil || got.Status != providers.VendPending {
+		t.Fatalf("083 on requery must be pending, got %+v %v", got, err)
+	}
+}

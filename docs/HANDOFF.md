@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-26. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`.
+> **Last updated:** 2026-11-27. North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. Review fixes from PRs #5–#23 landed on this branch.
 
 ## 0. Start here
 
@@ -141,10 +141,21 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | `FEATURE_POWER_DESK` | false | legal |
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
 | `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
+| `FEATURE_OWNERSHIP_NAME_MATCH` | false | self-service ownership by display-name match is spoofable; operators attest via `/v1/admin/meters/{id}/ownership` |
 
 ---
 
 ## 8. Gotchas
+
+- **Review fixes (2026-11-27), see DECISIONS "Review fixes":**
+  - sessions stay bound to their first network until a passkey step-up;
+  - passkey assertions need UV;
+  - adding a passkey needs a step-up;
+  - Pay-for-Me payer cards can't be saved;
+  - a prepaid vend without a token stays pending;
+  - VTpass `083` is pending;
+  - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
+  - ownership name match is off outside dev.
 
 - Migrations are **immutable** once applied. Add `0022_*.sql`, never edit applied files.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
@@ -258,7 +269,8 @@ UI: **More → Security** (`/security`).
 
 ## 14. Session log (newest first)
 
-- **2026-11-26: 100 edge cases.** `docs/EDGE_CASES.md` — IN / OPS / GAP. Build order is quote gates, one in-flight buy, digit normalise — not 100 tickets.
+- **2026-11-27: review fixes of PRs #5–#23 landed here.** Guest-payer cards cannot be saved; session IP binds once; passkey UV + step-up to add; attested key preferred; prepaid vend needs an STS token; VTpass `083` is pending; AutoPower Paystack refs use `apchg-`; ownership name-match is flagged off outside dev.
+- **2026-11-26: 100 edge cases.** `docs/EDGE_CASES.md` — IN / OPS / GAP. Quote gates, in-flight, digits, wallet, dispute pause are in code.
 - **2026-11-26: Operating pack.** Catch-22 (supply must be on), first 200 = Ikeja/IE Energy Lagos Mojec, 2am runbook, fraud, fee leak, legal drafts `/legal/*`, Lagos entity rename, feature freeze (later), no kill date.
 - **2026-11-26: North star = no-keypad + OPay-style auto-recharge.** Token is fallback. First partner call is one Disco AMI/MAP, then VTpass + Paystack.
 - **2026-11-26: PR #22 merged** (`b623755`). Customer security engine on `main`.

@@ -49,10 +49,15 @@ func (s *Server) passkeyCount(r *http.Request, uid string) int {
 // requireAction enforces the security engine. Nil engine = no extra gate
 // (existing tests that don't wire Security keep working).
 func (s *Server) requireAction(w http.ResponseWriter, r *http.Request, action string) bool {
+	return s.requireActionFor(w, r, userID(r), action)
+}
+
+// requireActionFor is requireAction for routes that resolve the user
+// themselves (outside the authed middleware).
+func (s *Server) requireActionFor(w http.ResponseWriter, r *http.Request, uid, action string) bool {
 	if s.Security == nil {
 		return true
 	}
-	uid := userID(r)
 	d := s.Security.Evaluate(r.Context(), security.Request{
 		Action:   action,
 		UserID:   uid,
@@ -226,7 +231,7 @@ func (s *Server) securityStepUpFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Security != nil {
-		if err := s.Security.CompleteStepUp(r.Context(), cur.ID); err != nil {
+		if err := s.Security.CompleteStepUp(r.Context(), cur.ID, s.clientIP(r)); err != nil {
 			s.mapErr(w, r, err)
 			return
 		}

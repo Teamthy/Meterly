@@ -239,10 +239,11 @@ func (r authRepo) RevokeOtherSessions(ctx context.Context, userID string, keep u
 	return mapErr(err)
 }
 
-func (r authRepo) MarkSessionStepUp(ctx context.Context, id uuid.UUID, at time.Time) error {
+func (r authRepo) MarkSessionStepUp(ctx context.Context, id uuid.UUID, ipHMAC string, at time.Time) error {
 	tag, err := r.db.Exec(ctx, `
-		UPDATE auth_sessions SET step_up_at = $2, last_seen_at = $2 WHERE id = $1 AND revoked_at IS NULL`,
-		id, at.UTC())
+		UPDATE auth_sessions SET step_up_at = $2, last_seen_at = $2, ip_hmac = COALESCE(NULLIF($3, ''), ip_hmac)
+		WHERE id = $1 AND revoked_at IS NULL`,
+		id, at.UTC(), ipHMAC)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -254,7 +255,10 @@ func (r authRepo) MarkSessionStepUp(ctx context.Context, id uuid.UUID, at time.T
 
 func (r authRepo) TouchSession(ctx context.Context, id uuid.UUID, ipHMAC, uaHMAC string, at time.Time) error {
 	tag, err := r.db.Exec(ctx, `
-		UPDATE auth_sessions SET last_seen_at = $2, ip_hmac = COALESCE(NULLIF($3, ''), ip_hmac), ua_hmac = COALESCE(NULLIF($4, ''), ua_hmac)
+		UPDATE auth_sessions SET last_seen_at = $2,
+		       -- Bind the network once; only a passkey step-up may move it.
+		       ip_hmac = COALESCE(NULLIF(ip_hmac, ''), NULLIF($3, '')),
+		       ua_hmac = COALESCE(NULLIF($4, ''), ua_hmac)
 		WHERE id = $1`, id, at.UTC(), ipHMAC, uaHMAC)
 	if err != nil {
 		return mapErr(err)

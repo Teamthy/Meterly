@@ -231,6 +231,8 @@ func mapHouseholdErr(err error) (int, string, string, bool) {
 		return 403, "OWNERSHIP_REQUIRED", "verified ownership is required", true
 	case errors.Is(err, households.ErrNameMismatch):
 		return 422, "NAME_MISMATCH", "disco customer name does not match your verified name", true
+	case errors.Is(err, households.ErrSelfVerificationDisabled):
+		return 403, "OWNERSHIP_REVIEW_REQUIRED", "self-service ownership verification is disabled; ask support to verify ownership", true
 	case errors.Is(err, households.ErrNoDisplayName):
 		return 422, "DISPLAY_NAME_REQUIRED", "a verified display name is required", true
 	case errors.Is(err, households.ErrAlreadyOwner), errors.Is(err, households.ErrAlreadyMember):

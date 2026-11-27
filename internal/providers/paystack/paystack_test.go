@@ -204,28 +204,28 @@ func TestChargeSavedAndLostResponseReconciliation(t *testing.T) {
 		AuthorizationRef: auth.AuthorizationCode,
 		Email:            auth.CustomerEmail,
 		Amount:           ngn(1010000),
-		Reference:        "apchg:run-1",
+		Reference:        "apchg-run-1",
 	})
 	if err != nil || chg.Status != providers.PaymentSucceeded || chg.Amount != ngn(1010000) {
 		t.Fatalf("charge_authorization: %+v err=%v", chg, err)
 	}
-	v1, err := c.VerifyPayment(ctx, "apchg:run-1")
+	v1, err := c.VerifyPayment(ctx, "apchg-run-1")
 	if err != nil || v1.Status != providers.PaymentSucceeded || v1.Amount != ngn(1010000) {
 		t.Fatalf("verify charged ref: %+v err=%v", v1, err)
 	}
 
 	// 2. Lost response on charge_authorization: charge applied at Paystack, HTTP 500 returned.
-	// Reconciling by VerifyPayment("apchg:run-2") confirms success with only 1 charge call.
+	// Reconciling by VerifyPayment("apchg-run-2") confirms success with only 1 charge call.
 	f.FailAfterApply("POST /transaction/charge_authorization", 1)
 	if _, err := c.ChargeSaved(ctx, providers.ChargeRequest{
 		AuthorizationRef: auth.AuthorizationCode,
 		Email:            auth.CustomerEmail,
 		Amount:           ngn(510000),
-		Reference:        "apchg:run-2",
+		Reference:        "apchg-run-2",
 	}); !providers.IsAmbiguous(err) {
 		t.Fatalf("lost charge_authorization response must be ambiguous, got %v", err)
 	}
-	v2, err := c.VerifyPayment(ctx, "apchg:run-2")
+	v2, err := c.VerifyPayment(ctx, "apchg-run-2")
 	if err != nil || v2.Status != providers.PaymentSucceeded || v2.Amount != ngn(510000) {
 		t.Fatalf("reconcile lost charge_authorization via VerifyPayment: %+v err=%v", v2, err)
 	}
@@ -239,7 +239,7 @@ func TestChargeSavedAndLostResponseReconciliation(t *testing.T) {
 		AuthorizationRef: auth.AuthorizationCode,
 		Email:            auth.CustomerEmail,
 		Amount:           ngn(510000),
-		Reference:        "apchg:run-3",
+		Reference:        "apchg-run-3",
 	})
 	if err != nil || otpRes.Status != providers.PaymentPending {
 		t.Fatalf("send_otp must map to PaymentPending: %+v err=%v", otpRes, err)
@@ -250,14 +250,14 @@ func TestChargeSavedAndLostResponseReconciliation(t *testing.T) {
 		AuthorizationRef: auth.AuthorizationCode,
 		Email:            auth.CustomerEmail,
 		Amount:           ngn(510000),
-		Reference:        "apchg:run-4",
+		Reference:        "apchg-run-4",
 	})
 	if err != nil || declined.Status != providers.PaymentFailed {
 		t.Fatalf("declined charge must map to PaymentFailed: %+v err=%v", declined, err)
 	}
 
 	// 4. Missing reference unwraps to providers.ErrPaymentNotFound.
-	if _, err := c.VerifyPayment(ctx, "apchg:never-sent"); !errors.Is(err, providers.ErrPaymentNotFound) {
+	if _, err := c.VerifyPayment(ctx, "apchg-never-sent"); !errors.Is(err, providers.ErrPaymentNotFound) {
 		t.Fatalf("expected ErrPaymentNotFound, got %v", err)
 	}
 }

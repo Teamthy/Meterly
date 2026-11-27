@@ -222,9 +222,12 @@ func (e *Engine) FinishRegister(ctx context.Context, origin string, att Attestat
 		}
 		sc = binary.BigEndian.Uint32(authData[33:37])
 		if at, err := parseAttested(authData, rpID); err == nil {
-			if len(pub) == 0 {
-				pub = at.PublicKey
+			// The attested key is authoritative; a client-supplied key may
+			// only repeat it.
+			if len(pub) != 0 && subtleEqual(pub, at.PublicKey) != 1 {
+				return "", Session{}, ErrBadAttestation
 			}
+			pub = at.PublicKey
 			aaguid = at.AAGUID
 			if len(at.CredID) > 0 {
 				credID = at.CredID

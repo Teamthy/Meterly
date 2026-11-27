@@ -253,6 +253,7 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	a.Orch.SetMetrics(a.Metrics)
 	a.Orch.SetMeterReadingProvider(readings)
 	a.Orch.SetFeatureGiftSMS(cfg.FeatureGiftSMS)
+	a.Orch.SetOwnershipNameMatch(cfg.FeatureOwnershipNameMatch)
 	if wp, ok := rawVend.(providers.WalletProvider); ok {
 		a.Orch.SetWallet(wp, cfg.VTPassWalletMinMinor)
 	}

@@ -128,7 +128,10 @@ func parseAssertionAuthData(authData []byte, rpID string) (uint32, error) {
 	if subtleEqual(authData[:32], rpIDHash(rpID)) != 1 {
 		return 0, ErrOrigin
 	}
-	if authData[32]&0x01 == 0 { // user present
+	// Options request userVerification=required: demand both user present
+	// (0x01) and user verified (0x04), so a touch without PIN/biometric
+	// cannot sign in or satisfy a step-up.
+	if authData[32]&0x01 == 0 || authData[32]&0x04 == 0 {
 		return 0, ErrBadAssertion
 	}
 	return binary.BigEndian.Uint32(authData[33:37]), nil

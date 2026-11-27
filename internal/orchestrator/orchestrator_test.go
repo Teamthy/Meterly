@@ -60,12 +60,18 @@ func (c *crashStore) InTx(ctx context.Context, fn func(store.Repos) error) error
 type hookVending struct {
 	providers.VendingProvider
 	after func()
+	// rewrite, when set, alters what Vend returns (the provider-side record
+	// is unchanged, so GetVendStatus still reports the truth).
+	rewrite func(providers.VendResult) providers.VendResult
 }
 
 func (h *hookVending) Vend(ctx context.Context, r providers.VendRequest) (providers.VendResult, error) {
 	res, err := h.VendingProvider.Vend(ctx, r)
 	if h.after != nil {
 		h.after()
+	}
+	if h.rewrite != nil && err == nil {
+		res = h.rewrite(res)
 	}
 	return res, err
 }
@@ -957,4 +963,42 @@ func TestPurchaseAndSelfRemovalSerialize(t *testing.T) {
 			})
 		})
 	}
+}
+
+// A provider can report "delivered" before the STS token exists (VTpass
+// requery). That must not confirm the vend with a blank token: it stays
+// pending, and Resume confirms it once the token is available.
+func TestVendSuccessWithoutTokenStaysPending(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		e.hv.rewrite = func(r providers.VendResult) providers.VendResult {
+			if r.Status == providers.VendSucceeded {
+				r.Token = ""
+			}
+			return r
+		}
+		txn := e.buy(t, "u1", "45012345678", orchestrator.PrefToken)
+		if txn.Vending != tx.VendPending || txn.Delivery != tx.DelNotStarted {
+			t.Fatalf("blank-token success must stay pending, got %s/%s", txn.Vending, txn.Delivery)
+		}
+		if n := e.postings(t, txn.ID); n != 1 {
+			t.Fatalf("only the payment may be posted while the vend is pending, got %d postings", n)
+		}
+		if _, _, err := e.o.Token(e.ctx, e.user(t, "u1"), txn.ID); err == nil {
+			t.Fatal("no token may be handed out yet")
+		}
+		e.hv.rewrite = nil
+		e.later(5 * time.Minute)
+		got, err := e.o.Resume(e.ctx, txn.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status() != tx.OverallCompleted {
+			t.Fatalf("after the token arrives: %s", got.Status())
+		}
+		tok, _, err := e.o.Token(e.ctx, e.user(t, "u1"), txn.ID)
+		if err != nil || len(tok) != 24 {
+			t.Fatalf("token %q %v", tok, err)
+		}
+		e.assertBalanced(t)
+	})
 }
