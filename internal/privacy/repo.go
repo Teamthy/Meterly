@@ -3,6 +3,8 @@ package privacy
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Repo is the persistence surface for the consent ledger, legal holds and
@@ -24,4 +26,12 @@ type Repo interface {
 	PurgeClosedSupportThreads(ctx context.Context, cutoff time.Time, batch int, dryRun bool, held map[string]bool) (int, error)
 	CountPurgeableDeliveryHMACs(ctx context.Context, cutoff time.Time) (int, error)
 	PurgeDeliveryHMACs(ctx context.Context, cutoff time.Time) (int, error)
+
+	CreateExport(ctx context.Context, job ExportJob) error
+	GetExport(ctx context.Context, id uuid.UUID) (ExportJob, error)
+	GetExportForUserDay(ctx context.Context, userID, day string) (ExportJob, error)
+	UpdateExport(ctx context.Context, job ExportJob) error
+	ListPendingExports(ctx context.Context, limit int) ([]ExportJob, error)
+	ExpireDueExports(ctx context.Context, now time.Time, batch int) (int, error)
+	PurgeDataExports(ctx context.Context, cutoff time.Time, batch int, dryRun bool, held map[string]bool) (int, error)
 }

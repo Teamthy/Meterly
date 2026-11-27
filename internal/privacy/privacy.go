@@ -105,6 +105,7 @@ type Settings struct {
 	Support          time.Duration
 	Financial        time.Duration
 	NotificationHMAC time.Duration
+	Export           time.Duration
 	BatchSize        int
 	DryRun           bool
 }
@@ -119,6 +120,7 @@ func DefaultSettings() Settings {
 		Support:          730 * 24 * time.Hour, // 2 years; founder/legal to confirm
 		Financial:        7 * 365 * 24 * time.Hour,
 		NotificationHMAC: 365 * 24 * time.Hour,
+		Export:           DefaultExportTTL,
 		BatchSize:        500,
 	}
 }
@@ -149,6 +151,9 @@ func (s Settings) withDefaults() Settings {
 	if s.NotificationHMAC <= 0 {
 		s.NotificationHMAC = d.NotificationHMAC
 	}
+	if s.Export <= 0 {
+		s.Export = d.Export
+	}
 	if s.BatchSize <= 0 {
 		s.BatchSize = d.BatchSize
 	}
@@ -168,6 +173,7 @@ func Policies(s Settings) []Policy {
 		{Table: "risk_observations", Action: ActionDelete, Duration: s.RiskObservation, BatchSize: b, LegalHold: true, CutoffFrom: "observed_at"},
 		{Table: "support_threads", Action: ActionDelete, Duration: s.Support, BatchSize: b, LegalHold: true, CutoffFrom: "updated_at"},
 		{Table: "notification_deliveries", Action: ActionAnonymise, Duration: s.NotificationHMAC, BatchSize: b, CutoffFrom: "created_at"},
+		{Table: "data_exports", Action: ActionDelete, Duration: s.Export, BatchSize: b, LegalHold: true, CutoffFrom: "created_at"},
 		{Table: "electricity_transactions", Action: ActionAnonymise, Duration: s.Financial, Financial: true, LegalHold: true, CutoffFrom: "created_at"},
 		{Table: "payments", Action: ActionAnonymise, Duration: s.Financial, Financial: true, LegalHold: true, CutoffFrom: "created_at"},
 		{Table: "ledger_entries", Action: ActionAnonymise, Duration: s.Financial, Financial: true, LegalHold: true, CutoffFrom: "created_at"},

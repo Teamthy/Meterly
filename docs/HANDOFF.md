@@ -1,13 +1,13 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-27 (B1). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0 (PR #26 @ `db3f199`). B1 NDPA part 1 is **this PR**. Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B2→B9).
+> **Last updated:** 2026-11-27 (B2). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0 (PR #26), B1 (PR #27 @ `ab64b2e`). B2 NDPA part 2 is **this PR**. Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B3→B9).
 
 ## 0. Start here
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
 2. Branch: `arena/7cc28241-meterly`. **Do not switch branches.**
-3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, and P0–P4 are **merged**. Engineering left is **B1+** (NDPA, partner API) plus **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
+3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, P0–P4, B0 and B1 are **merged**. Engineering left is **B2+** (NDPA export/erasure, partner API) plus **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
 4. Product truth: credit lands **on the meter**. `ACCEPTED ≠ CONFIRMED`. Keypad meters get STS fallback. **Do not invent AMI/HES APIs.**
 5. Do not commit secrets.
 
@@ -16,7 +16,7 @@
 | # | What | Who | Status |
 |---|---|---|---|
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
-| 2 | Render API + apply migrations `0018`–`0025` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0025` **unapplied**. |
+| 2 | Render API + apply migrations `0018`–`0026` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0026` **unapplied**. |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
 | 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
@@ -24,7 +24,8 @@
 | 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
 | 8 | P3 risk engine + chargebacks | Eng | **Merged** — [PR #24](https://github.com/Teamthy/Meterly/pull/24) via [PR #25](https://github.com/Teamthy/Meterly/pull/25). Migration `0023` **unapplied hosted**. |
 | 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **Merged** — same PRs. Migration `0024` **unapplied hosted**. Dress rehearsal blocked on hosting. |
-| 10 | B1 NDPA (data map, consent, retention) | Eng | **This PR** — `docs/PRIVACY_ENGINEERING.md`, `internal/privacy`, `GET/POST /v1/me/consents`. Legal sign-off on periods **pending**. |
+| 10 | B1 NDPA (data map, consent, retention) | Eng | **Merged** — [PR #27](https://github.com/Teamthy/Meterly/pull/27). `0025_privacy.sql` **unapplied hosted**. Legal sign-off on periods **pending**. |
+| 11 | B2 NDPA data export | Eng | **This PR** — `POST /v1/me/data-export`, `0026_data_export.sql` **unapplied hosted**. |
 
 ---
 
@@ -54,10 +55,11 @@ OPay airtime works because every phone has a **network account** the telco can c
 | P2 daily settlement recon | ✅ `main` (PR #24/#25) | `internal/reconcile`, `0022` **unapplied hosted** |
 | P3 risk engine + chargebacks | ✅ `main` (PR #24/#25) | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
 | P4 pilot ops | ✅ `main` (PR #24/#25) | `PILOT_MODE`, alerts, `cmd/integrity`, `cmd/rekey`; `0024` **unapplied hosted** |
-| Hosted API (Render) + migrations `0018`–`0025` | ⏳ | `docs/DEPLOY.md` |
-| B1 NDPA part 1 (data map, consent, retention) | ⏳ this PR | `docs/PRIVACY_ENGINEERING.md`, `0025_privacy.sql` **unapplied hosted** |
+| Hosted API (Render) + migrations `0018`–`0026` | ⏳ | `docs/DEPLOY.md` |
+| B1 NDPA part 1 (data map, consent, retention) | ✅ `main` (PR #27) | `docs/PRIVACY_ENGINEERING.md`, `0025` **unapplied hosted** |
+| B2 NDPA part 2 (data export) | ⏳ this PR | `POST /v1/me/data-export`, `0026_data_export.sql` **unapplied hosted** |
 
-**Git:** `origin/main` @ `db3f199` (merge [PR #26](https://github.com/Teamthy/Meterly/pull/26) B0). P0–P4 and B0 are **merged**. P1 is **not live-certified**. This PR is B1. Next after merge: B2 (data export).
+**Git:** `origin/main` @ `ab64b2e` (merge [PR #27](https://github.com/Teamthy/Meterly/pull/27) B1). P0–P4, B0 and B1 are **merged**. P1 is **not live-certified**. This PR is B2. Next after merge: B3 (erasure).
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -78,7 +80,7 @@ internal/store          InTx unit of work (memstore / pgstore)
 internal/providers      payment, vending, remote-credit — kept separate
 internal/httpapi        /v1 + admin + public pay/pots + /v1/security
 web/                    Next.js 15 (root directory on Vercel)
-migrations/             0001 … 0025_privacy.sql (next file `0026_*.sql`; B4 partners is 0026 not 0025)
+migrations/             0001 … 0026_data_export.sql (next file `0027_*.sql`; B4 partners is 0027)
 ```
 
 Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
@@ -177,7 +179,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
   - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
   - ownership name match is off outside dev.
 
-- Migrations are **immutable** once applied. Add `0026_*.sql`, never edit applied files. Hosted `0022`–`0025` are still unapplied; do not run them from this sandbox.
+- Migrations are **immutable** once applied. Add `0027_*.sql`, never edit applied files. Hosted `0022`–`0026` are still unapplied; do not run them from this sandbox.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
 - Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
 - `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
@@ -189,7 +191,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 
 ## 9. What's left
 
-**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 merged (PR #26) → B1 (this PR) → B2–B3 NDPA → B4–B7 partner API (`0026_partners`, not 0025) → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
+**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 merged (PR #26) → B1 merged (PR #27) → B2 (this PR) → B3 NDPA erasure → B4–B7 partner API (`0027_partners`) → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
 
 **Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica; P4 dress rehearsal (canary, restore-drill, forced alerts).
 
@@ -217,7 +219,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 2. [ ] https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
 3. [ ] `DATABASE_URL` = Supabase session pooler `:5432`, `sslmode=require`.
 4. [ ] `TOKEN_ENC_KEY` + `METER_HMAC_KEY` (64 hex each, not in git).
-5. [ ] Confirm migrate applied **through 0025** (`0018`–`0021` still unapplied on hosted; `0022`–`0025` also unapplied).
+5. [ ] Confirm migrate applied **through 0026** (`0018`–`0021` still unapplied on hosted; `0022`–`0026` also unapplied).
 6. [ ] `GET /healthz` and `/readyz`.
 7. [ ] Vercel `METERLY_API_ORIGIN=https://<render-host>` and redeploy.
 8. [ ] Later: `MODE=staging`, `PAYMENT_PROVIDER=paystack`, `VENDING_PROVIDER=vtpass`, `REMOTE_PROVIDER=none`.
@@ -302,6 +304,8 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-27: B2 NDPA part 2 (data export).** `POST /v1/me/data-export` (step-up, rate-limited, audited, one job per user per UTC day). Worker `data-export` builds an encrypted JSON archive: profile + decrypted email/phone, masked meters, token-free receipts, consents, prefs, own households (no other members), own payment requests without guest payers, own support threads (AGENT/SYSTEM decrypted; HUMAN E2E not held on the server), security events. Download is single-use, 24h TTL, ciphertext cleared after use/expiry. Isolation test (two users, shared household, pay-for-me payer). Migration `0026_data_export.sql`. Verified: `gofmt`, `go vet`, `go test -race ./...` (memory; PostgreSQL skipped here). Unverified: CI with `DATABASE_URL`. Blocked: hosted migrate. Next: B3 erasure (do not start until this PR merges). Hosted `0022`–`0026` unapplied.
 
 - **2026-11-27: B1 NDPA part 1.** Data map `docs/PRIVACY_ENGINEERING.md` + `internal/privacy` registry (test fails if a new `email`/`phone`/`name`/`address`/`ip`/`msisdn` column lands without an entry). Retention job `privacy.Run` on the worker (`retention` loop): batched DELETE of expired OTPs, challenges, sessions, completed idempotency keys, risk observations, closed support threads; HMAC redaction on old notification deliveries; financial tables ANONYMISE no-op until B3; legal holds skip the user; dry-run; second run is a no-op; audit + `retention_runs` counts only. Consent ledger: `GET /v1/me/consents`, `POST /v1/me/consents/withdraw` (turns off transactional prefs and writes `opt_outs` so the next send is blocked). Migration `0025_privacy.sql`. Verified: `gofmt`, `go vet`, `go test -race ./...` (memory; PostgreSQL skipped here). Unverified: CI with `DATABASE_URL`. Blocked: legal sign-off on periods; hosted migrate. Next: B2 export (do not start until this PR merges). Hosted `0022`–`0025` unapplied.
 

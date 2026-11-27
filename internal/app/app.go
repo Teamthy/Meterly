@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/channels/ussd"
+	"github.com/teamthy/meterly/internal/dataexport"
 	"github.com/teamthy/meterly/internal/httpapi"
 	"github.com/teamthy/meterly/internal/identity"
 	"github.com/teamthy/meterly/internal/notificationconsumer"
@@ -494,6 +495,7 @@ func (a *App) Handler() http.Handler {
 		SupportDisabled:    !a.Cfg.FeatureSupport,
 		HouseholdsDisabled: !a.Cfg.FeatureHouseholds,
 		PublicBaseURL:      a.Cfg.PublicBaseURL,
+		ExportTTL:          a.Cfg.DataExportTTL,
 		Remote:             a.remoteRaw,
 		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}
@@ -761,6 +763,7 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 			Support:          a.Cfg.RetentionSupport,
 			Financial:        a.Cfg.RetentionFinancial,
 			NotificationHMAC: a.Cfg.NotificationHMACRetention,
+			Export:           a.Cfg.DataExportTTL,
 			BatchSize:        a.Cfg.RetentionBatchSize,
 			DryRun:           a.Cfg.RetentionDryRun,
 		}
@@ -771,6 +774,23 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 		}
 		if len(res.Counts) > 0 {
 			a.Log.Info("retention purge", "dry_run", res.DryRun, "counts", res.Counts)
+		}
+	})
+	expEvery := a.Cfg.DataExportInterval
+	if expEvery <= 0 {
+		expEvery = 5 * time.Second
+	}
+	start("data-export", expEvery, func(ctx context.Context) {
+		if ctx.Err() != nil {
+			return
+		}
+		n, err := dataexport.Process(drainCtx, a.Store, a.Orch.Box(), time.Now().UTC(), a.Cfg.DataExportBatchSize, a.Log)
+		if err != nil {
+			a.Log.Warn("data export worker failed", "err", err)
+			return
+		}
+		if n > 0 {
+			a.Log.Info("data exports built", "count", n)
 		}
 	})
 	if !a.Cfg.NotificationCandidatesSince.IsZero() {

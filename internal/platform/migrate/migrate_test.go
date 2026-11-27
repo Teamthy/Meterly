@@ -76,8 +76,8 @@ func TestEmbeddedMigrationsIncludeP2P4(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(names)
-	if len(names) < 25 {
-		t.Fatalf("want at least 25 migrations, got %d: %v", len(names), names)
+	if len(names) < 26 {
+		t.Fatalf("want at least 26 migrations, got %d: %v", len(names), names)
 	}
 	if names[0] != "0001_init.sql" {
 		t.Fatalf("first file %s", names[0])
@@ -94,7 +94,7 @@ func TestEmbeddedMigrationsIncludeP2P4(t *testing.T) {
 		prev = v
 	}
 	joined := strings.Join(names, " ")
-	for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql", "0025_privacy.sql"} {
+	for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql", "0025_privacy.sql", "0026_data_export.sql"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("embedded FS missing %s: %v", want, names)
 		}
@@ -127,14 +127,14 @@ func TestP2P4MigrationChain(t *testing.T) {
 			t.Fatal(err)
 		}
 		joined := strings.Join(versions, " ")
-		for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql", "0025_privacy.sql"} {
+		for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql", "0025_privacy.sql", "0026_data_export.sql"} {
 			if !strings.Contains(joined, want) {
 				t.Fatalf("schema_migrations missing %s: %v", want, versions)
 			}
 		}
-		i22, i23, i24, i25 := indexOf(versions, "0022_reconciliation.sql"), indexOf(versions, "0023_risk.sql"), indexOf(versions, "0024_pilot.sql"), indexOf(versions, "0025_privacy.sql")
-		if i22 < 0 || i23 < 0 || i24 < 0 || i25 < 0 || !(i22 < i23 && i23 < i24 && i24 < i25) {
-			t.Fatalf("0022–0025 out of order: %v", versions)
+		i22, i23, i24, i25, i26 := indexOf(versions, "0022_reconciliation.sql"), indexOf(versions, "0023_risk.sql"), indexOf(versions, "0024_pilot.sql"), indexOf(versions, "0025_privacy.sql"), indexOf(versions, "0026_data_export.sql")
+		if i22 < 0 || i23 < 0 || i24 < 0 || i25 < 0 || i26 < 0 || !(i22 < i23 && i23 < i24 && i24 < i25 && i25 < i26) {
+			t.Fatalf("0022–0026 out of order: %v", versions)
 		}
 
 		tables := []string{
@@ -142,6 +142,7 @@ func TestP2P4MigrationChain(t *testing.T) {
 			"risk_rules", "risk_observations", "risk_decisions", "risk_denylist", "risk_link_pauses", "disputes",
 			"pilot_allowlist",
 			"consents", "legal_holds", "retention_runs",
+			"data_exports",
 		}
 		for _, tbl := range tables {
 			var n int

@@ -165,6 +165,9 @@ func TestNotificationProvidersAndGiftSMSFlag(t *testing.T) {
 	if c.RetentionOTP != 7*24*time.Hour || c.RetentionSession != 90*24*time.Hour || c.RetentionIdempotency != 30*24*time.Hour || c.RetentionFinancial != 7*365*24*time.Hour || c.RetentionBatchSize != 500 || c.RetentionDryRun {
 		t.Fatalf("unexpected retention defaults: %+v", c)
 	}
+	if c.DataExportTTL != 24*time.Hour || c.DataExportInterval != 5*time.Second || c.DataExportBatchSize != 20 {
+		t.Fatalf("unexpected data-export defaults: %+v", c)
+	}
 
 	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_GIFT_SMS": "yes"})); err == nil || !strings.Contains(err.Error(), "FEATURE_GIFT_SMS") {
 		t.Fatalf("invalid FEATURE_GIFT_SMS must fail: %v", err)

@@ -130,6 +130,8 @@ type Store struct {
 	consents          []privacy.Record
 	legalHolds        map[uuid.UUID]privacy.Hold
 	retentionRuns     []privacy.RetentionRun
+	dataExports       map[uuid.UUID]privacy.ExportJob
+	dataExportByDay   map[string]uuid.UUID
 }
 
 func New() *Store {
@@ -138,22 +140,24 @@ func New() *Store {
 		userStatus:   map[string]string{},
 		userProfiles: map[string]identity.Profile{}, userContacts: map[string]notifications.UserContacts{},
 		authChallenges: map[string]identity.Challenge{}, authCreds: map[string]identity.Credential{},
-		authSessions:   map[string]identity.Session{},
-		readingSamples: map[uuid.UUID][]meters.ReadingSample{},
-		lowUnitAlerts:  map[string]lowUnitAlert{},
-		reconRuns:      map[string]*reconcile.Run{},
-		reconEx:        map[uuid.UUID]*reconcile.Exception{},
-		reconExFP:      map[string]uuid.UUID{},
-		reconAdj:       map[uuid.UUID]*reconcile.Adjustment{},
-		riskRules:      map[string]*risk.Rule{},
-		riskDec:        map[uuid.UUID]*risk.Decision{},
-		riskDeny:       map[uuid.UUID]*risk.DenyEntry{},
-		riskPauses:     map[uuid.UUID]risk.LinkPause{},
-		disputes:       map[uuid.UUID]*disputes.Dispute{},
-		disputesByPSP:  map[string]uuid.UUID{},
-		pilotAllow:     map[string]*pilot.Entry{},
-		legalHolds:     map[uuid.UUID]privacy.Hold{},
-		meters:         map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
+		authSessions:    map[string]identity.Session{},
+		readingSamples:  map[uuid.UUID][]meters.ReadingSample{},
+		lowUnitAlerts:   map[string]lowUnitAlert{},
+		reconRuns:       map[string]*reconcile.Run{},
+		reconEx:         map[uuid.UUID]*reconcile.Exception{},
+		reconExFP:       map[string]uuid.UUID{},
+		reconAdj:        map[uuid.UUID]*reconcile.Adjustment{},
+		riskRules:       map[string]*risk.Rule{},
+		riskDec:         map[uuid.UUID]*risk.Decision{},
+		riskDeny:        map[uuid.UUID]*risk.DenyEntry{},
+		riskPauses:      map[uuid.UUID]risk.LinkPause{},
+		disputes:        map[uuid.UUID]*disputes.Dispute{},
+		disputesByPSP:   map[string]uuid.UUID{},
+		pilotAllow:      map[string]*pilot.Entry{},
+		legalHolds:      map[uuid.UUID]privacy.Hold{},
+		dataExports:     map[uuid.UUID]privacy.ExportJob{},
+		dataExportByDay: map[string]uuid.UUID{},
+		meters:          map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
 		gifts: map[uuid.UUID]gifts.Gift{}, candidates: map[uuid.UUID]notificationintents.Intent{},

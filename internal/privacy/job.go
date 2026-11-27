@@ -93,6 +93,8 @@ func apply(ctx context.Context, repo Repo, p Policy, cutoff time.Time, held map[
 			return repo.CountPurgeableDeliveryHMACs(ctx, cutoff)
 		}
 		return repo.PurgeDeliveryHMACs(ctx, cutoff)
+	case "data_exports":
+		return repo.PurgeDataExports(ctx, cutoff, p.BatchSize, dryRun, held)
 	default:
 		return 0, nil
 	}

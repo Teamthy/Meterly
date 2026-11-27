@@ -26,7 +26,7 @@ tags:
   - name: Notifications
     description: Account notification preferences and provider inbound webhooks.
   - name: Privacy
-    description: NDPA consent ledger (transactional vs marketing, per channel) and withdrawal.
+    description: NDPA consent ledger, withdrawal, and subject-access data export.
   - name: PaymentRequests
     description: Shareable Pay-for-Me electricity request links, guest checkout and token-free payer status.
   - name: Pots
@@ -1153,6 +1153,109 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "429":
           $ref: "#/components/responses/RateLimited"
+
+  /v1/me/data-export:
+    post:
+      operationId: createDataExport
+      tags: [Privacy]
+      summary: Request a subject-access archive (step-up, rate-limited, one job per UTC day)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "201":
+          description: Export job created (PENDING). Poll GET until READY, then download once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataExportJob"
+        "200":
+          description: Existing job for today returned (idempotent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataExportJob"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/me/data-export/{export_id}:
+    get:
+      operationId: getDataExport
+      tags: [Privacy]
+      summary: Get the status of a data-export job
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: export_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Export job status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataExportJob"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/me/data-export/{export_id}/download:
+    get:
+      operationId: downloadDataExport
+      tags: [Privacy]
+      summary: Download a READY archive once; the ciphertext is then deleted
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: export_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Export-Token
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Single-use download token from the create/status response.
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: JSON archive. Never includes STS tokens or raw meter numbers.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataExportArchive"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          description: Link already used or expired.
 
   /v1/payments/webhooks/{provider}:
     parameters:
@@ -4698,6 +4801,10 @@ components:
         - NOT_PENDING_APPROVAL
         - READING_UNAVAILABLE
         - STEP_UP_REQUIRED
+        - UNAVAILABLE
+        - EXPORT_EXPIRED
+        - EXPORT_USED
+        - EXPORT_NOT_READY
         - INTERNAL_ERROR
 
     ErrorEnvelope:
@@ -5410,6 +5517,37 @@ components:
         channel:
           type: string
           enum: [SMS, EMAIL, WHATSAPP]
+
+    DataExportJob:
+      type: object
+      required: [export_id, status]
+      additionalProperties: false
+      properties:
+        export_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, READY, DOWNLOADED, EXPIRED, FAILED]
+        day:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        downloaded_at:
+          type: string
+          format: date-time
+        download_token:
+          type: string
+          description: Shown while PENDING or READY; required to download.
+
+    DataExportArchive:
+      type: object
+      additionalProperties: true
+      description: Subject-access JSON. Profile, masked meters, token-free receipts, consents, preferences, own households (no other members' contacts), own support threads, security events. No STS tokens or raw meter numbers.
 
     AdminReasonRequest:
       type: object
