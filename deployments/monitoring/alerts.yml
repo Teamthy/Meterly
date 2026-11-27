@@ -1,0 +1,96 @@
+# Prometheus alerting rules for the Meterly pilot. Every alert names a
+# runbook under docs/runbooks/. Metrics are scraped from METRICS_ADDR
+# (never the public API port). Do not page on naira figures from logs —
+# use vending_wallet_minor / vending_paused only.
+groups:
+  - name: meterly.pilot
+    rules:
+      - alert: VendingPaused
+        expr: vending_paused == 1
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Electricity vending is paused (wallet below floor or 3-day average spend).
+          runbook: docs/runbooks/vending-paused.md
+
+      - alert: ReadyDegraded
+        expr: ready_degraded == 1
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: /readyz is serving degraded.
+          runbook: docs/runbooks/ready-degraded.md
+
+      - alert: HTTP5xx
+        expr: sum(rate(http_requests_total{code=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: HTTP 5xx rate is elevated.
+          runbook: docs/runbooks/http-5xx.md
+
+      - alert: HTTPp95
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, route)) > 2
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: HTTP p95 latency above 2s.
+          runbook: docs/runbooks/http-latency.md
+
+      - alert: ProviderErrors
+        expr: sum(rate(provider_calls_total{outcome="definitive"}[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Provider calls failing definitively.
+          runbook: docs/runbooks/provider-errors.md
+
+      - alert: OutboxLag
+        expr: outbox_lag_seconds > 120
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Oldest unpublished outbox event is older than 2 minutes.
+          runbook: docs/runbooks/outbox-lag.md
+
+      - alert: WorkerHeartbeatStale
+        expr: (time() - worker_heartbeat_unix) > 120 or worker_heartbeat_unix == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Worker process has not heartbeated.
+          runbook: docs/runbooks/worker-heartbeat.md
+
+      - alert: ReconExceptionsOpen
+        expr: sum(reconciliation_exceptions_open) > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Open reconciliation exceptions.
+          runbook: docs/runbooks/recon-exceptions.md
+
+      - alert: ManualReviewOpen
+        expr: manual_review_open > 10
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Manual review queue is growing.
+          runbook: docs/runbooks/manual-review.md
+
+      - alert: NotificationFailures
+        expr: sum(rate(notification_deliveries_total{status=~"FAILED|UNDELIVERABLE"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Notification delivery failures elevated.
+          runbook: docs/runbooks/notifications.md

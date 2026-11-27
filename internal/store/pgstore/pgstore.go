@@ -17,7 +17,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/identity"
+	"github.com/teamthy/meterly/internal/pilot"
+	"github.com/teamthy/meterly/internal/reconcile"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -141,6 +145,10 @@ func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { retur
 func (r *repos) Auth() store.AuthRepo                                    { return authRepo{r} }
 func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
 func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
+func (r *repos) Reconcile() reconcile.Repo                               { return reconRepo{r} }
+func (r *repos) Risk() risk.Repo                                         { return riskRepo{r} }
+func (r *repos) Disputes() disputes.Repo                                 { return disputeRepo{r} }
+func (r *repos) Pilot() pilot.Repo                                       { return pilotRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -281,4 +289,40 @@ func (r userRepo) LockForUpdate(ctx context.Context, userID string) error {
 	}
 	var locked uuid.UUID
 	return mapErr(r.db.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, uid).Scan(&locked))
+}
+
+func (r userRepo) Status(ctx context.Context, userID string) (string, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return "", store.ErrNotFound
+	}
+	var st string
+	err = r.db.QueryRow(ctx, `SELECT status FROM users WHERE id = $1`, uid).Scan(&st)
+	if err != nil {
+		return "", mapErr(err)
+	}
+	if st == "" {
+		return store.UserActive, nil
+	}
+	return st, nil
+}
+
+func (r userRepo) SetStatus(ctx context.Context, userID, status string) error {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return store.ErrNotFound
+	}
+	switch status {
+	case store.UserActive, store.UserSuspended, store.UserClosed:
+	default:
+		return errors.New("store: invalid user status")
+	}
+	tag, err := r.db.Exec(ctx, `UPDATE users SET status = $2, updated_at = now() WHERE id = $1`, uid, status)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }

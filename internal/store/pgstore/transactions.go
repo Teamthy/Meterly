@@ -245,6 +245,27 @@ func nilIfEmpty(b []byte) any {
 	return b
 }
 
+func (r txnRepo) ListCreatedBetween(ctx context.Context, from, to time.Time) ([]*tx.Transaction, error) {
+	rows, err := r.db.Query(ctx, `SELECT id FROM electricity_transactions
+		WHERE created_at >= $1 AND created_at < $2 ORDER BY created_at`, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*tx.Transaction, 0, len(ids))
+	for _, id := range ids {
+		t, err := r.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
 func (r txnRepo) ListForCustomer(ctx context.Context, customerID string) ([]*tx.Transaction, error) {
 	rows, err := r.db.Query(ctx, `SELECT id FROM electricity_transactions WHERE customer_id = $1
 		ORDER BY created_at DESC LIMIT 200`, customerID)

@@ -24,6 +24,25 @@ func TestDevDefaults(t *testing.T) {
 	if !c.FeatureSupport {
 		t.Fatal("FEATURE_SUPPORT must default to true")
 	}
+	if !c.FeatureRiskEngine {
+		t.Fatal("FEATURE_RISK_ENGINE must default to true in MODE=dev")
+	}
+	if c.PilotMode || c.ServicePaused {
+		t.Fatal("PILOT_MODE and SERVICE_PAUSED must default off")
+	}
+}
+
+func TestPilotModeEnv(t *testing.T) {
+	c, err := Load(env(map[string]string{
+		"MODE": "dev", "PILOT_MODE": "true", "SERVICE_PAUSED": "true",
+		"PILOT_DAILY_USER_CAP_MINOR": "5000000",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.PilotMode || !c.ServicePaused || c.PilotDailyUserCapMinor != 5_000_000 {
+		t.Fatalf("%+v", c)
+	}
 }
 
 func TestModeRequired(t *testing.T) {
@@ -361,5 +380,15 @@ func TestOwnershipNameMatchOffOutsideDev(t *testing.T) {
 	}
 	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_OWNERSHIP_NAME_MATCH": "maybe"})); err == nil {
 		t.Fatal("invalid flag value accepted")
+	}
+}
+
+func TestRiskEngineFlag(t *testing.T) {
+	off, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_RISK_ENGINE": "false"}))
+	if err != nil || off.FeatureRiskEngine {
+		t.Fatalf("expected FEATURE_RISK_ENGINE=false: %v %+v", err, off)
+	}
+	if _, err := Load(env(map[string]string{"MODE": "dev", "FEATURE_RISK_ENGINE": "maybe"})); err == nil || !strings.Contains(err.Error(), "FEATURE_RISK_ENGINE") {
+		t.Fatalf("invalid FEATURE_RISK_ENGINE must fail: %v", err)
 	}
 }

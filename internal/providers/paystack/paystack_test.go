@@ -2,6 +2,7 @@ package paystack_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -169,6 +170,14 @@ func TestWebhookSignature(t *testing.T) {
 	if evt, err := c.ParseWebhook(h3, other); err != nil || evt.Relevant {
 		t.Fatalf("other events are acknowledged but ignored: %+v %v", evt, err)
 	}
+
+	dispute := []byte(`{"event":"charge.dispute.create","data":{"transaction":{"reference":"txn-1.abc"}}}`)
+	h4 := http.Header{}
+	h4.Set("X-Paystack-Signature", paystack.Sign(secret, dispute))
+	evt, err = c.ParseWebhook(h4, dispute)
+	if err != nil || !evt.Relevant || evt.Reference != "txn-1.abc" || evt.Type != "charge.dispute.create" {
+		t.Fatalf("dispute: %+v %v", evt, err)
+	}
 }
 
 func TestChargeSavedAndLostResponseReconciliation(t *testing.T) {
@@ -251,5 +260,95 @@ func TestChargeSavedAndLostResponseReconciliation(t *testing.T) {
 	// 4. Missing reference unwraps to providers.ErrPaymentNotFound.
 	if _, err := c.VerifyPayment(ctx, "apchg-never-sent"); !errors.Is(err, providers.ErrPaymentNotFound) {
 		t.Fatalf("expected ErrPaymentNotFound, got %v", err)
+	}
+}
+
+func TestChargeDocumentedTestCard(t *testing.T) {
+	c, f := setup(t)
+	initRes, err := c.InitializePayment(ctx, providers.PaymentInit{
+		Reference: "card-1", Amount: ngn(10000), Email: "a@example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"email": "a@example.com", "amount": "10000", "currency": "NGN",
+		"reference": initRes.ProviderRef,
+		"card":      map[string]string{"number": "4084084084084081", "cvv": "408", "expiry_month": "12", "expiry_year": "30"},
+	})
+	req, _ := http.NewRequest(http.MethodPost, f.URL+"/charge", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("charge HTTP %d", res.StatusCode)
+	}
+	v, err := c.VerifyPayment(ctx, initRes.ProviderRef)
+	if err != nil || v.Status != providers.PaymentSucceeded || v.Authorization == nil || !v.Authorization.Reusable {
+		t.Fatalf("documented success card: %+v %v", v, err)
+	}
+
+	init2, err := c.InitializePayment(ctx, providers.PaymentInit{
+		Reference: "card-2", Amount: ngn(10000), Email: "a@example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(map[string]any{
+		"email": "a@example.com", "amount": "10000", "currency": "NGN",
+		"reference": init2.ProviderRef,
+		"card":      map[string]string{"number": "0000000000000000", "cvv": "000", "expiry_month": "12", "expiry_year": "30"},
+	})
+	req, _ = http.NewRequest(http.MethodPost, f.URL+"/charge", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	req.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	v, err = c.VerifyPayment(ctx, init2.ProviderRef)
+	if err != nil || v.Status == providers.PaymentSucceeded {
+		t.Fatalf("undocumented PAN must not succeed: %+v %v", v, err)
+	}
+}
+
+func TestListTransactionsRefundsSettlements(t *testing.T) {
+	c, f := setup(t)
+	paid := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	f.SeedTransaction("ref-list", "success", 510000, paid)
+	f.SeedRefund("ref-list", "processed", 510000)
+	f.SeedSettlement(42, "success", 510000, 10000, 500000, paid)
+	from, to := paid, paid.Add(24*time.Hour)
+	txns, err := c.ListTransactions(ctx, from, to)
+	if err != nil || len(txns) != 1 || txns[0].Reference != "ref-list" || txns[0].Amount != 510000 {
+		t.Fatalf("txns %+v %v", txns, err)
+	}
+	refunds, err := c.ListRefunds(ctx, from, to)
+	if err != nil || len(refunds) != 1 || refunds[0].TransactionRef != "ref-list" {
+		t.Fatalf("refunds %+v %v", refunds, err)
+	}
+	settlements, err := c.ListSettlements(ctx, from, to)
+	if err != nil || len(settlements) != 1 || settlements[0].ID != 42 || settlements[0].TotalFees != 10000 {
+		t.Fatalf("settlements %+v %v", settlements, err)
+	}
+	f.SeedDispute(2867, "ref-list", "awaiting-merchant-feedback", 510000)
+	ds, err := c.ListDisputes(ctx, from, to)
+	if err != nil || len(ds) != 1 || ds[0].ID != 2867 || ds[0].Reference != "ref-list" {
+		t.Fatalf("disputes %+v %v", ds, err)
+	}
+	got, err := c.FetchDispute(ctx, 2867)
+	if err != nil || got.ID != 2867 {
+		t.Fatalf("fetch %+v %v", got, err)
+	}
+	if err := c.AddEvidence(ctx, 2867, "ops@example.com", "Meterly", "08000000000", "prepaid electricity token delivered"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ResolveDispute(ctx, 2867, "declined", "token was delivered", 0); err != nil {
+		t.Fatal(err)
 	}
 }

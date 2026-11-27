@@ -1,0 +1,20 @@
+name: canary
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: P1 staging canary
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          VTPASS_API_KEY: ${{ secrets.VTPASS_API_KEY }}
+          VTPASS_SECRET_KEY: ${{ secrets.VTPASS_SECRET_KEY }}
+        run: ./scripts/canary.sh

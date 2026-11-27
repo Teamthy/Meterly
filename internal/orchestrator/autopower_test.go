@@ -907,6 +907,38 @@ func TestExpiredCardAndSendOTPPendingResolution(t *testing.T) {
 	}
 }
 
+func TestLowBalanceStaleReadingDoesNotTrigger(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		loc := autopower.LagosLocation()
+		e.setClock(time.Date(2027, 8, 1, 8, 0, 0, 0, loc))
+		uid := e.user(t, "kemi")
+		_, pm := e.saveCard(t, "kemi", "45012345678")
+		smart := e.register(t, "kemi", "75012345999")
+		if err := e.st.InTx(e.ctx, func(r store.Repos) error {
+			return registry.MarkRemoteReadingConfirmedIn(e.ctx, r, smart.ID, e.clock)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		thresh := 20.0
+		rule, err := e.o.CreateAutoPowerRule(e.ctx, orchestrator.CreateRuleParams{
+			UserID: uid, MeterID: smart.ID, PaymentMethodID: pm.ID,
+			TriggerType: autopower.TriggerLowBalance, AmountMinor: 500000, MonthlyCapMinor: 3000000,
+			DeliveryPreference: orchestrator.PrefToken, LowBalanceThresholdKWh: &thresh,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.readings.SetReadingFrozen("75012345999", 5.0, e.clock.Add(-49*time.Hour))
+		if _, err := e.o.PollLowBalance(e.ctx); err != nil {
+			t.Fatal(err)
+		}
+		runs, _ := e.st.Repos().AutoPower().ListRunsForRule(e.ctx, rule.RuleID, 10)
+		if len(runs) != 0 {
+			t.Fatalf("stale reading must not trigger, got %+v", runs)
+		}
+	})
+}
+
 // A Pay-for-Me transaction belongs to the requester but is paid with a guest
 // payer's card; the requester must never be able to save that card.
 func TestPayForMePayerCardCannotBeSavedByRequester(t *testing.T) {

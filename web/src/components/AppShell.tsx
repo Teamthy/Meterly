@@ -28,10 +28,10 @@ const PRIMARY = [
 ];
 
 const MORE = [
-  { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2 },
-  { href: "/pots", label: "Split the meter", icon: Users },
-  { href: "/power-desk", label: "Power Desk", icon: Building2 },
-  { href: "/offline", label: "USSD *347#", icon: Smartphone },
+  { href: "/pay-for-me", label: "Pay-for-Me", icon: Share2, later: true },
+  { href: "/pots", label: "Split the meter", icon: Users, later: true },
+  { href: "/power-desk", label: "Power Desk", icon: Building2, later: true },
+  { href: "/offline", label: "USSD *347#", icon: Smartphone, later: true },
   { href: "/onboarding", label: "Setup", icon: UserCheck },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -66,6 +66,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { token, activePersona, setPersonaById, setCustomToken } = useAuth();
   const isStaff = token.startsWith("operator:") || token.startsWith("admin:");
   const [ready, setReady] = useState<boolean | null>(null);
+  const [vendingPaused, setVendingPaused] = useState(false);
+  const [servicePaused, setServicePaused] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [showCustomAuth, setShowCustomAuth] = useState(false);
   const [draftTok, setDraftTok] = useState("");
@@ -73,11 +75,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     fetch("/readyz", { cache: "no-store" })
-      .then((r) => {
-        if (!cancelled) setReady(r.ok);
+      .then(async (r) => {
+        if (cancelled) return;
+        setReady(r.ok);
+        if (!r.ok) {
+          setVendingPaused(false);
+          setServicePaused(false);
+          return;
+        }
+        const data = (await r.json().catch(() => ({}))) as {
+          status?: string;
+          vending?: string;
+          service?: string;
+        };
+        setServicePaused(data.service === "paused");
+        setVendingPaused(data.vending === "paused");
       })
       .catch(() => {
-        if (!cancelled) setReady(false);
+        if (!cancelled) {
+          setReady(false);
+          setVendingPaused(false);
+          setServicePaused(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -173,7 +192,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5" />
-                        {item.label}
+                        <span className="flex-1">{item.label}</span>
+                        {"later" in item && item.later ? (
+                          <span className="text-[10px] uppercase tracking-wider text-white/35">
+                            later
+                          </span>
+                        ) : null}
                       </Link>
                     );
                   })}
@@ -185,13 +209,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <span
               className={`hidden h-1.5 w-1.5 rounded-full sm:inline-block ${
-                ready === true
+                ready === true && !vendingPaused && !servicePaused
                   ? "bg-volt"
                   : ready === false
                     ? "bg-rose-400"
                     : "bg-amber-400"
               }`}
-              title={ready === true ? "API ready" : ready === false ? "API offline" : "Checking"}
+              title={
+                servicePaused
+                  ? "Service paused"
+                  : vendingPaused
+                    ? "Vending paused"
+                    : ready === true
+                      ? "API ready"
+                      : ready === false
+                        ? "API offline"
+                        : "Checking"
+              }
             />
             {!isPublicGuestPage && (
               <select
@@ -267,13 +301,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 text-paper sm:px-6 sm:py-8">
+        {servicePaused ? (
+          <div
+            role="status"
+            className="mb-4 rounded-xl border border-amber-400/40 bg-amber-400/12 px-4 py-3 text-sm text-amber-100"
+          >
+            Service is paused. Do not pay — Meterly is temporarily unavailable.
+          </div>
+        ) : vendingPaused ? (
+          <div
+            role="status"
+            className="mb-4 rounded-xl border border-amber-400/40 bg-amber-400/12 px-4 py-3 text-sm text-amber-100"
+          >
+            Electricity vending is paused. Do not pay — Disco top-up is temporarily
+            unavailable.
+          </div>
+        ) : null}
         {children}
       </main>
 
       <footer className="border-t border-white/10 py-4 text-[11px] text-white/40">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 sm:px-6">
-          <p>Units on the meter. Delivered only when the meter confirms.</p>
-          <p className="font-mono">STS is fallback · CBN-licensed PSP</p>
+          <p>Compatible smart meters. Delivered only when the meter confirms. Keypad is fallback.</p>
+          <p className="flex flex-wrap gap-3 font-mono">
+            <Link href="/legal/terms" className="hover:text-paper">
+              Terms
+            </Link>
+            <Link href="/legal/privacy" className="hover:text-paper">
+              Privacy
+            </Link>
+            <span>CBN-licensed PSP</span>
+          </p>
         </div>
       </footer>
     </div>

@@ -6,6 +6,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,29 @@ type Registry struct {
 	vending providers.VendingProvider
 	remote  providers.RemoteCreditProvider // optional
 	Now     func() time.Time
+	// Live rejects VTpass sandbox meter numbers (1111… / 1010…).
+	Live bool
+}
+
+const staleValidation = 7 * 24 * time.Hour
+
+// NormalizeMeterNumber keeps digits only. Do not strip leading zeros.
+func NormalizeMeterNumber(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func IsSandboxMeter(number string) bool {
+	switch NormalizeMeterNumber(number) {
+	case "1111111111111", "1010101010101":
+		return true
+	}
+	return false
 }
 
 func New(st store.Store, box *secure.Box, v providers.VendingProvider, r providers.RemoteCreditProvider) *Registry {
@@ -40,6 +64,13 @@ func notFound(err error) error {
 
 // probe asks providers about the meter (network calls; never inside a DB tx).
 func (g *Registry) probe(ctx context.Context, number, disco string) (providers.MeterValidationResult, meters.Capabilities, error) {
+	number = NormalizeMeterNumber(number)
+	if number == "" {
+		return providers.MeterValidationResult{}, meters.Capabilities{}, meters.ErrInvalidMeter
+	}
+	if g != nil && g.Live && IsSandboxMeter(number) {
+		return providers.MeterValidationResult{}, meters.Capabilities{}, meters.ErrSandboxMeter
+	}
 	res, err := g.vending.ValidateMeter(ctx, providers.MeterValidationRequest{MeterNumber: number, DiscoCode: disco})
 	if err != nil {
 		return res, meters.Capabilities{}, err
@@ -49,9 +80,12 @@ func (g *Registry) probe(ctx context.Context, number, disco string) (providers.M
 	}
 	now := g.Now()
 	caps := meters.Capabilities{
-		TokenVending:  meters.Capability{Supported: true, Authorised: true, LastVerifiedAt: &now},
-		RemoteReading: meters.Capability{Supported: res.RemoteReadingSupported, LastVerifiedAt: &now},
-		RemoteCredit:  meters.Capability{Supported: res.RemoteCreditSupported, LastVerifiedAt: &now},
+		TokenVending:     meters.Capability{Supported: true, Authorised: true, LastVerifiedAt: &now},
+		RemoteReading:    meters.Capability{Supported: res.RemoteReadingSupported, LastVerifiedAt: &now},
+		RemoteCredit:     meters.Capability{Supported: res.RemoteCreditSupported, LastVerifiedAt: &now},
+		CannotVend:       !res.CanVend,
+		MinPurchaseMinor: res.MinPurchaseMinor,
+		ArrearsMinor:     res.ArrearsMinor,
 	}
 	// Operator-attested cohorts are the production signal. Never infer AMI
 	// from a hard-coded meter-number prefix here — mocks may still report
@@ -114,7 +148,16 @@ func (g *Registry) upsert(ctx context.Context, r store.Repos, number, disco stri
 
 // Validate checks a meter with the provider and upserts the meter record.
 // It grants no access by itself.
+func (g *Registry) Stale(m *meters.Meter) bool {
+	if m == nil {
+		return true
+	}
+	now := g.Now()
+	return m.ValidatedAt.IsZero() || now.Sub(m.ValidatedAt.UTC()) > staleValidation
+}
+
 func (g *Registry) Validate(ctx context.Context, number, disco string) (*meters.Meter, error) {
+	number = NormalizeMeterNumber(number)
 	res, caps, err := g.probe(ctx, number, disco)
 	if err != nil {
 		return nil, err
@@ -132,6 +175,7 @@ func (g *Registry) Validate(ctx context.Context, number, disco string) (*meters.
 // neither ownership nor authority to manage access, so self-service never
 // grants MANAGE or elevates an existing higher grant.
 func (g *Registry) Register(ctx context.Context, userID, number, disco, label string) (*meters.Meter, error) {
+	number = NormalizeMeterNumber(number)
 	res, caps, err := g.probe(ctx, number, disco)
 	if err != nil {
 		return nil, err

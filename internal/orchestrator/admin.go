@@ -11,6 +11,7 @@ import (
 	"github.com/teamthy/meterly/internal/ledger"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/providers"
+	"github.com/teamthy/meterly/internal/risk"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -300,6 +301,7 @@ type Detail struct {
 	Events        []events.Event
 	Audit         []audit.Event
 	Notifications []notifications.OperatorView
+	RiskDecisions []risk.Decision
 }
 
 func (o *Orchestrator) Detail(ctx context.Context, id uuid.UUID) (*Detail, error) {
@@ -325,6 +327,9 @@ func (o *Orchestrator) Detail(ctx context.Context, id uuid.UUID) (*Detail, error
 	d.Notifications = make([]notifications.OperatorView, len(delivs))
 	for i := range delivs {
 		d.Notifications[i] = delivs[i].RedactedView()
+	}
+	if d.RiskDecisions, err = r.Risk().ListDecisionsByTxn(ctx, id); err != nil {
+		return nil, err
 	}
 	return d, nil
 }

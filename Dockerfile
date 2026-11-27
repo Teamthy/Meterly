@@ -9,10 +9,14 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/integrity ./cmd/integrity && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/rekey ./cmd/rekey
 
 FROM gcr.io/distroless/static-debian12:nonroot AS migrate
 COPY --from=build /out/migrate /migrate
+COPY --from=build /out/integrity /integrity
+COPY --from=build /out/rekey /rekey
 USER nonroot:nonroot
 ENTRYPOINT ["/migrate"]
 
