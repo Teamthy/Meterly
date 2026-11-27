@@ -1,5 +1,7 @@
 # Meterly master build prompt: from M5 to five distinctive features
 
+> **Status: completed.** M5–M11 were built by 2026-11-26 (PRs #5–#23). The current plan is [`MASTER_PROMPT_PILOT_READINESS.md`](MASTER_PROMPT_PILOT_READINESS.md).
+
 > **Who this is for:** a new engineer (human or AI coding agent) taking over the Meterly backend. Read all of it before writing code. It is self-contained: it explains the product, what exists, the rules you must not break, and exactly what to build next, milestone by milestone, with acceptance criteria.
 >
 > **Baseline:** `main` at commit `68acdab` (merge of PR #4), 2026-11-23. If `main` has moved, read `docs/HANDOFF.md` to see what changed and adjust. The handoff is the live state; this prompt is the plan.

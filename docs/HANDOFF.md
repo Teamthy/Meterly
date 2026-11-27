@@ -166,6 +166,15 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 
 ## 9. What's left
 
+> **Next build plan:** [`docs/prompts/MASTER_PROMPT_PILOT_READINESS.md`](prompts/MASTER_PROMPT_PILOT_READINESS.md):
+> - P0 land review fixes
+> - P1 live sandbox certification
+> - P2 settlement and reconciliation
+> - P3 risk controls and chargebacks
+> - P4 pilot operations
+> - P5 NDPA data rights
+> - P6 partner API platform
+
 **Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica.
 
 **Blocked on documents / partners:** HES translator; undocumented DisCos; native apps.
@@ -260,6 +269,8 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-27 (later): planning only.** Wrote `docs/prompts/MASTER_PROMPT_PILOT_READINESS.md` (P0–P6), grounded in a gap check of the code: no settlement reconciliation, chargebacks, fraud controls, NDPA rights, backups or partner API yet. Marked the M5–M11 prompt as completed. No code changed.
 
 - **2026-11-27: review and fixes of PRs #5–#23.**
   - Reviewed everything after `68acdab` and fixed 9 defects:
