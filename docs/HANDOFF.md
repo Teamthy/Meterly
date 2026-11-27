@@ -1,7 +1,7 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-27 (B0). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4 (PR #25 @ `1208ca6`). Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B0→B9).
+> **Last updated:** 2026-11-27 (B1). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0 (PR #26 @ `db3f199`). B1 NDPA part 1 is **this PR**. Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B2→B9).
 
 ## 0. Start here
 
@@ -16,7 +16,7 @@
 | # | What | Who | Status |
 |---|---|---|---|
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
-| 2 | Render API + apply migrations `0018`–`0024` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0024` **unapplied**. |
+| 2 | Render API + apply migrations `0018`–`0025` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0025` **unapplied**. |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
 | 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
@@ -24,7 +24,7 @@
 | 7 | First 200 + 2am runbook | Founder | `docs/LAUNCH.md` + `docs/RUNBOOK.md`. No kill date. |
 | 8 | P3 risk engine + chargebacks | Eng | **Merged** — [PR #24](https://github.com/Teamthy/Meterly/pull/24) via [PR #25](https://github.com/Teamthy/Meterly/pull/25). Migration `0023` **unapplied hosted**. |
 | 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **Merged** — same PRs. Migration `0024` **unapplied hosted**. Dress rehearsal blocked on hosting. |
-| 10 | B1 NDPA (data map, consent, retention) | Eng | Next engineering batch after B0. `docs/prompts/MASTER_PROMPT_BATCHES.md` |
+| 10 | B1 NDPA (data map, consent, retention) | Eng | **This PR** — `docs/PRIVACY_ENGINEERING.md`, `internal/privacy`, `GET/POST /v1/me/consents`. Legal sign-off on periods **pending**. |
 
 ---
 
@@ -54,9 +54,10 @@ OPay airtime works because every phone has a **network account** the telco can c
 | P2 daily settlement recon | ✅ `main` (PR #24/#25) | `internal/reconcile`, `0022` **unapplied hosted** |
 | P3 risk engine + chargebacks | ✅ `main` (PR #24/#25) | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
 | P4 pilot ops | ✅ `main` (PR #24/#25) | `PILOT_MODE`, alerts, `cmd/integrity`, `cmd/rekey`; `0024` **unapplied hosted** |
-| Hosted API (Render) + migrations `0018`–`0024` | ⏳ | `docs/DEPLOY.md` |
+| Hosted API (Render) + migrations `0018`–`0025` | ⏳ | `docs/DEPLOY.md` |
+| B1 NDPA part 1 (data map, consent, retention) | ⏳ this PR | `docs/PRIVACY_ENGINEERING.md`, `0025_privacy.sql` **unapplied hosted** |
 
-**Git:** `origin/main` @ `1208ca6` (merge [PR #25](https://github.com/Teamthy/Meterly/pull/25), which landed [PR #24](https://github.com/Teamthy/Meterly/pull/24) plus CI/review fixes). P0–P4 are **merged**. P1 is **not live-certified**. Next engineering: B1 (NDPA) in `docs/prompts/MASTER_PROMPT_BATCHES.md`.
+**Git:** `origin/main` @ `db3f199` (merge [PR #26](https://github.com/Teamthy/Meterly/pull/26) B0). P0–P4 and B0 are **merged**. P1 is **not live-certified**. This PR is B1. Next after merge: B2 (data export).
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -77,7 +78,7 @@ internal/store          InTx unit of work (memstore / pgstore)
 internal/providers      payment, vending, remote-credit — kept separate
 internal/httpapi        /v1 + admin + public pay/pots + /v1/security
 web/                    Next.js 15 (root directory on Vercel)
-migrations/             0001 … 0024_pilot.sql (next file `0025_*.sql`)
+migrations/             0001 … 0025_privacy.sql (next file `0026_*.sql`; B4 partners is 0026 not 0025)
 ```
 
 Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
@@ -176,7 +177,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
   - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
   - ownership name match is off outside dev.
 
-- Migrations are **immutable** once applied. Add `0025_*.sql`, never edit applied files. Hosted `0022`/`0023`/`0024` are still unapplied; do not run them from this sandbox.
+- Migrations are **immutable** once applied. Add `0026_*.sql`, never edit applied files. Hosted `0022`–`0025` are still unapplied; do not run them from this sandbox.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
 - Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
 - `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
@@ -188,7 +189,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 
 ## 9. What's left
 
-**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 hygiene (this session) → B1–B3 NDPA → B4–B7 partner API → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
+**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 merged (PR #26) → B1 (this PR) → B2–B3 NDPA → B4–B7 partner API (`0026_partners`, not 0025) → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
 
 **Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica; P4 dress rehearsal (canary, restore-drill, forced alerts).
 
@@ -201,7 +202,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | Decision | Needed for | Default until decided |
 |---|---|---|
 | **Settlement fee, VTpass commission, VAT on the convenience fee** (ledger treatment) | P2 / B5 | Documented default table in `docs/DECISIONS.md` “Chart of accounts (P2)”. **Founder/finance must confirm against the live merchant contract.** `VENDOR_COMMISSION_INCOME` is unused until a rate is set. Engine never invents a split. |
-| Retention periods (financial, operational) | B1, B3 | 7 years financial; documented operational defaults |
+| Retention periods (financial, operational) | B1, B3 | **Pending legal.** Engineering defaults in `docs/PRIVACY_ENGINEERING.md` / `RETENTION_*` env: 7 years financial (ANONYMISE, not deleted in B1), 7 days OTP/challenges, 90 days sessions after expiry, 30 days completed idempotency keys, 90 days risk observations, 2 years closed support threads, 365 days notification HMACs. |
 | Partner funding model; is holding float allowed | B5 | prefunded, `FEATURE_PARTNER_API` off |
 | Partner onboarding / KYB | B4 | operator-created partners only |
 | Sandbox keys, IdP, hosting go-live | B9 | providers “not certified”; staging not live |
@@ -216,7 +217,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 2. [ ] https://render.com/deploy?repo=https://github.com/Teamthy/Meterly
 3. [ ] `DATABASE_URL` = Supabase session pooler `:5432`, `sslmode=require`.
 4. [ ] `TOKEN_ENC_KEY` + `METER_HMAC_KEY` (64 hex each, not in git).
-5. [ ] Confirm migrate applied **through 0024** (`0018`–`0021` still unapplied on hosted; `0022`–`0024` also unapplied).
+5. [ ] Confirm migrate applied **through 0025** (`0018`–`0021` still unapplied on hosted; `0022`–`0025` also unapplied).
 6. [ ] `GET /healthz` and `/readyz`.
 7. [ ] Vercel `METERLY_API_ORIGIN=https://<render-host>` and redeploy.
 8. [ ] Later: `MODE=staging`, `PAYMENT_PROVIDER=paystack`, `VENDING_PROVIDER=vtpass`, `REMOTE_PROVIDER=none`.
@@ -301,6 +302,8 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-27: B1 NDPA part 1.** Data map `docs/PRIVACY_ENGINEERING.md` + `internal/privacy` registry (test fails if a new `email`/`phone`/`name`/`address`/`ip`/`msisdn` column lands without an entry). Retention job `privacy.Run` on the worker (`retention` loop): batched DELETE of expired OTPs, challenges, sessions, completed idempotency keys, risk observations, closed support threads; HMAC redaction on old notification deliveries; financial tables ANONYMISE no-op until B3; legal holds skip the user; dry-run; second run is a no-op; audit + `retention_runs` counts only. Consent ledger: `GET /v1/me/consents`, `POST /v1/me/consents/withdraw` (turns off transactional prefs and writes `opt_outs` so the next send is blocked). Migration `0025_privacy.sql`. Verified: `gofmt`, `go vet`, `go test -race ./...` (memory; PostgreSQL skipped here). Unverified: CI with `DATABASE_URL`. Blocked: legal sign-off on periods; hosted migrate. Next: B2 export (do not start until this PR merges). Hosted `0022`–`0025` unapplied.
 
 - **2026-11-27: B0 repo hygiene.** `main` is `1208ca6` (PR #25 landed PR #24). Rewrote HANDOFF rows 8–9 and git/state as **merged**; kept hosted `0022`–`0024` unapplied. Added `TestEmbeddedMigrationsIncludeP2P4` (FS order, no PG) and `TestP2P4MigrationChain` (smoke-query every 0022–0024 table/account). OpenAPI/mux now lists P2–P4 admin routes explicitly. Recorded settlement fee/commission as a pending founder/finance decision. Plan file: `docs/prompts/MASTER_PROMPT_BATCHES.md`. Verified: `gofmt -l .` empty, `go vet ./...`, `go test -race ./...` (memory; PostgreSQL skipped, no `DATABASE_URL`). Unverified: CI with `DATABASE_URL` (the chain smoke needs PG). Blocked: hosted migrate, sandbox keys. Next: B1 NDPA (do not start until this PR merges).
 

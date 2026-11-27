@@ -22,6 +22,15 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Users are created on first sight** from the identity-provider subject (`users.external_id`), so foreign keys hold from day one. M4 replaces dev auth with OIDC; the mapping stays the same.
 - **Provider and DisCo reference rows are upserted outside the caller's transaction** and cached, so a rollback can't leave a cached ID pointing at nothing.
 
+## NDPA data map, consent and retention (B1)
+
+- **Data map** lives in `docs/PRIVACY_ENGINEERING.md` and `internal/privacy.Columns()`. A test walks the migration chain and fails if a new column named like `email`/`phone`/`name`/`address`/`ip`/`msisdn` is not registered.
+- **Transactional vs marketing.** `notification_preferences` remain the current transactional flags (SMS/email on, WhatsApp off by default). Marketing is opt-in (default withdrawn). `consents` is append-only history. Withdrawal of transactional consent also writes `opt_outs` for the user's destination HMAC so the next send is suppressed immediately.
+- **Retention periods are engineering defaults pending legal sign-off** (HANDOFF §9). Financial rows are `ANONYMISE` with a 7-year default; the B1 job never deletes them. Operational DELETE: OTPs/challenges 7 days, sessions 90 days after expiry, completed idempotency keys 30 days, risk observations 90 days, closed support threads 2 years, notification destination HMACs 365 days. All overridable via `RETENTION_*` / `NOTIFICATION_HMAC_RETENTION`.
+- **Legal holds** (`legal_holds`) skip that user's rows in every DELETE policy. Open disputes should be recorded as a hold by operators (no automatic hold yet).
+- **Audit:** one `retention_runs` row and one `audit_events` row per job, counts only, no PII.
+- **B4 partners** uses `0026_*.sql`; B1 took `0025_privacy.sql`.
+
 ## Chart of accounts (P2 settlement)
 
 Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTpass wallet recon.

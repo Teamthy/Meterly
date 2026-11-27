@@ -126,6 +126,7 @@ type Registry struct {
 	reconOpen       map[reconOpenKey]int64
 
 	resumeEscalations atomic.Uint64
+	retentionPurged   map[string]uint64
 
 	vendingWalletMinor  atomic.Int64
 	vendingPaused       atomic.Int64
@@ -146,6 +147,7 @@ func NewRegistry() *Registry {
 		txnsByStatus:     byStatus,
 		notifDeliveries:  map[notifDelivKey]uint64{},
 		reconOpen:        zeroReconOpen(),
+		retentionPurged:  map[string]uint64{},
 	}
 }
 
@@ -287,6 +289,23 @@ func (r *Registry) IncNotificationDelivery(channel, status string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.notifDeliveries[notifDelivKey{channel: channel, status: status}]++
+}
+
+// AddRetentionPurged records rows purged (or HMAC redactions) for a known table.
+// Unknown table names are ignored so attacker-chosen labels cannot enter Prometheus.
+func (r *Registry) AddRetentionPurged(table string, n int) {
+	if r == nil || n <= 0 {
+		return
+	}
+	switch table {
+	case "channel_otps", "auth_challenges", "auth_sessions", "idempotency_keys",
+		"risk_observations", "support_threads", "notification_deliveries":
+	default:
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.retentionPurged[table] += uint64(n)
 }
 
 // Handler serves Prometheus metrics at GET /metrics only.
@@ -454,6 +473,19 @@ func (r *Registry) Render() string {
 	})
 	for _, k := range rKeys {
 		fmt.Fprintf(&b, "reconciliation_exceptions_open{provider=%q,category=%q} %d\n", k.provider, k.category, r.reconOpen[k])
+	}
+
+	if len(r.retentionPurged) > 0 {
+		b.WriteString("# HELP retention_purged_total Rows purged or redacted by the retention job, by table.\n")
+		b.WriteString("# TYPE retention_purged_total counter\n")
+		tKeys := make([]string, 0, len(r.retentionPurged))
+		for k := range r.retentionPurged {
+			tKeys = append(tKeys, k)
+		}
+		sort.Strings(tKeys)
+		for _, k := range tKeys {
+			fmt.Fprintf(&b, "retention_purged_total{table=%q} %d\n", k, r.retentionPurged[k])
+		}
 	}
 
 	return b.String()

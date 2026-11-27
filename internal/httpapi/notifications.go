@@ -12,6 +12,7 @@ import (
 	"github.com/teamthy/meterly/internal/auth"
 	"github.com/teamthy/meterly/internal/notifications"
 	"github.com/teamthy/meterly/internal/notificationservice"
+	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/store"
 )
@@ -113,8 +114,35 @@ func (s *Server) putNotificationPreferences(w http.ResponseWriter, r *http.Reque
 		CorrelationID: audit.CorrelationFrom(r.Context()),
 	}
 	err := s.O.Store().InTx(r.Context(), func(rp store.Repos) error {
+		prev, err := rp.Notifications().GetPreferences(r.Context(), uid)
+		if err != nil {
+			return err
+		}
 		if err := rp.Notifications().SetPreferences(r.Context(), uid, prefs, now); err != nil {
 			return err
+		}
+		type pair struct {
+			ch        notifications.Channel
+			was, want bool
+		}
+		for _, p := range []pair{
+			{notifications.SMS, prev.SMS, prefs.SMS},
+			{notifications.Email, prev.Email, prefs.Email},
+			{notifications.WhatsApp, prev.WhatsApp, prefs.WhatsApp},
+		} {
+			if p.was == p.want {
+				continue
+			}
+			st := privacy.StatusWithdrawn
+			if p.want {
+				st = privacy.StatusGranted
+			}
+			if err := rp.Privacy().AppendConsent(r.Context(), privacy.Record{
+				ID: uuid.New(), UserID: uid, Purpose: privacy.PurposeTransactional,
+				Channel: p.ch, Status: st, Source: privacy.SourcePreferences, CreatedAt: now,
+			}); err != nil {
+				return err
+			}
 		}
 		return rp.Audit().Add(r.Context(), actor.Event("notification_preferences.update", "user", uidUUID, map[string]any{
 			"sms":      prefs.SMS,

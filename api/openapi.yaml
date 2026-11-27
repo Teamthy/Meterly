@@ -25,6 +25,8 @@ tags:
     description: Quotes, purchases, server-side payment verification, STS token retrieval, local copy tracking and receipts.
   - name: Notifications
     description: Account notification preferences and provider inbound webhooks.
+  - name: Privacy
+    description: NDPA consent ledger (transactional vs marketing, per channel) and withdrawal.
   - name: PaymentRequests
     description: Shareable Pay-for-Me electricity request links, guest checkout and token-free payer status.
   - name: Pots
@@ -1097,6 +1099,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationPreferences"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/me/consents:
+    get:
+      operationId: getConsents
+      tags: [Privacy]
+      summary: List the authenticated user's consents (transactional and marketing) plus withdrawal history
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      responses:
+        "200":
+          description: Current consents per purpose and channel, with history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentLedger"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /v1/me/consents/withdraw:
+    post:
+      operationId: withdrawConsent
+      tags: [Privacy]
+      summary: Withdraw consent for a purpose and channel; takes effect on the next send
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentWithdrawRequest"
+      responses:
+        "200":
+          description: Updated consent ledger.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentLedger"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -5314,6 +5364,52 @@ components:
           type: boolean
         whatsapp:
           type: boolean
+
+    ConsentLedger:
+      type: object
+      required: [current, history]
+      additionalProperties: false
+      properties:
+        current:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConsentRecord"
+        history:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConsentRecord"
+
+    ConsentRecord:
+      type: object
+      required: [purpose, channel, status]
+      additionalProperties: false
+      properties:
+        purpose:
+          type: string
+          enum: [TRANSACTIONAL, MARKETING]
+        channel:
+          type: string
+          enum: [SMS, EMAIL, WHATSAPP]
+        status:
+          type: string
+          enum: [GRANTED, WITHDRAWN]
+        source:
+          type: string
+        at:
+          type: string
+          format: date-time
+
+    ConsentWithdrawRequest:
+      type: object
+      required: [purpose, channel]
+      additionalProperties: false
+      properties:
+        purpose:
+          type: string
+          enum: [TRANSACTIONAL, MARKETING]
+        channel:
+          type: string
+          enum: [SMS, EMAIL, WHATSAPP]
 
     AdminReasonRequest:
       type: object

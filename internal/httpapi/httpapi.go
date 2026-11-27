@@ -179,6 +179,8 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("GET /v1/me/notification-preferences", user(s.getNotificationPreferences))
 	mux.Handle("PUT /v1/me/notification-preferences", write(s.putNotificationPreferences))
+	mux.Handle("GET /v1/me/consents", user(s.getConsents))
+	mux.Handle("POST /v1/me/consents/withdraw", write(s.withdrawConsent))
 
 	mux.Handle("POST /v1/payment-requests", write(s.createPaymentRequest))
 	mux.Handle("GET /v1/payment-requests", user(s.listPaymentRequests))

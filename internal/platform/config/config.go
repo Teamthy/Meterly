@@ -77,6 +77,16 @@ type Config struct {
 	FeatureGiftSMS              bool
 	NotificationInterval        time.Duration
 	NotificationHMACRetention   time.Duration
+	RetentionOTP                time.Duration
+	RetentionChallenge          time.Duration
+	RetentionSession            time.Duration
+	RetentionIdempotency        time.Duration
+	RetentionRiskObservation    time.Duration
+	RetentionSupport            time.Duration
+	RetentionFinancial          time.Duration
+	RetentionBatchSize          int
+	RetentionDryRun             bool
+	RetentionInterval           time.Duration
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
 	AuthMode        string
@@ -266,6 +276,23 @@ func Load(getenv func(string) string) (Config, error) {
 	c.WhatsAppBaseURL = strings.TrimSpace(getenv("WHATSAPP_BASE_URL"))
 	c.NotificationInterval = dur("NOTIFICATION_INTERVAL", 2*time.Second)
 	c.NotificationHMACRetention = dur("NOTIFICATION_HMAC_RETENTION", 365*24*time.Hour)
+	c.RetentionOTP = dur("RETENTION_OTP", 7*24*time.Hour)
+	c.RetentionChallenge = dur("RETENTION_CHALLENGE", 7*24*time.Hour)
+	c.RetentionSession = dur("RETENTION_SESSION", 90*24*time.Hour)
+	c.RetentionIdempotency = dur("RETENTION_IDEMPOTENCY", 30*24*time.Hour)
+	c.RetentionRiskObservation = dur("RETENTION_RISK_OBSERVATION", 90*24*time.Hour)
+	c.RetentionSupport = dur("RETENTION_SUPPORT", 730*24*time.Hour)
+	c.RetentionFinancial = dur("RETENTION_FINANCIAL", 7*365*24*time.Hour)
+	c.RetentionBatchSize = int(integer("RETENTION_BATCH_SIZE", 500))
+	c.RetentionInterval = dur("RETENTION_INTERVAL", time.Hour)
+	switch strings.ToLower(strings.TrimSpace(getenv("RETENTION_DRY_RUN"))) {
+	case "", "false", "0":
+		c.RetentionDryRun = false
+	case "true", "1":
+		c.RetentionDryRun = true
+	default:
+		errs = append(errs, fmt.Errorf("RETENTION_DRY_RUN: must be true or false"))
+	}
 
 	// FEATURE_GIFT_SMS defaults to false everywhere until legal sign-off.
 	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_GIFT_SMS"))) {
