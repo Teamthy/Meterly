@@ -2,6 +2,7 @@ package partners
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,6 +16,10 @@ type Engine struct {
 	Environment string // process PROVIDER_ENVIRONMENT: SANDBOX | PRODUCTION
 	Overlap     time.Duration
 	Now         func() time.Time
+	Guard       *Guard
+	Runner      Runner
+	Token       func(ctx context.Context, partnerID, txnID uuid.UUID) (string, error)
+	Log         *slog.Logger
 }
 
 func (e *Engine) now() time.Time {

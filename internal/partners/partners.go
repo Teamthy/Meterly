@@ -1,5 +1,5 @@
 // Package partners is the identity and access layer for approved Meterly
-// partners (B4) plus the B5 float subledger. Outbound webhooks land in B6.
+// partners (B4), the B5 float subledger, and B6 outbound webhooks.
 package partners
 
 import (
@@ -32,6 +32,29 @@ const (
 	DefaultOverlap       = 24 * time.Hour
 	LookupSecretChars    = 8
 	SecretBytes          = 32
+
+	MaxWebhookEndpoints = 10
+	MaxWebhookURLBytes  = 2048
+	WebhookSecretPrefix = "whsec_"
+	WebhookReplayWindow = 5 * time.Minute
+	WebhookTimeout      = 5 * time.Second
+	WebhookMaxBody      = 64 << 10
+	WebhookRetryHorizon = 24 * time.Hour
+	WebhookStaleAfter   = 30 * time.Second
+
+	EventPaymentConfirmed = "purchase.payment_confirmed"
+	EventVended           = "purchase.vended"
+	EventDelivered        = "purchase.delivered"
+	EventFailed           = "purchase.failed"
+	EventRefunded         = "purchase.refunded"
+	EventUnknown          = "purchase.unknown"
+	EventPing             = "endpoint.ping"
+
+	DeliveryPending    = "PENDING"
+	DeliveryDelivering = "DELIVERING"
+	DeliveryDelivered  = "DELIVERED"
+	DeliveryFailed     = "FAILED"
+	DeliveryDeadLetter = "DEAD_LETTER"
 )
 
 // AllScopes is the closed set of partner scopes. B5/B6 bind these to routes.
@@ -62,6 +85,10 @@ var (
 	ErrReceiptConflict = errors.New("partners: receipt reference conflict")
 	ErrNotPendingTopup = errors.New("partners: top-up is not pending")
 	ErrFloatConflict   = errors.New("partners: concurrent float update")
+	ErrBlockedURL      = errors.New("partners: webhook url is not allowed")
+	ErrNotHTTPS        = errors.New("partners: webhook url must be https")
+	ErrWebhookLimit    = errors.New("partners: webhook endpoint limit reached")
+	ErrRedirect        = errors.New("partners: webhook redirects are not followed")
 )
 
 type Partner struct {
@@ -140,6 +167,19 @@ type Repo interface {
 	GetTopupForUpdate(ctx context.Context, id uuid.UUID) (FloatTopup, error)
 	GetTopupByReceipt(ctx context.Context, receiptRef string) (FloatTopup, error)
 	UpdateTopup(ctx context.Context, t FloatTopup) error
+
+	CreateWebhookEndpoint(ctx context.Context, ep WebhookEndpoint) error
+	GetWebhookEndpoint(ctx context.Context, id uuid.UUID) (WebhookEndpoint, error)
+	GetWebhookEndpointForUpdate(ctx context.Context, id uuid.UUID) (WebhookEndpoint, error)
+	ListWebhookEndpoints(ctx context.Context, partnerID uuid.UUID) ([]WebhookEndpoint, error)
+	UpdateWebhookEndpoint(ctx context.Context, ep WebhookEndpoint) error
+
+	InsertWebhookDelivery(ctx context.Context, d WebhookDelivery) error
+	GetWebhookDelivery(ctx context.Context, id uuid.UUID) (WebhookDelivery, error)
+	GetWebhookDeliveryForUpdate(ctx context.Context, id uuid.UUID) (WebhookDelivery, error)
+	ListWebhookDeliveries(ctx context.Context, partnerID, endpointID uuid.UUID, limit int) ([]WebhookDelivery, error)
+	ListDueWebhookDeliveries(ctx context.Context, now, staleDeliveringBefore time.Time, limit int) ([]uuid.UUID, error)
+	UpdateWebhookDelivery(ctx context.Context, d WebhookDelivery) error
 }
 
 // Route describes a partner API route and the scope it will require.
@@ -163,6 +203,14 @@ func RouteCatalog() []Route {
 		{Method: "GET", Path: "/v1/partner/purchases", Scope: ScopePurchasesRead},
 		{Method: "GET", Path: "/v1/partner/float", Scope: ScopeFloatRead},
 		{Method: "POST", Path: "/v1/partner/webhooks", Scope: ScopeWebhooksManage},
+		{Method: "GET", Path: "/v1/partner/webhooks", Scope: ScopeWebhooksManage},
+		{Method: "GET", Path: "/v1/partner/webhooks/{id}", Scope: ScopeWebhooksManage},
+		{Method: "PATCH", Path: "/v1/partner/webhooks/{id}", Scope: ScopeWebhooksManage},
+		{Method: "DELETE", Path: "/v1/partner/webhooks/{id}", Scope: ScopeWebhooksManage},
+		{Method: "POST", Path: "/v1/partner/webhooks/{id}/rotate", Scope: ScopeWebhooksManage},
+		{Method: "POST", Path: "/v1/partner/webhooks/{id}/ping", Scope: ScopeWebhooksManage},
+		{Method: "GET", Path: "/v1/partner/webhooks/{id}/deliveries", Scope: ScopeWebhooksManage},
+		{Method: "POST", Path: "/v1/partner/webhooks/{id}/deliveries/{delivery_id}/redeliver", Scope: ScopeWebhooksManage},
 	}
 }
 

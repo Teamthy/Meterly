@@ -142,6 +142,8 @@ type Store struct {
 	partnerFloat           map[uuid.UUID]*partners.Float
 	partnerTopups          map[uuid.UUID]*partners.FloatTopup
 	partnerTopupsByReceipt map[string]uuid.UUID
+	partnerWebhooks        map[uuid.UUID]*partners.WebhookEndpoint
+	partnerDeliveries      map[uuid.UUID]*partners.WebhookDelivery
 	txnByPartnerRef        map[string]uuid.UUID
 }
 
@@ -177,6 +179,8 @@ func New() *Store {
 		partnerFloat:           map[uuid.UUID]*partners.Float{},
 		partnerTopups:          map[uuid.UUID]*partners.FloatTopup{},
 		partnerTopupsByReceipt: map[string]uuid.UUID{},
+		partnerWebhooks:        map[uuid.UUID]*partners.WebhookEndpoint{},
+		partnerDeliveries:      map[uuid.UUID]*partners.WebhookDelivery{},
 		txnByPartnerRef:        map[string]uuid.UUID{},
 		meters:                 map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},

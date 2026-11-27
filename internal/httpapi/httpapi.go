@@ -168,6 +168,9 @@ func (s *Server) Routes() http.Handler {
 		if s.Partners.Box == nil && s.O != nil {
 			s.Partners.Box = s.O.Box()
 		}
+		if s.Partners.Guard == nil {
+			s.Partners.Guard = &partners.Guard{AllowLoopback: s.Dev}
+		}
 	}
 	s.Auth = auth.PartnerThen(s.Auth, s.Partners)
 
@@ -1069,6 +1072,10 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "ACCOUNT_SUSPENDED", "partner is suspended")
 	case errors.Is(err, partners.ErrInvalidScope), errors.Is(err, partners.ErrInvalidEnv), errors.Is(err, partners.ErrInvalidInput):
 		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, partners.ErrNotHTTPS), errors.Is(err, partners.ErrBlockedURL):
+		writeErr(w, 400, "INVALID_REQUEST", "webhook url is not allowed")
+	case errors.Is(err, partners.ErrWebhookLimit):
+		writeErr(w, 409, "INVALID_REQUEST", "webhook endpoint limit reached")
 	case errors.Is(err, partners.ErrKeyRevoked), errors.Is(err, partners.ErrKeyExpired):
 		writeErr(w, 409, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, tx.ErrNotFound):

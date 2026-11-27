@@ -1,13 +1,13 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-23 (B4). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0 (PR #26), B1 (PR #27), B2 (PR #28), B3 (PR #29 @ `ecb675d`). B4 partner identity/access is **this PR**. Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B5→B9).
+> **Last updated:** 2026-11-23 (B6). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0–B5 (PR #31 @ `a370a4d`). **This PR is B6** (partner webhooks, SSRF, sandbox demo). Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B7→B9).
 
 ## 0. Start here
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
 2. Branch: `arena/7cc28241-meterly`. **Do not switch branches.**
-3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, P0–P4, B0–B3 are **merged**. Engineering left is **B4+** (this PR: partner identity/access) then partner purchases plus **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
+3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, P0–P4, B0–B5 are **merged**. This PR is **B6** (partner webhooks). Next is B7 (developer portal). Do not mix B7 into this PR. Hosting, live sandboxes, real AMI/HES partner docs and legal flags remain founder-gated.
 4. Product truth: credit lands **on the meter**. `ACCEPTED ≠ CONFIRMED`. Keypad meters get STS fallback. **Do not invent AMI/HES APIs.**
 5. Do not commit secrets.
 
@@ -16,7 +16,7 @@
 | # | What | Who | Status |
 |---|---|---|---|
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
-| 2 | Render API + apply migrations `0018`–`0028` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0028` **unapplied**. |
+| 2 | Render API + apply migrations `0018`–`0030` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0018`–`0030` **unapplied**. |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
 | 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
@@ -27,7 +27,9 @@
 | 10 | B1 NDPA (data map, consent, retention) | Eng | **Merged** — [PR #27](https://github.com/Teamthy/Meterly/pull/27). `0025_privacy.sql` **unapplied hosted**. Legal sign-off on periods **pending**. |
 | 11 | B2 NDPA data export | Eng | **Merged** — [PR #28](https://github.com/Teamthy/Meterly/pull/28). `0026_data_export.sql` **unapplied hosted**. |
 | 12 | B3 NDPA account erasure | Eng | **Merged** — [PR #29](https://github.com/Teamthy/Meterly/pull/29). `0027_account_erasure.sql` **unapplied hosted**. |
-| 13 | B4 partner identity/access | Eng | **This PR** — partners, `mtr_test_`/`mtr_live_` keys, admin + `GET /v1/partner/me`. `0028_partners.sql` **unapplied hosted**. |
+| 13 | B4 partner identity/access | Eng | **Merged** — [PR #30](https://github.com/Teamthy/Meterly/pull/30). `0028_partners.sql` **unapplied hosted**. |
+| 14 | B5 partner float + purchase API | Eng | **Merged** — [PR #31](https://github.com/Teamthy/Meterly/pull/31). `0029_partner_float.sql` **unapplied hosted**. |
+| 15 | B6 partner webhooks, SSRF, sandbox demo | Eng | **This PR** — `0030_partner_webhooks.sql` **unapplied hosted**. |
 
 ---
 
@@ -57,13 +59,15 @@ OPay airtime works because every phone has a **network account** the telco can c
 | P2 daily settlement recon | ✅ `main` (PR #24/#25) | `internal/reconcile`, `0022` **unapplied hosted** |
 | P3 risk engine + chargebacks | ✅ `main` (PR #24/#25) | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
 | P4 pilot ops | ✅ `main` (PR #24/#25) | `PILOT_MODE`, alerts, `cmd/integrity`, `cmd/rekey`; `0024` **unapplied hosted** |
-| Hosted API (Render) + migrations `0018`–`0028` | ⏳ | `docs/DEPLOY.md` |
+| Hosted API (Render) + migrations `0018`–`0030` | ⏳ | `docs/DEPLOY.md` |
 | B1 NDPA part 1 (data map, consent, retention) | ✅ `main` (PR #27) | `docs/PRIVACY_ENGINEERING.md`, `0025` **unapplied hosted** |
 | B2 NDPA part 2 (data export) | ✅ `main` (PR #28) | `POST /v1/me/data-export`, `0026` **unapplied hosted** |
 | B3 NDPA part 3 (account erasure) | ✅ `main` (PR #29) | `POST /v1/me/delete-account`, `0027` **unapplied hosted** |
-| B4 partner identity/access | ⏳ this PR | `mtr_test_`/`mtr_live_` keys, `0028_partners.sql` **unapplied hosted** |
+| B4 partner identity/access | ✅ `main` (PR #30) | `mtr_test_`/`mtr_live_` keys, `0028` **unapplied hosted** |
+| B5 partner float + purchase API | ✅ `main` (PR #31) | `0029` **unapplied hosted** |
+| B6 partner webhooks / SSRF / sandbox | ⏳ this PR | `0030_partner_webhooks.sql` **unapplied hosted** |
 
-**Git:** `origin/main` @ `ecb675d` (merge [PR #29](https://github.com/Teamthy/Meterly/pull/29) B3). P0–P4, B0–B3 are **merged**. P1 is **not live-certified**. This PR is B4. Next after merge: B5 (partner float/purchases). Do not mix B5 into this PR.
+**Git:** `origin/main` @ `a370a4d` (merge [PR #31](https://github.com/Teamthy/Meterly/pull/31) B5). P0–P4, B0–B5 are **merged**. P1 is **not live-certified**. This PR is B6. Next after merge: B7 (developer portal). Do not mix B7 into this PR. Hosted `0018`–`0030` unapplied. Do not apply hosted migrations from this sandbox.
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -310,6 +314,10 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-23: B6 partner webhooks, SSRF, sandbox demo.** Migration `0030_partner_webhooks.sql` (partner-scoped endpoints/deliveries; 0001 org webhooks unused). HMAC-SHA256 `{timestamp}.{body}`, 5-minute replay window, 24h rotation overlap, exponential retry then dead-letter + redeliver, test ping. SSRF: https, resolve-once + pin IP, deny private/loopback/link-local/metadata (v4/v6/mapped), no redirects. `MODE=dev` allows `http://127.0.0.1` for `scripts/partner-demo`. Token in payload only if `include_token` (purchase scopes). Events: `purchase.payment_confirmed|vended|delivered|failed|refunded|unknown`. Verified: `gofmt`, `go vet`, `go test ./...` (memory; PostgreSQL skipped here without `DATABASE_URL`); `go test -race` on partners/httpapi/app; `scripts/partner-demo` against local `MODE=dev` API reconciled float and verified 3 signed events. Unverified: CI with `DATABASE_URL`. Blocked: hosted migrate `0018`–`0030`; Paystack revoke docs; B7. Do not start B7 in this PR.
+
+- **2026-11-23: B5 partner float and purchase API.** Prefunded `PARTNER_FLOAT` liability, two-person top-up, validate/quote/purchase, synthetic user `partner:{uuid}`. Merged [PR #31](https://github.com/Teamthy/Meterly/pull/31) @ `a370a4d`. `0029` unapplied hosted.
 
 - **2026-11-23: B4 partner platform part 1 (identity/access).** Migration `0028_partners.sql` (`partners`, `partner_api_keys` hash+prefix only, `partner_usage`). Keys `mtr_test_`/`mtr_live_` (32 random bytes, shown once, HMAC-SHA256, constant-time). `Authorization: Bearer mtr_…` is a partner principal (never a DevAuth subject). Admin (operator, step-up, reason): create, two-person production activation, issue/rotate/revoke, suspend, usage. `GET /v1/partner/me` is scoped and per-partner rate-limited. `FEATURE_PARTNER_API` off outside dev. Daily value cap is a field only (B5 enforces). No purchases. Verified: `gofmt`, `go vet`, `go test -race ./...` (memory; PostgreSQL skipped here without `DATABASE_URL`). Unverified: CI with `DATABASE_URL`. Blocked: hosted migrate `0018`–`0028`; Paystack revoke docs. Next: B5 after this PR merges.
 
