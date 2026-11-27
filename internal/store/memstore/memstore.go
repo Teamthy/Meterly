@@ -132,6 +132,8 @@ type Store struct {
 	retentionRuns     []privacy.RetentionRun
 	dataExports       map[uuid.UUID]privacy.ExportJob
 	dataExportByDay   map[string]uuid.UUID
+	erasureReqs       map[uuid.UUID]privacy.ErasureRequest
+	erasureByUser     map[string]uuid.UUID
 }
 
 func New() *Store {
@@ -157,6 +159,8 @@ func New() *Store {
 		legalHolds:      map[uuid.UUID]privacy.Hold{},
 		dataExports:     map[uuid.UUID]privacy.ExportJob{},
 		dataExportByDay: map[string]uuid.UUID{},
+		erasureReqs:     map[uuid.UUID]privacy.ErasureRequest{},
+		erasureByUser:   map[string]uuid.UUID{},
 		meters:          map[uuid.UUID]*meters.Meter{}, meterByHash: map[string]uuid.UUID{},
 		quotes: map[uuid.UUID]*tx.Quote{}, txns: map[uuid.UUID]*tx.Transaction{}, txnByPayRef: map[string]uuid.UUID{},
 		ledgerByRef: map[string]int{}, idem: map[string]*idempotency.Record{}, providerOff: map[string]bool{},
@@ -361,7 +365,7 @@ func (r *repos) SetStatus(_ context.Context, userID, status string) error {
 		return store.ErrNotFound
 	}
 	switch status {
-	case store.UserActive, store.UserSuspended, store.UserClosed:
+	case store.UserActive, store.UserSuspended, store.UserClosed, store.UserErased:
 	default:
 		return errors.New("store: invalid user status")
 	}

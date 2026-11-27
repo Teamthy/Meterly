@@ -90,6 +90,10 @@ type Config struct {
 	DataExportTTL               time.Duration
 	DataExportInterval          time.Duration
 	DataExportBatchSize         int
+	AccountErasureCooling       time.Duration
+	AccountErasureInterval      time.Duration
+	AccountErasureBatchSize     int
+	FeatureAccountErasure       bool
 
 	// Authentication: "dev" (bearer token = subject) or "oidc".
 	AuthMode        string
@@ -291,6 +295,9 @@ func Load(getenv func(string) string) (Config, error) {
 	c.DataExportTTL = dur("DATA_EXPORT_TTL", 24*time.Hour)
 	c.DataExportInterval = dur("DATA_EXPORT_INTERVAL", 5*time.Second)
 	c.DataExportBatchSize = int(integer("DATA_EXPORT_BATCH_SIZE", 20))
+	c.AccountErasureCooling = dur("ACCOUNT_ERASURE_COOLING", 7*24*time.Hour)
+	c.AccountErasureInterval = dur("ACCOUNT_ERASURE_INTERVAL", 5*time.Second)
+	c.AccountErasureBatchSize = int(integer("ACCOUNT_ERASURE_BATCH_SIZE", 20))
 	switch strings.ToLower(strings.TrimSpace(getenv("RETENTION_DRY_RUN"))) {
 	case "", "false", "0":
 		c.RetentionDryRun = false
@@ -434,6 +441,16 @@ func Load(getenv func(string) string) (Config, error) {
 		c.FeatureHouseholds = false
 	default:
 		errs = append(errs, fmt.Errorf("FEATURE_HOUSEHOLDS: must be true or false"))
+	}
+	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_ACCOUNT_ERASURE"))) {
+	case "":
+		c.FeatureAccountErasure = c.Mode == Dev
+	case "true", "1":
+		c.FeatureAccountErasure = true
+	case "false", "0":
+		c.FeatureAccountErasure = false
+	default:
+		errs = append(errs, fmt.Errorf("FEATURE_ACCOUNT_ERASURE: must be true or false"))
 	}
 	switch strings.ToLower(strings.TrimSpace(getenv("FEATURE_RISK_ENGINE"))) {
 	case "":

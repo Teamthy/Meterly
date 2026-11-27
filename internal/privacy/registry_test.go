@@ -37,6 +37,27 @@ func TestColumnRegistryMatchesMigrations(t *testing.T) {
 	}
 }
 
+func TestPersonalColumnsHaveErasureAction(t *testing.T) {
+	actions := privacy.ErasureActions()
+	allowed := map[string]bool{
+		privacy.EraseDelete: true, privacy.EraseAnonymise: true,
+		privacy.EraseShared: true, privacy.EraseKeep: true,
+	}
+	for _, c := range privacy.Columns() {
+		if !c.Personal {
+			continue
+		}
+		a := actions[c.Key()]
+		if a == "" {
+			t.Errorf("personal column %s has no erasure action", c.Key())
+			continue
+		}
+		if !allowed[a] {
+			t.Errorf("%s erasure action %q is not DELETE/ANONYMISE/SHARED/KEEP", c.Key(), a)
+		}
+	}
+}
+
 func TestPoliciesCoverFinancialAsAnonymise(t *testing.T) {
 	var sawFinancial bool
 	for _, p := range privacy.Policies(privacy.DefaultSettings()) {

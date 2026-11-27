@@ -120,6 +120,14 @@ func buildOne(ctx context.Context, st store.Store, box *secure.Box, job privacy.
 		job.UpdatedAt = now
 		return st.Repos().Privacy().UpdateExport(ctx, job)
 	}
+	if status, err := st.Repos().Users().Status(ctx, job.UserID); err == nil && status == store.UserErased {
+		job.Status = privacy.ExportFailed
+		job.Error = "account_erased"
+		job.ArchiveCiphertext = nil
+		job.TokenCiphertext = nil
+		job.UpdatedAt = now
+		return st.Repos().Privacy().UpdateExport(ctx, job)
+	}
 	arch, err := Build(ctx, st, box, job.UserID, now)
 	if err != nil {
 		return err

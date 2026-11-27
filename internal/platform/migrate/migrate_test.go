@@ -76,8 +76,8 @@ func TestEmbeddedMigrationsIncludeP2P4(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(names)
-	if len(names) < 26 {
-		t.Fatalf("want at least 26 migrations, got %d: %v", len(names), names)
+	if len(names) < 27 {
+		t.Fatalf("want at least 27 migrations, got %d: %v", len(names), names)
 	}
 	if names[0] != "0001_init.sql" {
 		t.Fatalf("first file %s", names[0])
@@ -94,7 +94,7 @@ func TestEmbeddedMigrationsIncludeP2P4(t *testing.T) {
 		prev = v
 	}
 	joined := strings.Join(names, " ")
-	for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql", "0025_privacy.sql", "0026_data_export.sql"} {
+	for _, want := range []string{"0022_reconciliation.sql", "0023_risk.sql", "0024_pilot.sql", "0025_privacy.sql", "0026_data_export.sql", "0027_account_erasure.sql"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("embedded FS missing %s: %v", want, names)
 		}

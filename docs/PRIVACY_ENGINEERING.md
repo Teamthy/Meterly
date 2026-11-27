@@ -23,7 +23,13 @@ Storage: **encrypted** (AEAD, bound to user id where noted), **HMAC** (lookup on
 | `risk_observations` | DELETE | 90 days | `RETENTION_RISK_OBSERVATION` |
 | `support_threads` (CLOSED/RESOLVED, cascade messages) | DELETE | 2 years | `RETENTION_SUPPORT` |
 | `notification_deliveries.destination_hmac` | ANONYMISE (clear HMAC) | 365 days | `NOTIFICATION_HMAC_RETENTION` |
-| `electricity_transactions`, `payments`, `ledger_entries`, `refunds`, `disputes` | ANONYMISE (no-op until B3) | 7 years | `RETENTION_FINANCIAL` |
+| `electricity_transactions`, `payments`, `ledger_entries`, `refunds`, `disputes` | ANONYMISE (time-based job still a no-op; B3 account erasure re-points user FKs) | 7 years | `RETENTION_FINANCIAL` |
+
+---
+
+## Account erasure (B3)
+
+`POST /v1/me/delete-account` starts a configurable 7-day cooling-off (`ACCOUNT_ERASURE_COOLING`). After that, `erasure.Process` runs a resumable job: financial FKs → tombstone user `00000000-0000-0000-0000-00000000e5ed`; identity, memberships, support, destinations, cards and exports are deleted. Personal columns and their erasure action (`DELETE` / `ANONYMISE` / `SHARED` / `KEEP`) live in `internal/privacy.ErasureActions()`. Shared meters keep Disco name/address while another household still has an active grant. Pay-for-Me guest payer ciphertext is kept (other people's data). Open disputes, unresolved txns, pots with funds, and unpaid obligations block the job. Paystack card revoke is TODO until documented.
 
 Batch size `RETENTION_BATCH_SIZE` (500). Interval `RETENTION_INTERVAL` (1h).
 

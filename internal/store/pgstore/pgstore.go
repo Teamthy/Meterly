@@ -315,7 +315,7 @@ func (r userRepo) SetStatus(ctx context.Context, userID, status string) error {
 		return store.ErrNotFound
 	}
 	switch status {
-	case store.UserActive, store.UserSuspended, store.UserClosed:
+	case store.UserActive, store.UserSuspended, store.UserClosed, store.UserErased:
 	default:
 		return errors.New("store: invalid user status")
 	}

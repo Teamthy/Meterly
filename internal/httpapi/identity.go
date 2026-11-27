@@ -190,18 +190,23 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
-	p, err := s.O.Store().Repos().Users().Profile(r.Context(), userID(r))
+	uid := userID(r)
+	p, err := s.O.Store().Repos().Users().Profile(r.Context(), uid)
 	if err != nil {
 		s.mapErr(w, r, err)
 		return
 	}
 	passkeys := 0
 	if s.Identity != nil {
-		if list, err := s.Identity.ListPasskeys(r.Context(), userID(r)); err == nil {
+		if list, err := s.Identity.ListPasskeys(r.Context(), uid); err == nil {
 			passkeys = len(list)
 		}
 	}
-	writeJSON(w, 200, map[string]any{"profile": p, "passkey_count": passkeys})
+	out := map[string]any{"profile": p, "passkey_count": passkeys}
+	if job, err := s.O.Store().Repos().Privacy().GetOpenErasureForUser(r.Context(), uid); err == nil {
+		out["erasure"] = erasureView(job)
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) patchMe(w http.ResponseWriter, r *http.Request) {

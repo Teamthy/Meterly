@@ -23,6 +23,7 @@ const (
 	ActionRevokeOthers  = "REVOKE_OTHERS"
 	ActionChangeContact = "CHANGE_CONTACT"
 	ActionDataExport    = "DATA_EXPORT"
+	ActionDeleteAccount = "DELETE_ACCOUNT"
 
 	OutcomeAllow    = "ALLOW"
 	OutcomeStepUp   = "STEP_UP"

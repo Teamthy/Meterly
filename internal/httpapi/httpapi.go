@@ -79,6 +79,8 @@ type Server struct {
 	HouseholdsDisabled bool
 	PublicBaseURL      string
 	ExportTTL          time.Duration
+	ErasureDisabled    bool
+	ErasureCooling     time.Duration
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
 	DevPay      *mock.Payments
@@ -185,6 +187,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /v1/me/data-export", write(s.createDataExport))
 	mux.Handle("GET /v1/me/data-export/{export_id}", user(s.getDataExport))
 	mux.Handle("GET /v1/me/data-export/{export_id}/download", user(s.downloadDataExport))
+	mux.Handle("POST /v1/me/delete-account", write(s.createDeleteAccount))
+	mux.Handle("POST /v1/me/delete-account/cancel", write(s.cancelDeleteAccount))
 
 	mux.Handle("POST /v1/payment-requests", write(s.createPaymentRequest))
 	mux.Handle("GET /v1/payment-requests", user(s.listPaymentRequests))
