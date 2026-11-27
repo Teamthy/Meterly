@@ -29,6 +29,7 @@ import (
 	"github.com/teamthy/meterly/internal/payrequests"
 	"github.com/teamthy/meterly/internal/pots"
 	"github.com/teamthy/meterly/internal/powerdesk"
+	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/support"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -98,6 +99,7 @@ type Repos interface {
 	Auth() AuthRepo
 	Readings() MeterReadingRepo
 	LowUnitAlerts() LowUnitAlertRepo
+	Reconcile() reconcile.Repo
 }
 
 // MeterReadingRepo stores observed remote kWh samples used to compute
@@ -241,6 +243,8 @@ type TransactionRepo interface {
 	// concurrency), appends new history, and increments t.Version.
 	Save(ctx context.Context, t *tx.Transaction) error
 	ListForCustomer(ctx context.Context, customerID string) ([]*tx.Transaction, error)
+	// ListCreatedBetween returns transactions with from <= created_at < to.
+	ListCreatedBetween(ctx context.Context, from, to time.Time) ([]*tx.Transaction, error)
 	// Search returns matches newest first.
 	Search(ctx context.Context, f TxnFilter) ([]*tx.Transaction, error)
 	Count(ctx context.Context, f TxnFilter) (int, error)

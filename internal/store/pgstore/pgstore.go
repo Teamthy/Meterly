@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/identity"
+	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/store"
 	tx "github.com/teamthy/meterly/internal/transactions"
 )
@@ -141,6 +142,7 @@ func (r *repos) RemoteCohorts() store.RemoteCohortRepo                   { retur
 func (r *repos) Auth() store.AuthRepo                                    { return authRepo{r} }
 func (r *repos) Readings() store.MeterReadingRepo                        { return readingRepo{r} }
 func (r *repos) LowUnitAlerts() store.LowUnitAlertRepo                   { return lowUnitRepo{r} }
+func (r *repos) Reconcile() reconcile.Repo                               { return reconRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

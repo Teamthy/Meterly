@@ -2119,6 +2119,275 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/admin/reconciliation/exceptions:
+    get:
+      operationId: adminListReconciliationExceptions
+      tags: [Admin]
+      summary: List daily settlement exceptions (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: provider
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [paystack, vtpass]
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, INVESTIGATING, RESOLVED, WRITTEN_OFF]
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: business_date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Exception list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationExceptionList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/reconciliation/exceptions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ReconciliationIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    get:
+      operationId: adminGetReconciliationException
+      tags: [Admin]
+      summary: Exception detail (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Exception.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationException"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/reconciliation/exceptions/{id}/assign:
+    parameters:
+      - $ref: "#/components/parameters/ReconciliationIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminAssignReconciliationException
+      tags: [Admin]
+      summary: Assign an exception to an owner (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconciliationAssignRequest"
+      responses:
+        "200":
+          description: Updated exception.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationException"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/reconciliation/exceptions/{id}/resolve:
+    parameters:
+      - $ref: "#/components/parameters/ReconciliationIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminResolveReconciliationException
+      tags: [Admin]
+      summary: Resolve or write off an exception without a ledger posting (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconciliationResolveRequest"
+      responses:
+        "200":
+          description: Updated exception.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationException"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/admin/reconciliation/exceptions/{id}/adjustments:
+    parameters:
+      - $ref: "#/components/parameters/ReconciliationIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminProposeReconciliationAdjustment
+      tags: [Admin]
+      summary: Propose a two-person adjusting ledger entry (operator/admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconciliationAdjustmentRequest"
+      responses:
+        "201":
+          description: Proposed adjustment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationAdjustment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/reconciliation/adjustments/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ReconciliationIDPath"
+      - $ref: "#/components/parameters/CorrelationIDHeader"
+    post:
+      operationId: adminApproveReconciliationAdjustment
+      tags: [Admin]
+      summary: Approve an adjusting entry as a different admin (admin + MFA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReasonRequest"
+      responses:
+        "200":
+          description: Approved adjustment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationAdjustment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/admin/reconciliation/summary:
+    get:
+      operationId: adminReconciliationSummary
+      tags: [Admin]
+      summary: Daily settlement summary for an Africa/Lagos business date
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Daily summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/reconciliation/wallet-topup:
+    post:
+      operationId: adminReconciliationWalletTopup
+      tags: [Admin]
+      summary: Record a VTpass wallet top-up from bank (admin + MFA)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CorrelationIDHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconciliationWalletTopupRequest"
+      responses:
+        "201":
+          description: Ledger posting.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/payment-requests:
     parameters:
       - $ref: "#/components/parameters/CorrelationIDHeader"
@@ -3800,6 +4069,13 @@ components:
       required: true
       schema:
         type: string
+    ReconciliationIDPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     PaymentRequestIDPath:
       name: id
       in: path
@@ -4673,6 +4949,180 @@ components:
           type: string
           minLength: 5
           maxLength: 500
+
+    ReconciliationException:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        business_date:
+          type: string
+          format: date
+        category:
+          type: string
+        severity:
+          type: string
+        provider_ref:
+          type: string
+        our_transaction_id:
+          type: string
+          format: uuid
+        ours_minor:
+          type: integer
+        theirs_minor:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+        owner:
+          type: string
+        notes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReconciliationExceptionList:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconciliationException"
+
+    ReconciliationAssignRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        owner:
+          type: string
+
+    ReconciliationResolveRequest:
+      type: object
+      required: [reason, status]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        status:
+          type: string
+          enum: [RESOLVED, WRITTEN_OFF]
+        notes:
+          type: string
+
+    ReconciliationAdjustmentRequest:
+      type: object
+      required: [reason, debit_account, credit_account, amount_minor]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        debit_account:
+          type: string
+        credit_account:
+          type: string
+        amount_minor:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+
+    ReconciliationAdjustment:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        exception_id:
+          type: string
+          format: uuid
+        proposed_by:
+          type: string
+        approved_by:
+          type: string
+        status:
+          type: string
+        debit_account:
+          type: string
+        credit_account:
+          type: string
+        amount_minor:
+          type: integer
+        currency:
+          type: string
+        ledger_reference:
+          type: string
+        reason:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        approved_at:
+          type: string
+          format: date-time
+
+    ReconciliationSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        business_date:
+          type: string
+          format: date
+        runs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        exceptions_by_category:
+          type: object
+          additionalProperties:
+            type: integer
+        open_count:
+          type: integer
+        matched_count:
+          type: integer
+        matched_minor:
+          type: integer
+        psp_receivable_minor:
+          type: integer
+
+    ReconciliationWalletTopupRequest:
+      type: object
+      required: [reason, amount_minor]
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        amount_minor:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
 
     ConsoleAction:
       type: object

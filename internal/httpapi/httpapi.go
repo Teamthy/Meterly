@@ -30,6 +30,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
+	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/security"
 	"github.com/teamthy/meterly/internal/store"
 	"github.com/teamthy/meterly/internal/tokenshares"
@@ -51,6 +52,7 @@ type Limits struct {
 
 type Server struct {
 	O             *orchestrator.Orchestrator
+	Reconcile     *reconcile.Engine
 	Auth          auth.Authenticator
 	Identity      *identity.Engine
 	Security      *security.Engine
@@ -957,6 +959,16 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 409, "DELIVERY_FAILED", "no token is available for this transaction")
 	case errors.Is(err, meters.ErrInvalidCohort):
 		writeErr(w, 422, "INVALID_REQUEST", "invalid remote-credit cohort")
+	case errors.Is(err, reconcile.ErrSameApprover):
+		writeErr(w, 409, "INVALID_REQUEST", "proposer cannot approve")
+	case errors.Is(err, reconcile.ErrNotProposed):
+		writeErr(w, 409, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, reconcile.ErrUnknownAccount), errors.Is(err, reconcile.ErrBadStatus):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, reconcile.ErrNotFound):
+		writeErr(w, 404, "NOT_FOUND", "not found")
+	case errors.Is(err, reconcile.ErrNoSource):
+		writeErr(w, 503, "PROVIDER_UNAVAILABLE", "reconciliation source is not configured")
 	case errors.Is(err, store.ErrDuplicate):
 		writeErr(w, 409, "DUPLICATE_RESOURCE", "resource already exists")
 	case errors.Is(err, orchestrator.ErrPaymentMismatch):

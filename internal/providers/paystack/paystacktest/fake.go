@@ -55,17 +55,29 @@ type refund struct {
 	Amount       int64
 	Status       string
 	MerchantNote string
+	TxnRef       string
+}
+
+type settlement struct {
+	ID              int64
+	Status          string
+	Currency        string
+	TotalAmount     int64
+	EffectiveAmount int64
+	TotalFees       int64
+	SettlementDate  time.Time
 }
 
 type Fake struct {
 	*httptest.Server
 	Secret string
 
-	mu      sync.Mutex
-	nextID  int64
-	txns    map[string]*txn
-	auths   map[string]*CardAuth
-	refunds []*refund
+	mu          sync.Mutex
+	nextID      int64
+	txns        map[string]*txn
+	auths       map[string]*CardAuth
+	refunds     []*refund
+	settlements []*settlement
 	// Fault injection: the next N requests to a path prefix get HTTP 500
 	// after the operation is applied ("lost response").
 	failAfterApply map[string]int
@@ -83,6 +95,37 @@ func New(secret string) *Fake {
 	}
 	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
 	return f
+}
+
+func (f *Fake) SeedTransaction(ref, status string, amount int64, paidAt time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	t := &txn{ID: f.nextID, Reference: ref, Amount: amount, Currency: "NGN", Status: status}
+	if !paidAt.IsZero() {
+		t.PaidAt = &paidAt
+	}
+	f.txns[ref] = t
+}
+
+func (f *Fake) SeedSettlement(id int64, status string, total, fees, effective int64, at time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.settlements = append(f.settlements, &settlement{
+		ID: id, Status: status, Currency: "NGN",
+		TotalAmount: total, TotalFees: fees, EffectiveAmount: effective, SettlementDate: at,
+	})
+}
+
+func (f *Fake) SeedRefund(txnRef, status string, amount int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextID++
+	var txnID int64
+	if t, ok := f.txns[txnRef]; ok {
+		txnID = t.ID
+	}
+	f.refunds = append(f.refunds, &refund{ID: f.nextID, Transaction: txnID, Amount: amount, Status: status, TxnRef: txnRef})
 }
 
 func write(w http.ResponseWriter, code int, status bool, msg string, data any) {
@@ -261,6 +304,12 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, p) {
 			f.Requests[r.Method+" "+p]++
 		}
+	}
+	if r.URL.Path == "/transaction" {
+		f.Requests[r.Method+" /transaction"]++
+	}
+	if r.URL.Path == "/settlement" || strings.HasPrefix(r.URL.Path, "/settlement/") {
+		f.Requests[r.Method+" /settlement"]++
 	}
 	lose := false
 	for p, n := range f.failAfterApply {
@@ -478,13 +527,36 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(200, true, "Verification successful", txnPayload(t))
 
+	case r.Method == "GET" && r.URL.Path == "/transaction":
+		out := []map[string]any{}
+		for _, t := range f.txns {
+			out = append(out, txnPayload(t))
+		}
+		reply(200, true, "Transactions retrieved", out)
+
+	case r.Method == "GET" && r.URL.Path == "/settlement":
+		out := []map[string]any{}
+		for _, s := range f.settlements {
+			out = append(out, map[string]any{
+				"id": s.ID, "status": s.Status, "currency": s.Currency,
+				"total_amount": s.TotalAmount, "effective_amount": s.EffectiveAmount, "total_fees": s.TotalFees,
+				"settlement_date": s.SettlementDate,
+			})
+		}
+		reply(200, true, "Settlements retrieved", out)
+
 	case r.Method == "GET" && r.URL.Path == "/refund":
 		id, _ := strconv.ParseInt(r.URL.Query().Get("transaction"), 10, 64)
+		filter := r.URL.Query().Get("transaction") != ""
 		out := []map[string]any{}
 		for _, rf := range f.refunds {
-			if rf.Transaction == id {
-				out = append(out, map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
+			if filter && rf.Transaction != id {
+				continue
 			}
+			out = append(out, map[string]any{
+				"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote,
+				"transaction": map[string]any{"reference": rf.TxnRef},
+			})
 		}
 		reply(200, true, "Refunds retrieved", out)
 
@@ -518,7 +590,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.nextID++
-		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending", MerchantNote: body.MerchantNote}
+		rf := &refund{ID: f.nextID, Transaction: t.ID, Amount: amt, Status: "pending", MerchantNote: body.MerchantNote, TxnRef: t.Reference}
 		f.refunds = append(f.refunds, rf)
 		reply(200, true, "Refund has been queued for processing", map[string]any{"id": rf.ID, "status": rf.Status, "amount": rf.Amount, "merchant_note": rf.MerchantNote})
 

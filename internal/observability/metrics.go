@@ -89,6 +89,24 @@ type notifDelivKey struct {
 	status  string
 }
 
+type reconOpenKey struct {
+	provider string
+	category string
+}
+
+// ReconOpenCount is one series of reconciliation_exceptions_open.
+type ReconOpenCount struct {
+	Provider string
+	Category string
+	N        int64
+}
+
+var knownReconProviders = []string{"paystack", "vtpass"}
+var knownReconCategories = []string{
+	"IN_PSP_NOT_OURS", "IN_OURS_NOT_PSP", "AMOUNT_MISMATCH", "CURRENCY_MISMATCH",
+	"STATUS_MISMATCH", "REFUND_MISMATCH", "TOKEN_MISSING", "SETTLEMENT_UNBALANCED",
+}
+
 // Registry collects Meterly's operational metrics and renders them in
 // Prometheus text exposition format 0.0.4.
 type Registry struct {
@@ -105,6 +123,7 @@ type Registry struct {
 	outboxLagSeconds float64
 
 	notifDeliveries map[notifDelivKey]uint64
+	reconOpen       map[reconOpenKey]int64
 
 	resumeEscalations atomic.Uint64
 
@@ -125,7 +144,18 @@ func NewRegistry() *Registry {
 		providerDuration: map[provDurKey]*histSeries{},
 		txnsByStatus:     byStatus,
 		notifDeliveries:  map[notifDelivKey]uint64{},
+		reconOpen:        zeroReconOpen(),
 	}
+}
+
+func zeroReconOpen() map[reconOpenKey]int64 {
+	m := make(map[reconOpenKey]int64, len(knownReconProviders)*len(knownReconCategories))
+	for _, p := range knownReconProviders {
+		for _, c := range knownReconCategories {
+			m[reconOpenKey{p, c}] = 0
+		}
+	}
+	return m
 }
 
 // SafeRoute normalizes a Go 1.22 ServeMux pattern into a bounded route label.
@@ -224,6 +254,19 @@ func (r *Registry) SetVendingHealth(walletMinor int64, paused bool) {
 	}
 	r.vendingPaused.Store(0)
 	r.readyDegraded.Store(0)
+}
+
+func (r *Registry) SetReconExceptionsOpen(counts []ReconOpenCount) {
+	if r == nil {
+		return
+	}
+	next := zeroReconOpen()
+	for _, c := range counts {
+		next[reconOpenKey{c.Provider, c.Category}] = c.N
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reconOpen = next
 }
 
 func (r *Registry) IncNotificationDelivery(channel, status string) {
@@ -381,6 +424,22 @@ func (r *Registry) Render() string {
 	b.WriteString("# HELP ready_degraded 1 when /readyz is serving degraded.\n")
 	b.WriteString("# TYPE ready_degraded gauge\n")
 	fmt.Fprintf(&b, "ready_degraded %d\n", r.readyDegraded.Load())
+
+	b.WriteString("# HELP reconciliation_exceptions_open Open or investigating reconciliation exceptions by provider and category.\n")
+	b.WriteString("# TYPE reconciliation_exceptions_open gauge\n")
+	rKeys := make([]reconOpenKey, 0, len(r.reconOpen))
+	for k := range r.reconOpen {
+		rKeys = append(rKeys, k)
+	}
+	sort.Slice(rKeys, func(i, j int) bool {
+		if rKeys[i].provider != rKeys[j].provider {
+			return rKeys[i].provider < rKeys[j].provider
+		}
+		return rKeys[i].category < rKeys[j].category
+	})
+	for _, k := range rKeys {
+		fmt.Fprintf(&b, "reconciliation_exceptions_open{provider=%q,category=%q} %d\n", k.provider, k.category, r.reconOpen[k])
+	}
 
 	return b.String()
 }

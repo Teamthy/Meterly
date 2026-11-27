@@ -37,6 +37,7 @@ import (
 	"github.com/teamthy/meterly/internal/providers/paystack"
 	"github.com/teamthy/meterly/internal/providers/vtpass"
 	"github.com/teamthy/meterly/internal/ratelimit"
+	"github.com/teamthy/meterly/internal/reconcile"
 	"github.com/teamthy/meterly/internal/registry"
 	"github.com/teamthy/meterly/internal/secure"
 	"github.com/teamthy/meterly/internal/security"
@@ -62,6 +63,7 @@ type App struct {
 	Log           *slog.Logger
 	Store         store.Store
 	Orch          *orchestrator.Orchestrator
+	Reconcile     *reconcile.Engine
 	Publisher     *outbox.Publisher
 	Notifications *notificationservice.Service
 	Offline       *offline.Service
@@ -250,6 +252,14 @@ func BuildWithOptions(ctx context.Context, cfg config.Config, log *slog.Logger, 
 	reg := registry.New(a.Store, box, vend, remote)
 	reg.Live = strings.EqualFold(cfg.ProviderEnvironment, "PRODUCTION")
 	a.Orch = orchestrator.New(cfg.Orchestrator, a.Store, reg, box, a.payments, vend, remote, log)
+	var payStmt reconcile.PaymentStatement
+	if ps, ok := rawPay.(*paystack.Client); ok {
+		payStmt = reconcile.PaystackSource{Client: ps}
+	}
+	a.Reconcile = reconcile.New(store.ReconcileHost(a.Store), payStmt, vend)
+	a.Reconcile.OnOpen = func(counts []reconcile.OpenCount) {
+		a.Metrics.SetReconExceptionsOpen(toReconOpen(counts))
+	}
 	a.Orch.SetMetrics(a.Metrics)
 	a.Orch.SetMeterReadingProvider(readings)
 	a.Orch.SetFeatureGiftSMS(cfg.FeatureGiftSMS)
@@ -447,11 +457,22 @@ func (a *App) RefreshMetrics(ctx context.Context) {
 		byStatus[string(st)] = cnt
 	}
 	a.Metrics.SetTransactionGauges(byStatus, snap.ManualReviewOpen, snap.OutboxLagSeconds)
+	if counts, err := a.Store.Repos().Reconcile().CountOpen(ctx); err == nil {
+		a.Metrics.SetReconExceptionsOpen(toReconOpen(counts))
+	}
+}
+
+func toReconOpen(counts []reconcile.OpenCount) []observability.ReconOpenCount {
+	out := make([]observability.ReconOpenCount, 0, len(counts))
+	for _, c := range counts {
+		out = append(out, observability.ReconOpenCount{Provider: c.Provider, Category: string(c.Category), N: c.N})
+	}
+	return out
 }
 
 func (a *App) Handler() http.Handler {
 	s := &httpapi.Server{
-		O: a.Orch, Auth: a.authn, Identity: a.Identity, Security: a.Security, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
+		O: a.Orch, Reconcile: a.Reconcile, Auth: a.authn, Identity: a.Identity, Security: a.Security, Payments: a.payments, Notifications: a.Notifications, Offline: a.Offline,
 		Metrics: a.Metrics, Tracer: a.Tracer, Log: a.Log, Ready: a.Ready,
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,
@@ -773,6 +794,18 @@ func (a *App) RunWorkerWithDrain(stopCtx, drainCtx context.Context) {
 			}
 		})
 	}
+	reconEvery := a.Cfg.ReconcileInterval
+	if reconEvery <= 0 {
+		reconEvery = time.Hour
+	}
+	start("reconciliation", reconEvery, func(ctx context.Context) {
+		if ctx.Err() != nil || a.Reconcile == nil {
+			return
+		}
+		if err := a.Reconcile.CatchUp(drainCtx); err != nil {
+			a.Log.Warn("reconciliation catch-up failed", "err", err)
+		}
+	})
 	start("low-units", time.Minute, func(ctx context.Context) {
 		if ctx.Err() != nil {
 			return

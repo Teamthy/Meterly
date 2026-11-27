@@ -135,9 +135,10 @@ type Config struct {
 	// across API replicas. Empty keeps in-process token buckets.
 	RedisURL string
 
-	Orchestrator   orchestrator.Config
-	ResumeInterval time.Duration
-	OutboxInterval time.Duration
+	Orchestrator      orchestrator.Config
+	ResumeInterval    time.Duration
+	OutboxInterval    time.Duration
+	ReconcileInterval time.Duration
 	// A nonzero cutoff opts in to held notification candidate collection.
 	NotificationCandidatesSince time.Time
 	ShutdownTimeout             time.Duration
@@ -226,6 +227,7 @@ func Load(getenv func(string) string) (Config, error) {
 		VTPassDefaultPhone:     strings.TrimSpace(getenv("VTPASS_DEFAULT_PHONE")),
 		ResumeInterval:         dur("RESUME_INTERVAL", 15*time.Second),
 		OutboxInterval:         dur("OUTBOX_INTERVAL", 2*time.Second),
+		ReconcileInterval:      dur("RECONCILE_INTERVAL", time.Hour),
 		ShutdownTimeout:        dur("SHUTDOWN_TIMEOUT", 15*time.Second),
 	}
 

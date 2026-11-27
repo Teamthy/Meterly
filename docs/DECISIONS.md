@@ -22,6 +22,28 @@ Defaults chosen where the spec left room, or where a decision depends on a comme
 - **Users are created on first sight** from the identity-provider subject (`users.external_id`), so foreign keys hold from day one. M4 replaces dev auth with OIDC; the mapping stays the same.
 - **Provider and DisCo reference rows are upserted outside the caller's transaction** and cached, so a rollback can't leave a cached ID pointing at nothing.
 
+## Chart of accounts (P2 settlement)
+
+Illustrative CoA from spec §9.5, extended for daily Paystack settlement and VTpass wallet recon. **Fee and commission treatment is a founder/finance default** and must be revisited against the live merchant contract; the engine never invents a split.
+
+| Account | Type | Role | Default posting |
+|---|---|---|---|
+| `PSP_SETTLEMENT_RECEIVABLE` | ASSET | Money Paystack still owes us after a successful charge | Debited on payment confirm (existing purchase path). **Credited** when a settlement batch is recognised. |
+| `CUSTOMER_FUNDS_CLEARING` | LIABILITY | Customer money in flight | Unchanged (purchase / refund paths). |
+| `PROVIDER_PAYABLE` | LIABILITY | Amount owed to the vending provider | Debited when a confirmed vend is recognised against the prefunded wallet. |
+| `REFUND_PAYABLE` | LIABILITY | Refunds accepted but not yet settled | Unchanged. `REFUNDED` still means Paystack accepted the refund; final `refund.processed` is a recon report, not an implicit ledger post. |
+| `PLATFORM_FEE_REVENUE` | INCOME | Our fee | Unchanged; P2 does not accrue it from settlement. |
+| `POT_FUNDS_HELD` | LIABILITY | Funding-pot hold | Unchanged (M8). |
+| `CASH_AT_BANK` | ASSET | Bank / Paystack settlement destination | **Debited** for settlement `effective_amount`. **Credited** when we top up the VTpass wallet from bank. |
+| `PSP_FEES_EXPENSE` | EXPENSE | Paystack fees | **Debited** for settlement `total_fees` when `effective_amount + total_fees == total_amount`. Otherwise the batch is an exception (`SETTLEMENT_UNBALANCED`) and **nothing is posted**. |
+| `VENDOR_WALLET_PREFUND` | ASSET | VTpass prefunded wallet | **Debited** on an audited wallet top-up. **Credited** when a confirmed vend is recognised (`vend-wallet:{txn}`). |
+| `VENDOR_COMMISSION_INCOME` | INCOME | Vendor commission | **Unused until finance set the rate.** Never posted implicitly. |
+
+- **Daily job** is idempotent per `(provider, Africa/Lagos business date)`. Completed days are no-ops. Provider HTTP is outside `InTx`; exceptions, settlement/wallet postings and the run row commit together.
+- **Paystack** matches `GET /transaction` + `GET /refund` + `GET /settlement` against our transactions for that WAT day. **VTpass** requeries by the claim-time `request_id` (`VendIdempotencyKey`).
+- **Corrections never post themselves.** An operator proposes an adjusting entry; a *different* admin approves it (`recon-adj:{id}`). Same person cannot approve. Resolve/write-off without an adjustment is notes-only (false positive), not a ledger change.
+- Settlement reference `psp-settle:{id}` and vend-wallet reference `vend-wallet:{txn}` are ledger-idempotent, so a retried failed run does not double-post.
+
 ## Resume and reconciliation (M2)
 
 | Setting | Default | Why |

@@ -2,6 +2,10 @@
 //
 //   - Initialize: POST /transaction/initialize (amount in kobo).
 //   - Verify:     GET  /transaction/verify/:reference, the source of truth.
+//   - List:       GET /transaction, GET /refund, GET /settlement
+//     (https://paystack.com/docs/api/transaction/#list,
+//     https://paystack.com/docs/api/refund/#list,
+//     https://paystack.com/docs/api/settlement/#list).
 //   - Refund:     POST /refund, made idempotent by first listing existing
 //     refunds for the transaction.
 //   - Webhooks:   HMAC-SHA512 of the raw body keyed with the secret key, in
@@ -371,6 +375,133 @@ func Sign(secret string, body []byte) string {
 	m := hmac.New(sha512.New, []byte(secret))
 	m.Write(body)
 	return hex.EncodeToString(m.Sum(nil))
+}
+
+// ListedTxn is one row from GET /transaction.
+type ListedTxn struct {
+	Reference string
+	Status    string
+	Amount    int64
+	Currency  string
+	PaidAt    *time.Time
+}
+
+// ListedRefundRow is one row from GET /refund.
+type ListedRefundRow struct {
+	TransactionRef string
+	Amount         int64
+	Status         string
+}
+
+// Settlement is one row from GET /settlement.
+type Settlement struct {
+	ID              int64
+	Status          string
+	Currency        string
+	TotalAmount     int64
+	EffectiveAmount int64
+	TotalFees       int64
+	SettlementDate  time.Time
+}
+
+// africaLagos is WAT (UTC+1, no DST) so list windows match the recon business date.
+var africaLagos = time.FixedZone("WAT", 3600)
+
+func (c *Client) listPages(ctx context.Context, path string, from, to time.Time, decode func(json.RawMessage) error) error {
+	for page := 1; page <= 40; page++ {
+		q := url.Values{}
+		end := to.Add(-time.Nanosecond)
+		q.Set("from", from.In(africaLagos).Format("2006-01-02"))
+		q.Set("to", end.In(africaLagos).Format("2006-01-02"))
+		q.Set("perPage", "50")
+		q.Set("page", strconv.Itoa(page))
+		var raw json.RawMessage
+		if err := c.call(ctx, http.MethodGet, path+"?"+q.Encode(), nil, &raw); err != nil {
+			return err
+		}
+		n, err := decodePageCount(raw)
+		if err != nil {
+			return err
+		}
+		if err := decode(raw); err != nil {
+			return err
+		}
+		if n < 50 {
+			return nil
+		}
+	}
+	return nil
+}
+
+func decodePageCount(raw json.RawMessage) (int, error) {
+	var arr []json.RawMessage
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return 0, fmt.Errorf("%w: paystack: unexpected list shape", providers.ErrAmbiguous)
+	}
+	return len(arr), nil
+}
+
+func (c *Client) ListTransactions(ctx context.Context, from, to time.Time) ([]ListedTxn, error) {
+	var all []ListedTxn
+	err := c.listPages(ctx, "/transaction", from, to, func(raw json.RawMessage) error {
+		var rows []txnData
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			return fmt.Errorf("%w: paystack: transaction list", providers.ErrAmbiguous)
+		}
+		for _, d := range rows {
+			all = append(all, ListedTxn{Reference: d.Reference, Status: d.Status, Amount: d.Amount, Currency: d.Currency, PaidAt: d.PaidAt})
+		}
+		return nil
+	})
+	return all, err
+}
+
+func (c *Client) ListRefunds(ctx context.Context, from, to time.Time) ([]ListedRefundRow, error) {
+	var all []ListedRefundRow
+	err := c.listPages(ctx, "/refund", from, to, func(raw json.RawMessage) error {
+		var rows []struct {
+			Status      string `json:"status"`
+			Amount      int64  `json:"amount"`
+			Transaction struct {
+				Reference string `json:"reference"`
+			} `json:"transaction"`
+		}
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			return fmt.Errorf("%w: paystack: refund list", providers.ErrAmbiguous)
+		}
+		for _, d := range rows {
+			all = append(all, ListedRefundRow{TransactionRef: d.Transaction.Reference, Amount: d.Amount, Status: d.Status})
+		}
+		return nil
+	})
+	return all, err
+}
+
+func (c *Client) ListSettlements(ctx context.Context, from, to time.Time) ([]Settlement, error) {
+	var all []Settlement
+	err := c.listPages(ctx, "/settlement", from, to, func(raw json.RawMessage) error {
+		var rows []struct {
+			ID              int64     `json:"id"`
+			Status          string    `json:"status"`
+			Currency        string    `json:"currency"`
+			TotalAmount     int64     `json:"total_amount"`
+			EffectiveAmount int64     `json:"effective_amount"`
+			TotalFees       int64     `json:"total_fees"`
+			SettlementDate  time.Time `json:"settlement_date"`
+		}
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			return fmt.Errorf("%w: paystack: settlement list", providers.ErrAmbiguous)
+		}
+		for _, d := range rows {
+			all = append(all, Settlement{
+				ID: d.ID, Status: d.Status, Currency: d.Currency,
+				TotalAmount: d.TotalAmount, EffectiveAmount: d.EffectiveAmount, TotalFees: d.TotalFees,
+				SettlementDate: d.SettlementDate,
+			})
+		}
+		return nil
+	})
+	return all, err
 }
 
 func (c *Client) ParseWebhook(h http.Header, body []byte) (providers.WebhookEvent, error) {

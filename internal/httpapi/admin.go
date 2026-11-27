@@ -36,6 +36,7 @@ func (s *Server) adminRoutes(mux *patternMux) {
 	mux.Handle("GET /v1/admin/remote-credit/cohorts", op(s.adminListRemoteCohorts))
 	mux.Handle("DELETE /v1/admin/remote-credit/cohorts/{id}", admin(s.adminRevokeRemoteCohort))
 	s.adminSupportRoutes(mux)
+	s.adminReconcileRoutes(mux)
 }
 
 // actor builds the audit actor from the caller and a {"reason": "..."} body.

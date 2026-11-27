@@ -316,3 +316,24 @@ func TestChargeDocumentedTestCard(t *testing.T) {
 		t.Fatalf("undocumented PAN must not succeed: %+v %v", v, err)
 	}
 }
+
+func TestListTransactionsRefundsSettlements(t *testing.T) {
+	c, f := setup(t)
+	paid := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	f.SeedTransaction("ref-list", "success", 510000, paid)
+	f.SeedRefund("ref-list", "processed", 510000)
+	f.SeedSettlement(42, "success", 510000, 10000, 500000, paid)
+	from, to := paid, paid.Add(24*time.Hour)
+	txns, err := c.ListTransactions(ctx, from, to)
+	if err != nil || len(txns) != 1 || txns[0].Reference != "ref-list" || txns[0].Amount != 510000 {
+		t.Fatalf("txns %+v %v", txns, err)
+	}
+	refunds, err := c.ListRefunds(ctx, from, to)
+	if err != nil || len(refunds) != 1 || refunds[0].TransactionRef != "ref-list" {
+		t.Fatalf("refunds %+v %v", refunds, err)
+	}
+	settlements, err := c.ListSettlements(ctx, from, to)
+	if err != nil || len(settlements) != 1 || settlements[0].ID != 42 || settlements[0].TotalFees != 10000 {
+		t.Fatalf("settlements %+v %v", settlements, err)
+	}
+}
