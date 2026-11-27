@@ -325,18 +325,16 @@ func (r privacyRepo) PurgeDeliveryHMACs(ctx context.Context, cutoff time.Time) (
 	return notifRepo{r.repos}.PurgeOldDestinationHMACs(ctx, cutoff)
 }
 
-const exportCols = `id, user_id::text, day, status, archive_ciphertext, archive_key_version,
+const exportCols = `id, user_id::text, to_char(day, 'YYYY-MM-DD'), status, archive_ciphertext, archive_key_version,
 	token_hmac, token_ciphertext, token_key_version, expires_at, downloaded_at, error, created_at, updated_at`
 
 func scanExport(row interface{ Scan(dest ...any) error }) (privacy.ExportJob, error) {
 	var j privacy.ExportJob
-	var day time.Time
-	err := row.Scan(&j.ID, &j.UserID, &day, &j.Status, &j.ArchiveCiphertext, &j.ArchiveKeyVersion,
+	err := row.Scan(&j.ID, &j.UserID, &j.Day, &j.Status, &j.ArchiveCiphertext, &j.ArchiveKeyVersion,
 		&j.TokenHMAC, &j.TokenCiphertext, &j.TokenKeyVersion, &j.ExpiresAt, &j.DownloadedAt, &j.Error, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		return privacy.ExportJob{}, mapErr(err)
 	}
-	j.Day = day.UTC().Format("2006-01-02")
 	j.ExpiresAt = j.ExpiresAt.UTC()
 	j.CreatedAt = j.CreatedAt.UTC()
 	j.UpdatedAt = j.UpdatedAt.UTC()

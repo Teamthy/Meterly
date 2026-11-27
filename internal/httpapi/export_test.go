@@ -134,14 +134,20 @@ func TestDataExportIsolationSingleUseAndExpiry(t *testing.T) {
 			}
 			prID, _ := uuid.Parse(preq["id"].(string))
 			txnID, _ := uuid.Parse(txn["transaction_id"].(string))
-			payerCT, err := box.EncryptBound(bobEmail, []byte("payer-email:"+txnID.String()))
+			payerCT, payerKV, err := payrequests.SealPayerEmail(box, txnID, bobEmail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scCT, scKV, err := payrequests.SealStatusCode(box, txnID, "STATUSCODE1")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err := st.Repos().PayRequests().CreatePayer(ctx, payrequests.Payer{
 				TransactionID: txnID, PaymentRequestID: prID,
-				EmailCiphertext: payerCT, EmailKeyVersion: box.KeyVersion,
-				StatusCodeHMAC: "payer-hmac-" + uuid.NewString(), CreatedAt: now,
+				EmailCiphertext: payerCT, EmailKeyVersion: payerKV,
+				StatusCodeHMAC:       "payer-hmac-" + uuid.NewString(),
+				StatusCodeCiphertext: scCT, StatusCodeKeyVersion: scKV,
+				CreatedAt: now,
 			}); err != nil {
 				t.Fatal(err)
 			}
