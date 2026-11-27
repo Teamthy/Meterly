@@ -31,6 +31,7 @@ import (
 	"github.com/teamthy/meterly/internal/offline"
 	"github.com/teamthy/meterly/internal/orchestrator"
 	"github.com/teamthy/meterly/internal/outbox"
+	"github.com/teamthy/meterly/internal/partners"
 	"github.com/teamthy/meterly/internal/platform/config"
 	"github.com/teamthy/meterly/internal/platform/migrate"
 	"github.com/teamthy/meterly/internal/privacy"
@@ -485,7 +486,8 @@ func (a *App) Handler() http.Handler {
 		Limits: httpapi.Limits{
 			WritesPerMinute: a.Cfg.RateWritesPerMin, AuthFailuresPerMinute: a.Cfg.RateAuthFailuresPerMin,
 			WebhooksPerMinute: a.Cfg.RateWebhooksPerMin, PublicPayPerMinute: a.Cfg.RatePublicPayPerMin,
-			PublicLinkPerMinute: a.Cfg.RatePublicLinkPerMin, ClientIPHeader: a.Cfg.ClientIPHeader,
+			PublicLinkPerMinute: a.Cfg.RatePublicLinkPerMin, PartnerPerMinute: a.Cfg.RatePartnerPerMin,
+			ClientIPHeader: a.Cfg.ClientIPHeader,
 		},
 		PayForMeDisabled:   !a.Cfg.FeaturePayForMe,
 		SplitMeterDisabled: !a.Cfg.FeatureSplitMeter,
@@ -499,8 +501,15 @@ func (a *App) Handler() http.Handler {
 		ExportTTL:          a.Cfg.DataExportTTL,
 		ErasureDisabled:    !a.Cfg.FeatureAccountErasure,
 		ErasureCooling:     a.Cfg.AccountErasureCooling,
-		Remote:             a.remoteRaw,
-		Dev:                a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
+		PartnerDisabled:    !a.Cfg.FeaturePartnerAPI,
+		PartnerEnvironment: a.Cfg.ProviderEnvironment,
+		Partners: &partners.Engine{
+			Repo:        a.Store.Repos().Partners(),
+			Box:         a.Orch.Box(),
+			Environment: a.Cfg.ProviderEnvironment,
+		},
+		Remote: a.remoteRaw,
+		Dev:    a.Cfg.Mode == config.Dev, DevPay: a.mockPay, DevRemote: a.mockRemote, DevReadings: a.MockReadings,
 	}
 	if a.redis != nil {
 		s.NewLimiter = a.redis.Limiter

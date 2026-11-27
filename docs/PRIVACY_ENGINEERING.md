@@ -94,10 +94,13 @@ Meter **numbers** and STS **tokens** are encrypted / HMAC elsewhere (`meters.num
 
 ---
 
+## Partner API (B4)
+
+`partners`, `partner_api_keys`, `partner_usage` (`0028_partners.sql`). No column named like `email`/`phone`/`name`/`address`/`ip`/`msisdn`. `organisation` is the legal/trading name of the partner organisation (B2B), not a data-subject name. `contact_ref` is an operator ticket/KYB reference — operators must not paste raw email or phone. API secrets are HMAC-only (`secret_hash`); the plaintext `mtr_…` value is never stored.
+
 ## Not in this document (later batches)
 
-- B3 account erasure (anonymise financial rows, delete contacts)
-- Partner API personal data (B4+)
+- Partner purchase payloads and webhook destination URLs (B5–B6)
 
 ## Subject-access export (B2)
 

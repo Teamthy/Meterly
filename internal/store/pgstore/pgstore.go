@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/teamthy/meterly/internal/disputes"
 	"github.com/teamthy/meterly/internal/identity"
+	"github.com/teamthy/meterly/internal/partners"
 	"github.com/teamthy/meterly/internal/pilot"
 	"github.com/teamthy/meterly/internal/privacy"
 	"github.com/teamthy/meterly/internal/reconcile"
@@ -151,6 +152,7 @@ func (r *repos) Risk() risk.Repo                                         { retur
 func (r *repos) Disputes() disputes.Repo                                 { return disputeRepo{r} }
 func (r *repos) Pilot() pilot.Repo                                       { return pilotRepo{r} }
 func (r *repos) Privacy() privacy.Repo                                   { return privacyRepo{r} }
+func (r *repos) Partners() partners.Repo                                 { return partnerRepo{r} }
 
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

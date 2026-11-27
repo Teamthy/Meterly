@@ -28,6 +28,7 @@ import (
 	"github.com/teamthy/meterly/internal/observability"
 	"github.com/teamthy/meterly/internal/offline"
 	"github.com/teamthy/meterly/internal/orchestrator"
+	"github.com/teamthy/meterly/internal/partners"
 	"github.com/teamthy/meterly/internal/providers"
 	"github.com/teamthy/meterly/internal/providers/mock"
 	"github.com/teamthy/meterly/internal/ratelimit"
@@ -46,6 +47,7 @@ type Limits struct {
 	WebhooksPerMinute     int // per client IP
 	PublicPayPerMinute    int // per client IP: public Pay-for-Me views, checkouts and status polls
 	PublicLinkPerMinute   int // per link code: public Pay-for-Me checkout attempts
+	PartnerPerMinute      int // per partner id: partner API
 	// ClientIPHeader, when set (e.g. "X-Forwarded-For"), takes the client IP
 	// from the right-most value of that header, which the trusted proxy
 	// appended. Leave empty when not behind a proxy.
@@ -81,14 +83,17 @@ type Server struct {
 	ExportTTL          time.Duration
 	ErasureDisabled    bool
 	ErasureCooling     time.Duration
+	PartnerDisabled    bool
+	PartnerEnvironment string // SANDBOX | PRODUCTION; empty = SANDBOX
+	Partners           *partners.Engine
 	// Dev enables /v1/dev/* simulation endpoints. Never enable in production.
 	Dev         bool
 	DevPay      *mock.Payments
 	DevRemote   *mock.RemoteCredit
 	DevReadings *mock.MeterReadings
 
-	writes, authFails, hooks, publicPay, publicLink ratelimit.Limiter
-	patterns                                        []string
+	writes, authFails, hooks, publicPay, publicLink, partnerLim ratelimit.Limiter
+	patterns                                                    []string
 }
 
 type patternMux struct {
@@ -146,6 +151,24 @@ func (s *Server) Routes() http.Handler {
 	pubLinkRate := orDefault(s.Limits.PublicLinkPerMinute, 10)
 	s.publicPay = newLim("public-pay", pubPayRate, min(pubPayRate, max(20, pubPayRate/3)))
 	s.publicLink = newLim("public-link", pubLinkRate, min(pubLinkRate, max(5, pubLinkRate/2)))
+	partnerRate := orDefault(s.Limits.PartnerPerMinute, partners.DefaultRatePerMinute)
+	s.partnerLim = newLim("partner", partnerRate, min(partnerRate, max(5, partnerRate/3)))
+	if s.Partners != nil {
+		if s.Partners.Environment == "" {
+			env := s.PartnerEnvironment
+			if env == "" {
+				env = partners.EnvSandbox
+			}
+			s.Partners.Environment = env
+		}
+		if s.Partners.Repo == nil && s.O != nil && s.O.Store() != nil {
+			s.Partners.Repo = s.O.Store().Repos().Partners()
+		}
+		if s.Partners.Box == nil && s.O != nil {
+			s.Partners.Box = s.O.Box()
+		}
+	}
+	s.Auth = auth.PartnerThen(s.Auth, s.Partners)
 
 	mux := &patternMux{ServeMux: http.NewServeMux()}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
@@ -223,6 +246,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/notifications/inbound/{provider}", s.limited(s.hooks, s.notificationInbound))
 
 	s.adminRoutes(mux)
+	s.partnerRoutes(mux)
 
 	if s.Dev {
 		mux.HandleFunc("GET /v1/dev/console", s.devConsole)
@@ -346,6 +370,10 @@ func (s *Server) authed(role auth.Role, isWrite bool) func(http.HandlerFunc) htt
 					tooMany(w, wait)
 					return
 				}
+				writeErr(w, 401, "UNAUTHENTICATED", "authentication required")
+				return
+			}
+			if p.IsPartner() {
 				writeErr(w, 401, "UNAUTHENTICATED", "authentication required")
 				return
 			}
@@ -1013,8 +1041,20 @@ func (s *Server) mapErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, 503, "PROVIDER_UNAVAILABLE", "provider temporarily disabled")
 	case errors.Is(err, risk.ErrNotFound), errors.Is(err, disputes.ErrNotFound):
 		writeErr(w, 404, "NOT_FOUND", "not found")
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, partners.ErrNotFound), errors.Is(err, store.ErrNotFound):
 		writeErr(w, 404, "NOT_FOUND", "not found")
+	case errors.Is(err, partners.ErrSameApprover):
+		writeErr(w, 409, "SAME_APPROVER", "a different operator must approve production activation")
+	case errors.Is(err, partners.ErrNotActive), errors.Is(err, partners.ErrNotPending):
+		writeErr(w, 409, "PARTNER_PENDING", "partner is not active")
+	case errors.Is(err, partners.ErrAlreadyActive):
+		writeErr(w, 409, "INVALID_REQUEST", "partner is already active")
+	case errors.Is(err, partners.ErrSuspended):
+		writeErr(w, 409, "ACCOUNT_SUSPENDED", "partner is suspended")
+	case errors.Is(err, partners.ErrInvalidScope), errors.Is(err, partners.ErrInvalidEnv), errors.Is(err, partners.ErrInvalidInput):
+		writeErr(w, 400, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, partners.ErrKeyRevoked), errors.Is(err, partners.ErrKeyExpired):
+		writeErr(w, 409, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, tx.ErrNotFound):
 		writeErr(w, 404, "TRANSACTION_NOT_FOUND", "transaction not found")
 	case errors.Is(err, tx.ErrInvalidTransition), errors.Is(err, tx.ErrConflict):

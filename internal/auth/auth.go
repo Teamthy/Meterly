@@ -34,11 +34,34 @@ type Principal struct {
 	VerifiedPhone string // sensitive E.164: never log
 	DisplayName   string
 	DevMode       bool
+	// Partner fields are set only for Authorization: Bearer mtr_… callers.
+	PartnerID     string
+	PartnerKeyID  string
+	PartnerEnv    string
+	PartnerPrefix string
+	Scopes        []string
+}
+
+// IsPartner reports whether this principal authenticated with a partner API key.
+func (p Principal) IsPartner() bool { return p.PartnerID != "" }
+
+// HasScope reports whether a partner principal holds scope. Non-partners never do.
+func (p Principal) HasScope(scope string) bool {
+	if !p.IsPartner() {
+		return false
+	}
+	if scope == "" {
+		return true
+	}
+	return slices.Contains(p.Scopes, scope)
 }
 
 // Has reports whether p holds role r. Admin implies operator; everyone
 // authenticated is a customer.
 func (p Principal) Has(r Role) bool {
+	if p.IsPartner() {
+		return false
+	}
 	switch r {
 	case RoleCustomer:
 		return true
@@ -67,6 +90,10 @@ type DevAuth struct{}
 func (DevAuth) Authenticate(r *http.Request) (Principal, error) {
 	tok, ok := bearer(r)
 	if !ok {
+		return Principal{}, ErrUnauthenticated
+	}
+	// mls_ sessions and mtr_ partner keys are never DevAuth subjects.
+	if strings.HasPrefix(tok, "mls_") || strings.HasPrefix(tok, "mtr_") {
 		return Principal{}, ErrUnauthenticated
 	}
 	p := Principal{Subject: tok, DevMode: true}

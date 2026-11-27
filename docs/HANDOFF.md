@@ -1,13 +1,13 @@
 # Handoff
 
 > Read this first (`CLAUDE.md`). Then check it against `git log` and open PRs — it can go stale.
-> **Last updated:** 2026-11-23 (B3). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0 (PR #26), B1 (PR #27), B2 (PR #28 @ `ba2018d`). B3 NDPA part 3 is **this PR**. Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B4→B9).
+> **Last updated:** 2026-11-23 (B4). North star locked: no-keypad + auto-recharge, **no backing out**. Operating pack: `docs/LAUNCH.md`, `RUNBOOK.md`, `LEGAL.md`, `OUTREACH.md`, `BUDGET.md`. **Merged to `main`:** M1–M11, security engine, P0–P4, B0 (PR #26), B1 (PR #27), B2 (PR #28), B3 (PR #29 @ `ecb675d`). B4 partner identity/access is **this PR**. Providers **not certified** (no sandbox keys). Remaining plan: `docs/prompts/MASTER_PROMPT_BATCHES.md` (B5→B9).
 
 ## 0. Start here
 
 1. Read **Invariants** (§4) before touching orchestrator, store, or providers.
 2. Branch: `arena/7cc28241-meterly`. **Do not switch branches.**
-3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, P0–P4, B0, B1 and B2 are **merged**. Engineering left is **B3+** (this PR: NDPA erasure) then partner API plus **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
+3. Work left is **not** “build the purchase engine”. M1–M11, web, restyle, Auto-renew coming-soon, the customer security engine, P0–P4, B0–B3 are **merged**. Engineering left is **B4+** (this PR: partner identity/access) then partner purchases plus **hosting, live sandboxes, real AMI/HES partner docs, legal flags**.
 4. Product truth: credit lands **on the meter**. `ACCEPTED ≠ CONFIRMED`. Keypad meters get STS fallback. **Do not invent AMI/HES APIs.**
 5. Do not commit secrets.
 
@@ -16,7 +16,7 @@
 | # | What | Who | Status |
 |---|---|---|---|
 | 1 | Land security engine | Eng | **Done** — [PR #22](https://github.com/Teamthy/Meterly/pull/22) merged |
-| 2 | Render API + apply migrations `0018`–`0027` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0027` **unapplied**. |
+| 2 | Render API + apply migrations `0018`–`0028` | Human | Blocked on dashboard paste (`docs/DEPLOY.md`). Hosted `0022`–`0028` **unapplied**. |
 | 3 | Vercel `METERLY_API_ORIGIN` = Render URL | Human | After 2 |
 | 4 | Live sandbox keys (Paystack, VTpass, …) then `go run ./cmd/certify` | Human | Harness ready; **not certified** |
 | 5 | Partner HES / DisCo / MAP agreements + **their API docs** | Founder | `docs/OUTREACH.md` — IE Energy Lagos **and** Ikeja Electric |
@@ -26,7 +26,8 @@
 | 9 | P4 pilot ops (allow-list, float cover, alerts, restore, rekey) | Eng | **Merged** — same PRs. Migration `0024` **unapplied hosted**. Dress rehearsal blocked on hosting. |
 | 10 | B1 NDPA (data map, consent, retention) | Eng | **Merged** — [PR #27](https://github.com/Teamthy/Meterly/pull/27). `0025_privacy.sql` **unapplied hosted**. Legal sign-off on periods **pending**. |
 | 11 | B2 NDPA data export | Eng | **Merged** — [PR #28](https://github.com/Teamthy/Meterly/pull/28). `0026_data_export.sql` **unapplied hosted**. |
-| 12 | B3 NDPA account erasure | Eng | **This PR** — `POST /v1/me/delete-account`, `0027_account_erasure.sql` **unapplied hosted**. |
+| 12 | B3 NDPA account erasure | Eng | **Merged** — [PR #29](https://github.com/Teamthy/Meterly/pull/29). `0027_account_erasure.sql` **unapplied hosted**. |
+| 13 | B4 partner identity/access | Eng | **This PR** — partners, `mtr_test_`/`mtr_live_` keys, admin + `GET /v1/partner/me`. `0028_partners.sql` **unapplied hosted**. |
 
 ---
 
@@ -56,12 +57,13 @@ OPay airtime works because every phone has a **network account** the telco can c
 | P2 daily settlement recon | ✅ `main` (PR #24/#25) | `internal/reconcile`, `0022` **unapplied hosted** |
 | P3 risk engine + chargebacks | ✅ `main` (PR #24/#25) | `internal/risk`, `internal/disputes`, `0023` **unapplied hosted** |
 | P4 pilot ops | ✅ `main` (PR #24/#25) | `PILOT_MODE`, alerts, `cmd/integrity`, `cmd/rekey`; `0024` **unapplied hosted** |
-| Hosted API (Render) + migrations `0018`–`0027` | ⏳ | `docs/DEPLOY.md` |
+| Hosted API (Render) + migrations `0018`–`0028` | ⏳ | `docs/DEPLOY.md` |
 | B1 NDPA part 1 (data map, consent, retention) | ✅ `main` (PR #27) | `docs/PRIVACY_ENGINEERING.md`, `0025` **unapplied hosted** |
 | B2 NDPA part 2 (data export) | ✅ `main` (PR #28) | `POST /v1/me/data-export`, `0026` **unapplied hosted** |
-| B3 NDPA part 3 (account erasure) | ⏳ this PR | `POST /v1/me/delete-account`, `0027_account_erasure.sql` **unapplied hosted** |
+| B3 NDPA part 3 (account erasure) | ✅ `main` (PR #29) | `POST /v1/me/delete-account`, `0027` **unapplied hosted** |
+| B4 partner identity/access | ⏳ this PR | `mtr_test_`/`mtr_live_` keys, `0028_partners.sql` **unapplied hosted** |
 
-**Git:** `origin/main` @ `ba2018d` (merge [PR #28](https://github.com/Teamthy/Meterly/pull/28) B2). P0–P4, B0–B2 are **merged**. P1 is **not live-certified**. This PR is B3. Next after merge: B4 (partners, `0028_partners.sql`).
+**Git:** `origin/main` @ `ecb675d` (merge [PR #29](https://github.com/Teamthy/Meterly/pull/29) B3). P0–P4, B0–B3 are **merged**. P1 is **not live-certified**. This PR is B4. Next after merge: B5 (partner float/purchases). Do not mix B5 into this PR.
 
 **Live web:** `https://meterly-iota.vercel.app` (rebuilds from `main`).
 
@@ -82,7 +84,7 @@ internal/store          InTx unit of work (memstore / pgstore)
 internal/providers      payment, vending, remote-credit — kept separate
 internal/httpapi        /v1 + admin + public pay/pots + /v1/security
 web/                    Next.js 15 (root directory on Vercel)
-migrations/             0001 … 0026_data_export.sql (next file `0027_*.sql`; B4 partners is 0027)
+migrations/             0001 … 0027_account_erasure.sql (this PR `0028_partners.sql`; B5 must not reuse 0028)
 ```
 
 Purchase: quote → `CreateTransaction` (one commit) → PSP verify **server-side** → vend (`request_id` stored at **claim**) → deliver → refund only on definitive vend failure.
@@ -158,6 +160,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 | `FEATURE_USSD` / `FEATURE_WHATSAPP` | false | NCC / Meta WABA |
 | `FEATURE_HOUSEHOLDS` / `FEATURE_SUPPORT` / `FEATURE_PAY_FOR_ME` | on in dev | |
 | `FEATURE_ACCOUNT_ERASURE` | on in dev | 7-day cooling-off; Paystack revoke TODO |
+| `FEATURE_PARTNER_API` | on in dev | B4 identity/keys; purchases are B5 |
 | `FEATURE_RISK_ENGINE` | on in dev + staging | DENY/REVIEW; disputes always ingest |
 | `PILOT_MODE` | false | env, not FEATURE_*; empty allow-list means nothing is purchasable when true |
 | `FEATURE_OWNERSHIP_NAME_MATCH` | false | self-service ownership by display-name match is spoofable; operators attest via `/v1/admin/meters/{id}/ownership` |
@@ -182,7 +185,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
   - Paystack references must be `[A-Za-z0-9-.=]` (`paystacktest` enforces it);
   - ownership name match is off outside dev.
 
-- Migrations are **immutable** once applied. Add `0027_*.sql`, never edit applied files. Hosted `0022`–`0026` are still unapplied; do not run them from this sandbox.
+- Migrations are **immutable** once applied. Add `0029_*.sql` after this PR, never edit applied files. Hosted `0022`–`0028` are still unapplied; do not run them from this sandbox.
 - Supabase **session** pooler **:5432**, not transaction 6543. Project `wiqfbscyppgsolvmereh` (eu-west-1). Do not migrate `okatwpkovcmipjdnqkys`.
 - Hosted migrations **0018 identity, 0019 readings, 0020 catalog, 0021 security** are still unapplied until Render `/migrate` runs.
 - `AUTH_MODE=dev` only in `MODE=dev`. Passkey sessions are `mls_…`.
@@ -194,7 +197,7 @@ VTpass: amount is **naira**; `000` is not success; `request_id` first 12 chars =
 
 ## 9. What's left
 
-**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 merged (PR #26) → B1 merged (PR #27) → B2 merged (PR #28) → B3 NDPA erasure (this PR) → B4–B7 partner API (`0028_partners`) → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
+**Engineering batches** (`docs/prompts/MASTER_PROMPT_BATCHES.md`): B0 merged (PR #26) → B1 merged (PR #27) → B2 merged (PR #28) → B3 merged (PR #29) → B4 partner identity (this PR, `0028_partners`) → B5–B7 partner purchases/webhooks/portal → B8 hardening → B9 founder go-live. Do not mix batches in one PR.
 
 **Unblocked after hosting/keys:** Render + Vercel origin; live Paystack/VTpass/AT/Resend/WhatsApp/OIDC sandbox runs; `REDIS_URL` if >1 API replica; P4 dress rehearsal (canary, restore-drill, forced alerts).
 
@@ -307,6 +310,8 @@ UI: **More → Security** (`/security`).
 ---
 
 ## 14. Session log (newest first)
+
+- **2026-11-23: B4 partner platform part 1 (identity/access).** Migration `0028_partners.sql` (`partners`, `partner_api_keys` hash+prefix only, `partner_usage`). Keys `mtr_test_`/`mtr_live_` (32 random bytes, shown once, HMAC-SHA256, constant-time). `Authorization: Bearer mtr_…` is a partner principal (never a DevAuth subject). Admin (operator, step-up, reason): create, two-person production activation, issue/rotate/revoke, suspend, usage. `GET /v1/partner/me` is scoped and per-partner rate-limited. `FEATURE_PARTNER_API` off outside dev. Daily value cap is a field only (B5 enforces). No purchases. Verified: `gofmt`, `go vet`, `go test -race ./...` (memory; PostgreSQL skipped here without `DATABASE_URL`). Unverified: CI with `DATABASE_URL`. Blocked: hosted migrate `0018`–`0028`; Paystack revoke docs. Next: B5 after this PR merges.
 
 - **2026-11-23: B3 NDPA part 3 (account erasure).** `POST /v1/me/delete-account` (step-up) starts a 7-day cooling-off; `POST /v1/me/delete-account/cancel`; `GET /v1/me` shows pending state. Worker `account-erasure` is resumable: anonymise financial FKs onto tombstone user `…e5ed`, delete identity/memberships/support/cards/exports. Blocks: open dispute, MANUAL_REVIEW/RECONCILIATION_PENDING txn, pot with funds, unpaid obligation. Shared meters keep Disco name/address while another grant is active; Pay-for-Me guest payer ciphertext is kept. Paystack authorization revoke is TODO (no docs). Migration `0027_account_erasure.sql`; B4 partners moves to `0028`. Verified: `gofmt`, `go vet`, `go test -race ./...` (memory; PostgreSQL skipped here). Unverified: CI with `DATABASE_URL`. Blocked: hosted migrate; Paystack revoke docs. Next: B4 partners (do not start until this PR merges). Hosted `0022`–`0027` unapplied.
 

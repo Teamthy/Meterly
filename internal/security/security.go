@@ -24,6 +24,7 @@ const (
 	ActionChangeContact = "CHANGE_CONTACT"
 	ActionDataExport    = "DATA_EXPORT"
 	ActionDeleteAccount = "DELETE_ACCOUNT"
+	ActionPartnerAdmin  = "PARTNER_ADMIN"
 
 	OutcomeAllow    = "ALLOW"
 	OutcomeStepUp   = "STEP_UP"

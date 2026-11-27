@@ -513,6 +513,15 @@ One command proves each adapter against that provider's real sandbox, and only w
 
 None yet — no founder sandbox keys in this environment. Every provider is **not certified**. Differences found later against a real sandbox must change the fake, add a regression test, and land here.
 
+## Partner platform identity (B4)
+
+- **HMAC-SHA256, not Argon2id.** Partner secrets are 32 cryptographically random bytes (`mtr_test_` / `mtr_live_` + base64url). Lookup is by a short prefix; verification is `Box.Hash("partner-key:"+secret)` with constant-time compare — the same construction as `mls_` sessions. Argon2id would add per-request latency without helping high-entropy keys.
+- **Plaintext is shown once** on issue/rotate and is never a column, log field or audit metadata. List/get return prefix, scopes and timestamps only.
+- **Sandbox create is ACTIVE** (one operator). **Production create is PENDING**; activation is two-person (proposer cannot approve), matching reconciliation adjustments.
+- **Keys work only while the partner is ACTIVE** and the key environment matches both the partner and `PROVIDER_ENVIRONMENT`. Suspended partners fail at once. Daily value cap is stored (`daily_value_cap_minor`) and **not enforced until B5**.
+- **`FEATURE_PARTNER_API`** defaults on in `MODE=dev`, off otherwise. Disabled routes are `404 FEATURE_DISABLED`.
+- **B5** mounts `/v1/partner/meters|quotes|purchases|float`. B4 exposes `GET /v1/partner/me` plus the admin surface, and keeps the scope catalogue in `partners.RouteCatalog()` so the matrix exists now.
+
 ## PR #24 review fixes (2026-11-27)
 
 Reviewing PR #24 (P0–P4) found these, now fixed with tests on both stores:
